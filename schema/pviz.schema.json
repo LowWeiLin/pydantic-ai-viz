@@ -1,0 +1,2337 @@
+{
+  "$defs": {
+    "AgentBlueprint": {
+      "additionalProperties": false,
+      "description": "Static or observed structure of one agent.",
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/CapabilityInfo"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "delegates": {
+          "items": {
+            "$ref": "#/$defs/Delegate"
+          },
+          "title": "Delegates",
+          "type": "array"
+        },
+        "deps_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Deps Type"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Description"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "instructions": {
+          "items": {
+            "$ref": "#/$defs/Instruction"
+          },
+          "title": "Instructions",
+          "type": "array"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Name"
+        },
+        "native_tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Native Tools",
+          "type": "array"
+        },
+        "output": {
+          "$ref": "#/$defs/OutputInfo"
+        },
+        "settings": {
+          "$ref": "#/$defs/AgentSettings"
+        },
+        "source": {
+          "enum": [
+            "static",
+            "observed"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/Tool"
+          },
+          "title": "Tools",
+          "type": "array"
+        },
+        "toolsets": {
+          "items": {
+            "$ref": "#/$defs/Toolset"
+          },
+          "title": "Toolsets",
+          "type": "array"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "label",
+        "description",
+        "source",
+        "model",
+        "deps_type",
+        "instructions",
+        "toolsets",
+        "tools",
+        "native_tools",
+        "output",
+        "capabilities",
+        "settings",
+        "delegates",
+        "warnings"
+      ],
+      "title": "AgentBlueprint",
+      "type": "object"
+    },
+    "AgentBlueprintEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AgentBlueprint"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "type": {
+          "const": "blueprint.agent",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "ts",
+        "type",
+        "agent"
+      ],
+      "title": "AgentBlueprintEvent",
+      "type": "object"
+    },
+    "AgentRunData": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Conversation Id"
+        },
+        "instructions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Instructions"
+        },
+        "messages": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Message"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Messages"
+        },
+        "model_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Name"
+        },
+        "output": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "model_name",
+        "conversation_id",
+        "instructions",
+        "output",
+        "usage",
+        "messages"
+      ],
+      "title": "AgentRunData",
+      "type": "object"
+    },
+    "AgentRunSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Agent Name"
+        },
+        "attributes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Attributes",
+          "type": "object"
+        },
+        "data": {
+          "$ref": "#/$defs/AgentRunData"
+        },
+        "end_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "End Ms"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "const": "agent_run",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Id"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "span_id": {
+          "pattern": "^[0-9a-f]{16}$",
+          "title": "Span Id",
+          "type": "string"
+        },
+        "start_ms": {
+          "title": "Start Ms",
+          "type": "number"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "ok",
+            "error"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "trace_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Trace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trace_id",
+        "span_id",
+        "parent_id",
+        "name",
+        "start_ms",
+        "end_ms",
+        "status",
+        "agent_name",
+        "run_id",
+        "error",
+        "attributes",
+        "kind",
+        "data"
+      ],
+      "title": "AgentRunSpan",
+      "type": "object"
+    },
+    "AgentSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "end_strategy": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "End Strategy"
+        },
+        "model_settings": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Settings"
+        },
+        "output_retries": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output Retries"
+        },
+        "tool_retries": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tool Retries"
+        },
+        "tool_timeout": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tool Timeout"
+        }
+      },
+      "required": [
+        "model_settings",
+        "end_strategy",
+        "tool_retries",
+        "output_retries",
+        "tool_timeout"
+      ],
+      "title": "AgentSettings",
+      "type": "object"
+    },
+    "CapabilityInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "builtin": {
+          "title": "Builtin",
+          "type": "boolean"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "builtin"
+      ],
+      "title": "CapabilityInfo",
+      "type": "object"
+    },
+    "Delegate": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "evidence": {
+          "enum": [
+            "static",
+            "observed"
+          ],
+          "title": "Evidence",
+          "type": "string"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name",
+        "agent_id",
+        "evidence"
+      ],
+      "title": "Delegate",
+      "type": "object"
+    },
+    "GraphBlueprint": {
+      "additionalProperties": false,
+      "description": "Static structure of one pydantic-graph ``Graph``.",
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/GraphEdge"
+          },
+          "title": "Edges",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "input_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Input Type"
+        },
+        "label": {
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "mermaid": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mermaid"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Name"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/GraphNode"
+          },
+          "title": "Nodes",
+          "type": "array"
+        },
+        "output_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output Type"
+        },
+        "state_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "State Type"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "label",
+        "state_type",
+        "input_type",
+        "output_type",
+        "nodes",
+        "edges",
+        "mermaid",
+        "warnings"
+      ],
+      "title": "GraphBlueprint",
+      "type": "object"
+    },
+    "GraphBlueprintEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "graph": {
+          "$ref": "#/$defs/GraphBlueprint"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "type": {
+          "const": "blueprint.graph",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "ts",
+        "type",
+        "graph"
+      ],
+      "title": "GraphBlueprintEvent",
+      "type": "object"
+    },
+    "GraphEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Label"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "target",
+        "label"
+      ],
+      "title": "GraphEdge",
+      "type": "object"
+    },
+    "GraphNode": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Label"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Note"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "label",
+        "note"
+      ],
+      "title": "GraphNode",
+      "type": "object"
+    },
+    "GraphNodeData": {
+      "additionalProperties": false,
+      "properties": {
+        "graph_id": {
+          "title": "Graph Id",
+          "type": "string"
+        },
+        "inputs": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "graph_id",
+        "node_id",
+        "inputs"
+      ],
+      "title": "GraphNodeData",
+      "type": "object"
+    },
+    "GraphNodeSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Agent Name"
+        },
+        "attributes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Attributes",
+          "type": "object"
+        },
+        "data": {
+          "$ref": "#/$defs/GraphNodeData"
+        },
+        "end_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "End Ms"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "const": "graph_node",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Id"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "span_id": {
+          "pattern": "^[0-9a-f]{16}$",
+          "title": "Span Id",
+          "type": "string"
+        },
+        "start_ms": {
+          "title": "Start Ms",
+          "type": "number"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "ok",
+            "error"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "trace_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Trace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trace_id",
+        "span_id",
+        "parent_id",
+        "name",
+        "start_ms",
+        "end_ms",
+        "status",
+        "agent_name",
+        "run_id",
+        "error",
+        "attributes",
+        "kind",
+        "data"
+      ],
+      "title": "GraphNodeSpan",
+      "type": "object"
+    },
+    "GraphRunData": {
+      "additionalProperties": false,
+      "properties": {
+        "graph_id": {
+          "title": "Graph Id",
+          "type": "string"
+        },
+        "graph_name": {
+          "title": "Graph Name",
+          "type": "string"
+        },
+        "inputs": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "output": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "graph_id",
+        "graph_name",
+        "inputs",
+        "output"
+      ],
+      "title": "GraphRunData",
+      "type": "object"
+    },
+    "GraphRunSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Agent Name"
+        },
+        "attributes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Attributes",
+          "type": "object"
+        },
+        "data": {
+          "$ref": "#/$defs/GraphRunData"
+        },
+        "end_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "End Ms"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "const": "graph_run",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Id"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "span_id": {
+          "pattern": "^[0-9a-f]{16}$",
+          "title": "Span Id",
+          "type": "string"
+        },
+        "start_ms": {
+          "title": "Start Ms",
+          "type": "number"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "ok",
+            "error"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "trace_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Trace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trace_id",
+        "span_id",
+        "parent_id",
+        "name",
+        "start_ms",
+        "end_ms",
+        "status",
+        "agent_name",
+        "run_id",
+        "error",
+        "attributes",
+        "kind",
+        "data"
+      ],
+      "title": "GraphRunSpan",
+      "type": "object"
+    },
+    "Instruction": {
+      "additionalProperties": false,
+      "properties": {
+        "dynamic": {
+          "title": "Dynamic",
+          "type": "boolean"
+        },
+        "function": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Function"
+        },
+        "kind": {
+          "enum": [
+            "instructions",
+            "system_prompt"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Text"
+        }
+      },
+      "required": [
+        "kind",
+        "dynamic",
+        "text",
+        "function"
+      ],
+      "title": "Instruction",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "Message": {
+      "additionalProperties": false,
+      "properties": {
+        "parts": {
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/TextPart"
+              },
+              {
+                "$ref": "#/$defs/ThinkingPart"
+              },
+              {
+                "$ref": "#/$defs/ToolCallPart"
+              },
+              {
+                "$ref": "#/$defs/ToolResultPart"
+              },
+              {
+                "$ref": "#/$defs/OtherPart"
+              }
+            ]
+          },
+          "title": "Parts",
+          "type": "array"
+        },
+        "role": {
+          "enum": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "parts"
+      ],
+      "title": "Message",
+      "type": "object"
+    },
+    "ModelInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "offline": {
+          "title": "Offline",
+          "type": "boolean"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Provider"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "provider",
+        "offline"
+      ],
+      "title": "ModelInfo",
+      "type": "object"
+    },
+    "ModelRequestData": {
+      "additionalProperties": false,
+      "properties": {
+        "input_messages": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Message"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Input Messages"
+        },
+        "instructions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Instructions"
+        },
+        "model_name": {
+          "title": "Model Name",
+          "type": "string"
+        },
+        "output_messages": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Message"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output Messages"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Provider"
+        },
+        "response_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Response Model"
+        },
+        "settings": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Settings",
+          "type": "object"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "model_name",
+        "provider",
+        "response_model",
+        "settings",
+        "instructions",
+        "input_messages",
+        "output_messages",
+        "usage"
+      ],
+      "title": "ModelRequestData",
+      "type": "object"
+    },
+    "ModelRequestSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Agent Name"
+        },
+        "attributes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Attributes",
+          "type": "object"
+        },
+        "data": {
+          "$ref": "#/$defs/ModelRequestData"
+        },
+        "end_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "End Ms"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "const": "model_request",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Id"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "span_id": {
+          "pattern": "^[0-9a-f]{16}$",
+          "title": "Span Id",
+          "type": "string"
+        },
+        "start_ms": {
+          "title": "Start Ms",
+          "type": "number"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "ok",
+            "error"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "trace_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Trace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trace_id",
+        "span_id",
+        "parent_id",
+        "name",
+        "start_ms",
+        "end_ms",
+        "status",
+        "agent_name",
+        "run_id",
+        "error",
+        "attributes",
+        "kind",
+        "data"
+      ],
+      "title": "ModelRequestSpan",
+      "type": "object"
+    },
+    "OtherPart": {
+      "additionalProperties": false,
+      "properties": {
+        "raw": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "type": {
+          "const": "other",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "raw"
+      ],
+      "title": "OtherPart",
+      "type": "object"
+    },
+    "OtherSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Agent Name"
+        },
+        "attributes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Attributes",
+          "type": "object"
+        },
+        "data": {
+          "title": "Data",
+          "type": "null"
+        },
+        "end_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "End Ms"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "const": "other",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Id"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "span_id": {
+          "pattern": "^[0-9a-f]{16}$",
+          "title": "Span Id",
+          "type": "string"
+        },
+        "start_ms": {
+          "title": "Start Ms",
+          "type": "number"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "ok",
+            "error"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "trace_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Trace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trace_id",
+        "span_id",
+        "parent_id",
+        "name",
+        "start_ms",
+        "end_ms",
+        "status",
+        "agent_name",
+        "run_id",
+        "error",
+        "attributes",
+        "kind",
+        "data"
+      ],
+      "title": "OtherSpan",
+      "type": "object"
+    },
+    "OutputInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "allows_text": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Allows Text"
+        },
+        "json_schema": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "mode": {
+          "title": "Mode",
+          "type": "string"
+        },
+        "tool_names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tool Names",
+          "type": "array"
+        },
+        "type_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Type Name"
+        }
+      },
+      "required": [
+        "mode",
+        "allows_text",
+        "type_name",
+        "json_schema",
+        "tool_names"
+      ],
+      "title": "OutputInfo",
+      "type": "object"
+    },
+    "RetryInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "cause": {
+          "title": "Cause",
+          "type": "string"
+        },
+        "max_retries": {
+          "title": "Max Retries",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cause",
+        "attempt",
+        "max_retries"
+      ],
+      "title": "RetryInfo",
+      "type": "object"
+    },
+    "SessionStarted": {
+      "additionalProperties": false,
+      "properties": {
+        "include_content": {
+          "title": "Include Content",
+          "type": "boolean"
+        },
+        "pviz": {
+          "const": 1,
+          "title": "Pviz",
+          "type": "integer"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "session_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "stream": {
+          "title": "Stream",
+          "type": "boolean"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "type": {
+          "const": "session.started",
+          "title": "Type",
+          "type": "string"
+        },
+        "versions": {
+          "$ref": "#/$defs/Versions"
+        }
+      },
+      "required": [
+        "seq",
+        "ts",
+        "type",
+        "pviz",
+        "session_id",
+        "title",
+        "include_content",
+        "stream",
+        "versions"
+      ],
+      "title": "SessionStarted",
+      "type": "object"
+    },
+    "SpanEnded": {
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "span": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AgentRunSpan"
+            },
+            {
+              "$ref": "#/$defs/ModelRequestSpan"
+            },
+            {
+              "$ref": "#/$defs/ToolCallSpan"
+            },
+            {
+              "$ref": "#/$defs/GraphRunSpan"
+            },
+            {
+              "$ref": "#/$defs/GraphNodeSpan"
+            },
+            {
+              "$ref": "#/$defs/OtherSpan"
+            }
+          ],
+          "title": "Span"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "type": {
+          "const": "span.ended",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "ts",
+        "type",
+        "span"
+      ],
+      "title": "SpanEnded",
+      "type": "object"
+    },
+    "SpanError": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Message"
+        },
+        "stacktrace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Stacktrace"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "message",
+        "stacktrace"
+      ],
+      "title": "SpanError",
+      "type": "object"
+    },
+    "SpanStarted": {
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "span": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/AgentRunSpan"
+            },
+            {
+              "$ref": "#/$defs/ModelRequestSpan"
+            },
+            {
+              "$ref": "#/$defs/ToolCallSpan"
+            },
+            {
+              "$ref": "#/$defs/GraphRunSpan"
+            },
+            {
+              "$ref": "#/$defs/GraphNodeSpan"
+            },
+            {
+              "$ref": "#/$defs/OtherSpan"
+            }
+          ],
+          "title": "Span"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "type": {
+          "const": "span.started",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "ts",
+        "type",
+        "span"
+      ],
+      "title": "SpanStarted",
+      "type": "object"
+    },
+    "StreamDelta": {
+      "additionalProperties": false,
+      "properties": {
+        "delta": {
+          "title": "Delta",
+          "type": "string"
+        },
+        "part_index": {
+          "minimum": 0,
+          "title": "Part Index",
+          "type": "integer"
+        },
+        "part_kind": {
+          "enum": [
+            "text",
+            "thinking",
+            "tool_call"
+          ],
+          "title": "Part Kind",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "span_id": {
+          "pattern": "^[0-9a-f]{16}$",
+          "title": "Span Id",
+          "type": "string"
+        },
+        "tool_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tool Name"
+        },
+        "trace_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "type": {
+          "const": "stream.delta",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "ts",
+        "type",
+        "trace_id",
+        "span_id",
+        "part_index",
+        "part_kind",
+        "tool_name",
+        "delta"
+      ],
+      "title": "StreamDelta",
+      "type": "object"
+    },
+    "TextPart": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Content"
+        },
+        "type": {
+          "const": "text",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "content"
+      ],
+      "title": "TextPart",
+      "type": "object"
+    },
+    "ThinkingPart": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Content"
+        },
+        "type": {
+          "const": "thinking",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "content"
+      ],
+      "title": "ThinkingPart",
+      "type": "object"
+    },
+    "Tool": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Description"
+        },
+        "function": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Function"
+        },
+        "is_async": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Is Async"
+        },
+        "kind": {
+          "enum": [
+            "function",
+            "output",
+            "external",
+            "unapproved"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_retries": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Max Retries"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "origin": {
+          "enum": [
+            "static",
+            "observed"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "parameters_schema": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "return_schema": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "takes_ctx": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Takes Ctx"
+        },
+        "toolset": {
+          "title": "Toolset",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "toolset",
+        "description",
+        "parameters_schema",
+        "return_schema",
+        "kind",
+        "takes_ctx",
+        "is_async",
+        "max_retries",
+        "function",
+        "origin"
+      ],
+      "title": "Tool",
+      "type": "object"
+    },
+    "ToolCallData": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Call Id"
+        },
+        "result": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetryInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name",
+        "call_id",
+        "arguments",
+        "result",
+        "retry"
+      ],
+      "title": "ToolCallData",
+      "type": "object"
+    },
+    "ToolCallPart": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_call",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "name",
+        "arguments"
+      ],
+      "title": "ToolCallPart",
+      "type": "object"
+    },
+    "ToolCallSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Agent Name"
+        },
+        "attributes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Attributes",
+          "type": "object"
+        },
+        "data": {
+          "$ref": "#/$defs/ToolCallData"
+        },
+        "end_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "End Ms"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpanError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "const": "tool_call",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Parent Id"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "span_id": {
+          "pattern": "^[0-9a-f]{16}$",
+          "title": "Span Id",
+          "type": "string"
+        },
+        "start_ms": {
+          "title": "Start Ms",
+          "type": "number"
+        },
+        "status": {
+          "enum": [
+            "running",
+            "ok",
+            "error"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "trace_id": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Trace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trace_id",
+        "span_id",
+        "parent_id",
+        "name",
+        "start_ms",
+        "end_ms",
+        "status",
+        "agent_name",
+        "run_id",
+        "error",
+        "attributes",
+        "kind",
+        "data"
+      ],
+      "title": "ToolCallSpan",
+      "type": "object"
+    },
+    "ToolResultPart": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Id"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "type": {
+          "const": "tool_result",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "name",
+        "result"
+      ],
+      "title": "ToolResultPart",
+      "type": "object"
+    },
+    "Toolset": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "agent",
+            "function",
+            "mcp",
+            "dynamic",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "opaque": {
+          "title": "Opaque",
+          "type": "boolean"
+        },
+        "toolset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Toolset Id"
+        },
+        "wrappers": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Wrappers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "toolset_id",
+        "label",
+        "kind",
+        "wrappers",
+        "opaque"
+      ],
+      "title": "Toolset",
+      "type": "object"
+    },
+    "Usage": {
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": {
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "title": "Output Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens"
+      ],
+      "title": "Usage",
+      "type": "object"
+    },
+    "Versions": {
+      "additionalProperties": false,
+      "properties": {
+        "pydantic_ai": {
+          "title": "Pydantic Ai",
+          "type": "string"
+        },
+        "pydantic_ai_viz": {
+          "title": "Pydantic Ai Viz",
+          "type": "string"
+        },
+        "python": {
+          "title": "Python",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pydantic_ai_viz",
+        "pydantic_ai",
+        "python"
+      ],
+      "title": "Versions",
+      "type": "object"
+    }
+  },
+  "$id": "https://lowweilin.github.io/pydantic-ai-viz/schema/pviz.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One event of a pydantic-ai-viz session log: an SSE message, a line of a .pviz.jsonl recording, or an element of an embedded export. Generated from src/pydantic_ai_viz/_models.py by scripts/gen_schema.py; do not edit by hand.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/SessionStarted"
+    },
+    {
+      "$ref": "#/$defs/AgentBlueprintEvent"
+    },
+    {
+      "$ref": "#/$defs/GraphBlueprintEvent"
+    },
+    {
+      "$ref": "#/$defs/SpanStarted"
+    },
+    {
+      "$ref": "#/$defs/SpanEnded"
+    },
+    {
+      "$ref": "#/$defs/StreamDelta"
+    }
+  ],
+  "title": "pviz envelope (wire format version 1)"
+}
