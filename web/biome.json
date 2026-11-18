@@ -1,6 +1,8 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
-  "vcs": { "enabled": false },
+  "vcs": {
+    "enabled": false
+  },
   "files": {
     "includes": ["**", "!dist", "!node_modules", "!fixtures/*.jsonl", "!pnpm-lock.yaml"]
   },
@@ -21,13 +23,22 @@
       },
       "suspicious": {
         "noArrayIndexKey": "off"
+      },
+      "complexity": {
+        "noImportantStyles": "off"
       }
     }
   },
   "css": {
-    "parser": { "tailwindDirectives": true }
+    "parser": {
+      "tailwindDirectives": true
+    }
   },
   "assist": {
-    "actions": { "source": { "organizeImports": "on" } }
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
   }
 }

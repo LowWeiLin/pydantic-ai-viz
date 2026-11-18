@@ -1,1 +1,255 @@
 @import "tailwindcss";
+@import "./tokens.css";
+
+/*
+ * Tailwind is wired to the tokens and nothing else: the default palette, type scale and radii
+ * are removed, so a class like `text-red-500` or `rounded-lg` does not exist. Use
+ * `bg-surface`, `text-muted`, `border-line`, `text-ui`, `rounded-control`, and so on.
+ */
+@theme inline {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-fg: var(--text);
+  --color-muted: var(--text-muted);
+  --color-faint: var(--text-faint);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-contrast);
+  --color-agent: var(--kind-agent);
+  --color-model: var(--kind-model);
+  --color-tool: var(--kind-tool);
+  --color-output: var(--kind-output);
+  --color-graph: var(--kind-graph);
+  --color-ok: var(--ok);
+  --color-retry: var(--retry);
+  --color-error: var(--error);
+  --color-scrim: var(--scrim);
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto,
+    "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+
+  /* 11 meta, 12 mono data, 13 base UI, 14 emphasis, 16 panel titles, 20 page titles. */
+  --text-*: initial;
+  --text-meta: 11px;
+  --text-meta--line-height: 1.45;
+  --text-data: 12px;
+  --text-data--line-height: 1.45;
+  --text-ui: 13px;
+  --text-ui--line-height: 1.45;
+  --text-em: 14px;
+  --text-em--line-height: 1.45;
+  --text-title: 16px;
+  --text-title--line-height: 1.35;
+  --text-page: 20px;
+  --text-page--line-height: 1.3;
+
+  --radius-*: initial;
+  --radius-control: 6px;
+  --radius-card: 10px;
+  --radius-full: 9999px;
+
+  --shadow-*: initial;
+  --shadow-float: var(--float-shadow);
+
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --animate-fade-in: pviz-fade-in 150ms var(--ease-out) both;
+  --animate-pulse-ring: pviz-pulse-ring 1.6s ease-out infinite;
+  --animate-shimmer: pviz-shimmer 1.4s linear infinite;
+  --animate-spin: pviz-spin 0.9s linear infinite;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow: hidden;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+
+  /* One focus ring for every control. Never removed, only restyled. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  button,
+  [role="button"],
+  summary {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+}
+
+@layer components {
+  /*
+   * Tones: put `tone-<name>` on an element to set --tone, then style with it. `tone-soft` is
+   * the tinted chip surface; `tone-text` only colours the text or icon.
+   */
+  .tone-neutral {
+    --tone: var(--text-muted);
+  }
+  .tone-accent {
+    --tone: var(--accent);
+  }
+  .tone-agent {
+    --tone: var(--kind-agent);
+  }
+  .tone-model {
+    --tone: var(--kind-model);
+  }
+  .tone-tool {
+    --tone: var(--kind-tool);
+  }
+  .tone-output {
+    --tone: var(--kind-output);
+  }
+  .tone-graph {
+    --tone: var(--kind-graph);
+  }
+  .tone-ok {
+    --tone: var(--ok);
+  }
+  .tone-retry {
+    --tone: var(--retry);
+  }
+  .tone-error {
+    --tone: var(--error);
+  }
+
+  .tone-text {
+    color: var(--tone);
+  }
+
+  .tone-soft {
+    color: var(--tone);
+    background: color-mix(in srgb, var(--tone) var(--tint), transparent);
+    border-color: color-mix(in srgb, var(--tone) 30%, transparent);
+  }
+
+  /* A 2px rail in the tone colour down the left edge: marks the kind of a row or card. */
+  .tone-rail {
+    box-shadow: inset 2px 0 0 var(--tone);
+  }
+
+  /* Running: a soft ring that breathes outward. Static under reduced motion. */
+  .pulse-ring {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--tone, var(--accent)) 55%, transparent);
+    animation: var(--animate-pulse-ring);
+  }
+
+  /* The canvas backdrop: a quiet dot grid, 4px-grid aligned. */
+  .dot-grid {
+    background-color: var(--bg);
+    background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  .skeleton {
+    border-radius: 6px;
+    background: linear-gradient(
+      90deg,
+      var(--surface-2) 0%,
+      color-mix(in srgb, var(--surface-2) 55%, var(--border)) 50%,
+      var(--surface-2) 100%
+    );
+    background-size: 200% 100%;
+    animation: var(--animate-shimmer);
+  }
+}
+
+@keyframes pviz-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+
+@keyframes pviz-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--tone, var(--accent)) 55%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+@keyframes pviz-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes pviz-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Active edges on the canvas use this (stage: canvas). Kept here with the other motion. */
+@keyframes pviz-dash {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+/* The one place !important is right: nothing may opt back in to motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .pulse-ring {
+    animation: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--tone, var(--accent)) 60%, transparent);
+  }
+
+  .skeleton {
+    animation: none;
+  }
+}
