@@ -1,7 +1,7 @@
 import { type ReactNode, useMemo } from "react";
 import { projectSpan, type RunSummary, runs, runTotals } from "../data/selectors";
 import { useViewer } from "../data/store";
-import { usePlaybackTime } from "../data/usePlayback";
+import { usePlaybackTime, useRunBounds } from "../data/usePlayback";
 import { Badge, StatusDot } from "../ui/Badge";
 import { Skeleton } from "../ui/EmptyState";
 import { Icon, type IconName } from "../ui/Icon";
@@ -164,13 +164,16 @@ export function RunListItem({ run, active }: { run: RunSummary; active: boolean 
 function OpenRunItem({ run }: { run: RunSummary }) {
   const data = useViewer((state) => state.data);
   const t = usePlaybackTime();
+  const bounds = useRunBounds(run.traceId);
   const shown = useMemo((): RunSummary => {
     const root = data.spans[run.rootSpanId];
     const projected = root ? projectSpan(root, t) : null;
     if (!projected) return run;
     const totals = runTotals(data, run.traceId, t);
-    return { ...run, status: projected.status, durationMs: totals.durationMs, usage: totals.usage };
-  }, [data, run, t]);
+    // The same clock as the run screen: a run watched live counts on between events.
+    const durationMs = bounds ? Math.max(0, Math.min(t, bounds.end) - bounds.start) : 0;
+    return { ...run, status: projected.status, durationMs, usage: totals.usage };
+  }, [data, run, t, bounds]);
   return <RunListItem run={shown} active />;
 }
 

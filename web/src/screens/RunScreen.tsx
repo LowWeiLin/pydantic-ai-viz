@@ -17,13 +17,17 @@ import {
   type RunSubject,
   type RunView,
   runBoundaries,
-  runBounds,
   runSubjects,
   runTotals,
   runView,
 } from "../data/selectors";
 import { useViewer } from "../data/store";
-import { useAutoReplay, usePlaybackDriver, usePlaybackTime } from "../data/usePlayback";
+import {
+  useAutoReplay,
+  usePlaybackDriver,
+  usePlaybackTime,
+  useRunBounds,
+} from "../data/usePlayback";
 import { BlueprintInspector, SpanInspector } from "../inspector/Inspector";
 import { rememberTab } from "../inspector/parts";
 import { formatCount, formatDuration, plural } from "../shell/format";
@@ -122,7 +126,7 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
   const live = useViewer((state) => state.source.kind === "live");
   const t = usePlaybackTime();
 
-  const bounds = useMemo(() => runBounds(data, traceId), [data, traceId]);
+  const bounds = useRunBounds(traceId);
   usePlaybackDriver(bounds);
   useAutoReplay(traceId, bounds, spanId);
 
@@ -210,7 +214,9 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
             chips={
               <>
                 <StatusDot status={view.status} showLabel className="mr-1" />
-                <Chip mono>{formatDuration(totals.durationMs)}</Chip>
+                <Chip mono>
+                  {formatDuration(Math.max(0, Math.min(t, bounds.end) - bounds.start))}
+                </Chip>
                 <Chip tone="model" icon="model">
                   {plural(totals.requests, "request")}
                 </Chip>

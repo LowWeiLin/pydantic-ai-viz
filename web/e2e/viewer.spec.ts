@@ -578,6 +578,29 @@ test.describe("live", () => {
     await expect(rows(page)).toHaveCount(HELD_SPANS);
   });
 
+  test("the clock of a live run keeps counting between events", async ({ page }) => {
+    // The mock sends 40 events and then holds the stream open: what a slow tool or a model
+    // request that is not streamed looks like to the viewer. The run must not look hung.
+    await page.goto("/live-hold-40/");
+    await page.waitForURL(/#\/runs\//);
+    await expect(rows(page).first()).toBeVisible();
+    const length = async () => Number(await slider(page).getAttribute("aria-valuemax"));
+    const first = await length();
+    await expect.poll(length).toBeGreaterThan(first + 500);
+    const sidebarRun = page.getByRole("navigation", { name: "Runs" }).getByRole("link").first();
+    const shown = await sidebarRun.textContent();
+    await expect(sidebarRun).not.toHaveText(shown ?? "");
+
+    // Pausing holds the moment it was pressed. It does not fall back to the last event.
+    await page.getByRole("button", { name: "Pause", exact: true }).click();
+    const held = await length();
+    expect(held).toBeGreaterThan(first + 500);
+    await page.waitForTimeout(300);
+    expect(await length()).toBe(held);
+    await page.getByRole("button", { name: "Live" }).click();
+    await expect.poll(length).toBeGreaterThan(held);
+  });
+
   test("a paused live run that is played again catches up and is live again", async ({ page }) => {
     await page.goto("/live-hold-56/");
     await page.waitForURL(/#\/runs\//);
