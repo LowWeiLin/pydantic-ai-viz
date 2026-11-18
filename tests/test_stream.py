@@ -164,6 +164,21 @@ async def test_listener_is_silent_once_no_streaming_session_is_open() -> None:
         assert deltas_of(session.events) == []
 
 
+async def test_stream_is_off_when_content_capture_is_off() -> None:
+    """A token delta is content; with ``include_content=False`` none may reach the log."""
+    # A model that cannot stream proves the request was not switched to streaming either.
+    from pydantic_ai.messages import ModelResponse
+
+    agent = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart("a secret")])), name="private")
+    with record(agent, stream=True, include_content=False) as session:
+        await agent.run("hi")
+        events = session.events
+    assert session.stream is False
+    assert events[0]["stream"] is False
+    assert deltas_of(events) == []
+    assert "a secret" not in json.dumps(events)
+
+
 async def test_unregistered_agents_have_no_listener_and_so_no_deltas() -> None:
     team = build_team()
     with record(team.researcher, stream=True) as session:

@@ -578,7 +578,6 @@ def test_run_captures_the_script_then_registers_what_it_left_behind(
         capsys,
         "run",
         "--stream",
-        "--no-content",
         "--record",
         "out.pviz.jsonl",
         "--export",
@@ -609,7 +608,7 @@ def test_run_captures_the_script_then_registers_what_it_left_behind(
 
     events = seen["events"]
     started = events[0]
-    assert (started["title"], started["stream"], started["include_content"]) == ("my_script", True, False)
+    assert (started["title"], started["stream"], started["include_content"]) == ("my_script", True, True)
     # The run was captured live, before the script's globals could be inspected: first an
     # observed blueprint, then the static one taking over the same id once the script ended.
     blueprints = [(e["agent"]["id"], e["agent"]["name"], e["agent"]["source"]) for e in events if "agent" in e]
@@ -617,12 +616,36 @@ def test_run_captures_the_script_then_registers_what_it_left_behind(
     assert blueprints[-1] == ("a1", "agent", "static")
     assert finished_runs(events) == 1
     assert any(e["type"] == "stream.delta" for e in events)
-    # --no-content: structure without the prompt.
-    assert "Hello" not in json.dumps(events)
     # Files were written when the script ended, before the wait, with the full log.
     assert seen["files_at_wait"] == ["out.html", "out.pviz.jsonl", "seen.json"]
     assert read_jsonl(tmp_path / "out.pviz.jsonl") == events
     assert session.closed
+
+
+def test_run_no_content_keeps_prompts_and_tokens_out_even_with_stream(
+    capsys: pytest.CaptureFixture[str],
+    script: Callable[[str], Path],
+    serving: Callable[[Watch], list[Session]],
+) -> None:
+    path = script("pass")
+    seen: dict[str, Any] = {}
+
+    def watch(session: Session) -> None:
+        seen["events"] = follow(session, lambda events: len(events) == len(session.events))
+
+    serving(watch)
+    code, _, err = run_cli(capsys, "run", "--stream", "--no-content", "--no-open", "--port", "0", str(path))
+    assert (code, err) == (0, "")
+    events = seen["events"]
+    started = events[0]
+    # Token deltas are content, so --no-content wins over --stream.
+    assert (started["stream"], started["include_content"]) == (False, False)
+    assert finished_runs(events) == 1
+    assert not any(e["type"] == "stream.delta" for e in events)
+    # Structure without the prompt or the model's answer (TestModel answers "success (no tool calls)").
+    dumped = json.dumps(events)
+    assert "Hello" not in dumped
+    assert "success" not in dumped
 
 
 def test_run_on_a_script_that_raises_prints_the_traceback_and_keeps_serving(

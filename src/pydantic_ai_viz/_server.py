@@ -341,7 +341,8 @@ def serve(
         include_content: Capture prompts, tool arguments and results. With `False`
             the structure of each run is kept and the content is `null`.
         stream: Capture token deltas. This switches model requests of the registered
-            agents to streaming, so a model that cannot stream will fail.
+            agents to streaming, so a model that cannot stream will fail. Has no
+            effect with `include_content=False`: token deltas are content.
         instrument: Call `Agent.instrument_all` with this session's own tracer
             provider. With `False` nothing global is touched; add
             `session.span_processor` to your own provider instead.

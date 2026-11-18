@@ -260,7 +260,8 @@ class Session:
         url: Address of the local viewer, or `None` when there is no server.
         title: Shown in the viewer's top bar and used for export file names.
         include_content: Whether prompts, tool arguments and results are captured.
-        stream: Whether token streaming is captured.
+        stream: Whether token deltas are captured. Always `False` when
+            `include_content` is `False`: a token delta is content.
     """
 
     def __init__(
@@ -278,6 +279,7 @@ class Session:
             title: Session title; defaults to `"pydantic-ai-viz"`.
             include_content: Capture prompts, tool arguments and results.
             stream: Capture token deltas (switches model requests to streaming).
+                Has no effect when `include_content` is false.
             instrument: Call `Agent.instrument_all` with this session's tracer provider.
             max_events: Size of the event log before whole completed runs are dropped.
 
@@ -287,7 +289,9 @@ class Session:
         self.url: str | None = None
         self.title = title or DEFAULT_TITLE
         self.include_content = include_content
-        self.stream = stream
+        # A token delta is response text or tool arguments. With content capture off there is
+        # nothing left of it to log, so no listener is attached and no request is forced to stream.
+        self.stream = stream = stream and include_content
         self.session_id = uuid.uuid4().hex
 
         self._lock = threading.RLock()
@@ -688,7 +692,8 @@ def record(
         include_content: Capture prompts, tool arguments and results. With `False`
             the structure of each run is kept and the content is `null`.
         stream: Capture token deltas. This switches model requests of the registered
-            agents to streaming, so a model that cannot stream will fail.
+            agents to streaming, so a model that cannot stream will fail. Has no
+            effect with `include_content=False`: token deltas are content.
         instrument: Call `Agent.instrument_all` with this session's own tracer
             provider. With `False` nothing global is touched; add
             `session.span_processor` to your own provider instead.

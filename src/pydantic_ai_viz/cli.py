@@ -193,7 +193,7 @@ def _run(args: argparse.Namespace) -> int:
         namespace: dict[str, Any] = {}
         # The script's agents are not known until it has run, so with --stream the token
         # listener goes on each agent as the script creates it.
-        listening = attach_on_creation() if args.stream else contextlib.nullcontext()
+        listening = attach_on_creation() if session.stream else contextlib.nullcontext()
         try:
             with script_environment(script, [str(script), *args.args]), listening:
                 namespace = runpy.run_path(str(script), run_name="__main__")
