@@ -22,6 +22,7 @@ import { StatusDot } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { cx, kindMeta, statusMeta, toneClass } from "../ui/tone";
+import { useStickToBottom } from "../ui/useStickToBottom";
 import type { Span } from "../wire";
 import { PlaybackBar } from "./PlaybackBar";
 import { barExtent, fraction, rulerTicks, tickLabel } from "./ruler";
@@ -208,7 +209,13 @@ export function Timeline({
   /** Shown in the playback bar. */
   note?: ReactNode;
 }) {
-  const scroller = useRef<HTMLDivElement>(null);
+  const rowCount = view.order.length;
+  // While the clock is moving and nothing is selected, follow the newest row. Scrolling up to
+  // read earlier rows lets go of it, so the list does not snap back with every new span.
+  const scroller = useStickToBottom<HTMLDivElement>(
+    playback.mode !== "paused" && !selectedId,
+    rowCount,
+  );
   const total = Math.max(0, bounds.end - bounds.start);
   const position = playback.mode === "live" ? 1 : fraction(playback.t, bounds);
   const ticks = useMemo(() => rulerTicks(total, 8), [total]);
@@ -221,16 +228,7 @@ export function Timeline({
     scroller.current
       ?.querySelector<HTMLElement>(`[data-span="${selectedId}"]`)
       ?.scrollIntoView?.({ block: "nearest" });
-  }, [selectedId]);
-
-  // While the clock is moving and nothing is selected, follow the newest row.
-  const rowCount = view.order.length;
-  const moving = playback.mode !== "paused";
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when a row is added, not on every tick.
-  useEffect(() => {
-    const element = scroller.current;
-    if (element && moving && !selectedId) element.scrollTop = element.scrollHeight;
-  }, [rowCount]);
+  }, [selectedId, scroller]);
 
   const onRowKeyDown = (event: KeyboardEvent<HTMLDivElement>, id: string): void => {
     const index = view.order.indexOf(id);

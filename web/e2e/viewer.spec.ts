@@ -150,6 +150,29 @@ test.describe("replay", () => {
     expect(errors).toEqual([]);
   });
 
+  test("the span list follows the newest row until it is scrolled away from", async ({ page }) => {
+    await openRun(page, "sample", TRIAGE);
+    const list = page.getByRole("tree").locator("xpath=ancestor::div[2]");
+    const position = () =>
+      list.evaluate((el) => ({
+        top: el.scrollTop,
+        fromBottom: el.scrollHeight - el.scrollTop - el.clientHeight,
+      }));
+    // More rows than fit: while the replay runs, the newest one is in view.
+    await expect.poll(() => rows(page).count()).toBeGreaterThanOrEqual(10);
+    expect((await position()).top).toBeGreaterThan(0);
+    expect((await position()).fromBottom).toBeLessThan(2);
+
+    // Scroll up to read the first rows: new spans must not pull the list back down.
+    await list.hover();
+    await page.mouse.wheel(0, -2000);
+    await expect.poll(async () => (await position()).top).toBe(0);
+    const before = await rows(page).count();
+    await expect.poll(() => rows(page).count()).toBeGreaterThan(before);
+    expect((await position()).top).toBe(0);
+    await expect(rows(page).first()).toBeInViewport();
+  });
+
   test("scrubbing back hides later spans", async ({ page }) => {
     await openRun(page, "sample", TRIAGE);
     await skipToEnd(page);

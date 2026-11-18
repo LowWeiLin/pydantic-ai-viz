@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import { Chip, StatusDot } from "./Badge";
@@ -9,6 +9,7 @@ import { MiddleTruncate } from "./MiddleTruncate";
 import { Dialog, Tabs } from "./overlays";
 import { SchemaTable, schemaRows, schemaType } from "./SchemaTable";
 import { statusMeta } from "./tone";
+import { useStickToBottom } from "./useStickToBottom";
 
 describe("StatusDot and Chip", () => {
   test("every status has a distinct icon and a word, not just a colour", () => {
@@ -278,5 +279,52 @@ describe("CopyButton, EmptyState, Tabs, Dialog", () => {
     expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+});
+
+/** A scroll area that follows its newest line. */
+function Log({ lines, active = true }: { lines: number; active?: boolean }) {
+  const ref = useStickToBottom<HTMLDivElement>(active, lines);
+  return <div ref={ref} data-testid="log" />;
+}
+
+describe("useStickToBottom", () => {
+  /** jsdom lays nothing out, so the sizes are given: 100 px high, 20 px per line. */
+  function measured(lines: number): HTMLElement {
+    const log = screen.getByTestId("log");
+    Object.defineProperty(log, "clientHeight", { configurable: true, value: 100 });
+    Object.defineProperty(log, "scrollHeight", { configurable: true, value: lines * 20 });
+    return log;
+  }
+
+  const scrollTo = (log: HTMLElement, top: number): void => {
+    log.scrollTop = top;
+    fireEvent.scroll(log);
+  };
+
+  test("follows new content until the user scrolls away, and again once they are back", () => {
+    const { rerender } = render(<Log lines={10} />);
+    let log = measured(20);
+    rerender(<Log lines={20} />);
+    expect(log.scrollTop).toBe(400); // at the bottom: scrollTop is clamped by a real browser
+
+    // Reading further up: more content arrives and the position stays put.
+    scrollTo(log, 120);
+    log = measured(30);
+    rerender(<Log lines={30} />);
+    expect(log.scrollTop).toBe(120);
+
+    // Back at the bottom (within a row of it): following resumes.
+    scrollTo(log, 600 - 100 - 10);
+    log = measured(40);
+    rerender(<Log lines={40} />);
+    expect(log.scrollTop).toBe(800);
+  });
+
+  test("does nothing while inactive", () => {
+    const { rerender } = render(<Log lines={10} active={false} />);
+    const log = measured(20);
+    rerender(<Log lines={20} active={false} />);
+    expect(log.scrollTop).toBe(0);
   });
 });
