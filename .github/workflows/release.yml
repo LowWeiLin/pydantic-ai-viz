@@ -1,0 +1,129 @@
+name: Release
+
+# Runs when a tag like v0.1.0 is pushed. Publishing uses PyPI trusted
+# publishing (OpenID Connect): there is no API token in this repository.
+#
+# One-time setup on PyPI: add a trusted publisher for the project with
+#   owner LowWeiLin, repository pydantic-ai-viz, workflow release.yml,
+#   environment pypi.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: "1"
+  PYDANTIC_AI_NO_BANNER: "1"
+
+jobs:
+  build:
+    name: Build and check the distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: "11"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Build the viewer
+        run: |
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir web build
+
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uv sync --locked
+      - run: uv run pytest -q
+
+      - run: uv build
+
+      - name: The tag matches the package version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          test -f "dist/pydantic_ai_viz-${version}-py3-none-any.whl" || {
+            echo "::error::tag ${GITHUB_REF_NAME} does not match the built version:"
+            ls dist
+            exit 1
+          }
+
+      - name: The viewer is inside the wheel
+        run: uv run --no-project python .github/scripts/check_wheel.py dist
+
+      - name: The wheel works in a clean environment
+        run: |
+          wheel="$(ls "$GITHUB_WORKSPACE"/dist/pydantic_ai_viz-*.whl)"
+          mkdir "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          uv run --no-project --isolated --with "$wheel" \
+            pydantic-ai-viz demo support --speed 0 --record out.pviz.jsonl
+
+      - name: Extract the changelog section for this version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v version="$version" '
+            /^## \[/ { printing = (index($0, "## [" version "]") == 1) ; next }
+            /^\[[^]]+\]: / { next }
+            printing { print }
+          ' CHANGELOG.md > release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "::error::CHANGELOG.md has no section for ${version}"
+            exit 1
+          fi
+          cat release-notes.md
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pydantic-ai-viz/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create the GitHub release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+      - name: Create the release
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}

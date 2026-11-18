@@ -1,0 +1,38 @@
+version: 2
+
+# Weekly, one grouped pull request per ecosystem. Commit prefixes follow the
+# project's Conventional Commits rule.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: build
+    groups:
+      python:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: build(web)
+    groups:
+      web:
+        patterns: ["*"]
+        update-types: [minor, patch]

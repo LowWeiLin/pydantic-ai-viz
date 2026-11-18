@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting
+    url: https://lowweilin.github.io/pydantic-ai-viz/troubleshooting/
+    about: No runs appear, port in use, streaming errors and other common problems.
+  - name: Report a security problem
+    url: https://github.com/LowWeiLin/pydantic-ai-viz/security/advisories/new
+    about: Please report vulnerabilities privately, not as a public issue.
+  - name: Questions about Pydantic AI itself
+    url: https://ai.pydantic.dev/help/
+    about: pydantic-ai-viz is an unofficial project. For Pydantic AI questions, ask the Pydantic AI community.

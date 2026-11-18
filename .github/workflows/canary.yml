@@ -1,0 +1,66 @@
+name: Canary
+
+# Runs the test suite against the newest pydantic-ai release, ahead of the lock
+# file. pydantic-ai-viz reads a few private pydantic-ai attributes; this job is
+# how a release that changes them is noticed within a week, not by a user.
+# On failure it opens an issue, or comments on the one that is already open.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays, 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: "1"
+  PYDANTIC_AI_NO_BANNER: "1"
+
+jobs:
+  canary:
+    name: Test against the latest pydantic-ai
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Upgrade pydantic-ai-slim past the lock file
+        run: uv sync --upgrade-package pydantic-ai-slim
+
+      - name: Record the resolved version
+        id: versions
+        run: |
+          version="$(uv pip show pydantic-ai-slim | sed -n 's/^Version: //p')"
+          echo "pydantic_ai=${version}" >> "$GITHUB_OUTPUT"
+          echo "pydantic-ai-slim ${version}"
+
+      - run: uv run --no-sync pytest -q
+
+      - name: Report the failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYDANTIC_AI_VERSION: ${{ steps.versions.outputs.pydantic_ai }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create canary --repo "$GITHUB_REPOSITORY" --force \
+            --color D93F0B --description "Breakage found by the weekly canary"
+
+          body="The canary run failed against pydantic-ai-slim ${PYDANTIC_AI_VERSION:-(version not resolved)}.
+
+          Run: ${RUN_URL}
+
+          Likely causes: a private attribute read through \`_compat.py\` changed, or a span attribute handled in \`_normalize.py\` was renamed. See the compatibility page for the list."
+
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --label canary --state open --json number --jq '.[0].number')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --label canary \
+              --title "Canary: tests fail with pydantic-ai-slim ${PYDANTIC_AI_VERSION:-latest}" \
+              --body "$body"
+          fi

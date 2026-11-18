@@ -1,0 +1,75 @@
+name: Bug report
+description: Something does not work, or works differently from what the docs say.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. A report that can be reproduced with `TestModel` or `FunctionModel` needs no API key to investigate and gets fixed fastest.
+
+        **Do not paste recordings or exports of real runs.** They contain your prompts and tool results. Do not report security problems here; use the Security tab.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The smallest script or command that shows the problem.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output or traceback
+      description: Terminal output, a traceback, or the text of a warning shown in the viewer.
+      render: text
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where does it show up?
+      options:
+        - Blueprint (view, blueprint)
+        - Live runs (serve, run)
+        - Token streaming
+        - Graphs (run_graph)
+        - Recording or export
+        - Viewer (browser UI)
+        - CLI
+        - Docs
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: pydantic-ai-viz version
+      description: Output of `pydantic-ai-viz --version`.
+      placeholder: pydantic-ai-viz 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: pydantic-ai-version
+    attributes:
+      label: pydantic-ai version
+      description: Output of `pip show pydantic-ai-slim` or `uv pip show pydantic-ai-slim`.
+      placeholder: 2.70.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Python version and operating system
+      placeholder: Python 3.12, Windows 11
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser (for viewer problems)
+      placeholder: Firefox 145

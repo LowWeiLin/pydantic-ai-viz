@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest something pydantic-ai-viz should show or do.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        pydantic-ai-viz is a local viewer for development. Production tracing (Logfire) and chat playgrounds (`agent.to_web()`) are deliberately out of scope; the README lists the non-goals.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation you were in and what was hard about it. A concrete example beats a general wish.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help?
+      description: What you would like to see or be able to do. A sketch of the API, the command or the screen is welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you do today?
+      description: Workarounds or other tools you use for this.
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be willing to work on this.
