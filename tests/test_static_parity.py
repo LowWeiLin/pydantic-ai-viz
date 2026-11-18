@@ -103,16 +103,17 @@ def test_agents_read_from_source_match_the_live_agents(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", DEMOS)
-def test_what_only_running_can_know_is_a_warning_not_a_guess(name: str) -> None:
+def test_a_helper_in_another_file_is_followed_and_defaults_are_not_made_up(name: str) -> None:
     _, static = live_and_static(name)
     for found in static.agents:
-        # The demos script their models with a helper from another file.
+        # The demos script their models with a helper from another file. That file is read as well,
+        # so the model is known to be a FunctionModel; the expression stays the one at the call site.
         assert found.model is not None
         assert found.model.id is None
         assert found.model.expression is not None
         assert found.model.expression.startswith("scripted_model(")
-        assert len(found.warnings) == 1
-        assert found.warnings[0].startswith("the model is set by `scripted_model(")
+        assert (found.model.provider, found.model.offline) == ("function", True)
+        assert found.warnings == []
         # Pydantic AI's defaults are not passed off as something the source says.
         assert found.settings.end_strategy is None
         assert (found.capabilities, found.native_tools) == ([], [])

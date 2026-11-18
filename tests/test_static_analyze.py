@@ -156,13 +156,13 @@ def test_files_given_together_are_linked_through_their_imports(tmp_path: Path) -
         "the output schema is incomplete: `Mystery` could not be resolved from the analysed source"
     ]
 
-    # Alone, the file still shows its agent; what the other files would have said is named as missing.
-    (alone,) = analyze(paths[0]).agents
-    assert (alone.name, alone.delegates) == ("writer", [])
-    assert [(t.name, t.function, t.parameters_schema) for t in alone.tools if t.name == "word_count"] == [
-        ("word_count", "app.helpers.word_count", None)
-    ]
-    assert len(alone.warnings) == 2
+    # Alone, the file is read together with the files it imports, so the picture is the same one.
+    alone = analyze(paths[0])
+    assert alone.files == ["main.py", "__init__.py", "helpers.py", "models.py"]
+    assert [(b.id, b.name, b.location) for b in alone.agents] == [(b.id, b.name, b.location) for b in found.agents]
+    assert [t.model_dump() for t in alone.agents[0].tools] == [t.model_dump() for t in writer.tools]
+    assert alone.agents[0].delegates == writer.delegates
+    assert alone.agents[0].warnings == writer.warnings
 
 
 def test_a_name_after_the_path_selects_one_agent_and_the_agents_it_delegates_to(tmp_path: Path) -> None:
@@ -195,10 +195,21 @@ def test_a_selection_and_a_whole_file_can_be_mixed(tmp_path: Path) -> None:
         ("team.py:ask_helper", "no agent or graph is assigned to 'ask_helper'"),
         ("team.py:1st", "not a name: '1st' in team.py:1st"),
         ("team.py:", "not a name: '' in team.py:"),
-        (".", ". is a directory; pass the path of a .py file"),
-        ("team", "cannot read 'team' without importing it"),
-        ("pkg.module:agent", "use --import to import a module by name (this runs its code)"),
-        ("notes.txt", "cannot read 'notes.txt' without importing it"),
+        ("team:nope", "no agent or graph is assigned to 'nope' at the top level of team.py"),
+        ("team:1st", "not a name: '1st' in team:1st"),
+        ("nowhere", "no module named 'nowhere': looked for nowhere.py or nowhere/__init__.py below"),
+        ("pkg.module:agent", "no module named 'pkg.module': looked for pkg/module.py or pkg/module/__init__.py"),
+        ("pkg.module:agent", "or use --import to import it by name (this runs its code)"),
+        ("notes.txt", "notes.txt is not a .py file; only Python source can be read"),
+        ("no/such/place", "no file or directory at no/such/place"),
+        ("not a target!", "it is not the path of a .py file or of a directory, a module name, or a GitHub repository"),
+        ("https://example.com/owner/repo", "of remote code only GitHub repositories are fetched"),
+        ("git@github.com:owner/repo.git", "of remote code only GitHub repositories are fetched"),
+        ("gh:owner", "the short form is gh:owner/repo[@ref][/subdir]"),
+        ("https://github.com/owner", "a GitHub URL names a repository"),
+        ("https://github.com/owner/repo/issues/3", "after the repository a GitHub URL continues with"),
+        ("gh:owner/repo@--upload-pack=x", "is not part of a ref or a path that can be fetched"),
+        ("gh:-owner/repo", "-owner/repo is not the name of a GitHub repository"),
     ],
 )
 def test_a_target_that_names_nothing_is_an_error_that_says_why(

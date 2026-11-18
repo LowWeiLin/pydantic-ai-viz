@@ -18,10 +18,11 @@ import io
 import re
 import tokenize
 import warnings
+from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, cast
 
 FunctionNode: TypeAlias = ast.FunctionDef | ast.AsyncFunctionDef
 ScopeNode: TypeAlias = ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
@@ -31,6 +32,8 @@ MAX_EXPRESSION_CHARS = 200
 """Source text of an expression is cut to this many characters on the wire."""
 
 _WHITESPACE = re.compile(r"\s+")
+_LEAVES = (ast.Name, ast.Constant, ast.expr_context, ast.operator, ast.unaryop, ast.boolop, ast.cmpop)
+"""Nodes with nothing below them that the index needs."""
 _TYPE_ALIAS: type[ast.stmt] | None = getattr(ast, "TypeAlias", None)
 """The ``type X = ...`` statement, which the parser knows from Python 3.12 on."""
 
@@ -121,13 +124,24 @@ class Module:
     """Dotted module name, as far as the directory layout says."""
     lines: list[str]
     scope: Scope = field(init=False)
+    directory: str = field(init=False)
+    """The directory the file is in, as a string: the key under which its imports are looked up."""
     calls: list[CallSite] = field(default_factory=list[CallSite])
     decorated: list[Decorated] = field(default_factory=list[Decorated])
-    star_imports: list[str] = field(default_factory=list[str])
+    star_imports: list[tuple[str, int]] = field(default_factory=list[tuple[str, int]])
+    """``from module import *`` statements at any depth, as ``(dotted name, leading dots)``."""
+    imports: list[tuple[str, int]] = field(default_factory=list[tuple[str, int]])
+    """Every module an import statement anywhere in the file may refer to, as ``(dotted name, leading dots)``.
+
+    ``from a import b`` is listed as ``a`` and as ``a.b``, since ``b`` may be a module.
+    """
     function_scopes: dict[int, Scope] = field(default_factory=dict[int, Scope])
     """``id(FunctionDef)`` -> the scope of its body."""
     class_scopes: dict[int, Scope] = field(default_factory=dict[int, Scope])
     """``id(ClassDef)`` -> the scope of its body."""
+
+    def __post_init__(self) -> None:
+        self.directory = str(self.path.parent)
 
     def text(self, node: ast.AST) -> str:
         """The source text of ``node`` on one line, cut to ``MAX_EXPRESSION_CHARS``."""
@@ -263,15 +277,19 @@ class _Indexer:
             self._class(node, scope)
         elif isinstance(node, ast.Import):
             for alias in node.names:
+                parts = alias.name.split(".")
+                self.module.imports.extend((".".join(parts[:end]), 0) for end in range(1, len(parts) + 1))
                 # ``import a.b`` binds ``a``; ``import a.b as c`` binds ``c`` to ``a.b``.
                 bound = alias.asname or alias.name.partition(".")[0]
                 target = alias.name if alias.asname else bound
                 scope.bind(Binding(bound, "import", line, scope, module=target))
         elif isinstance(node, ast.ImportFrom):
+            self.module.imports.append((node.module or "", node.level))
             for alias in node.names:
+                if alias.name != "*":
+                    self.module.imports.append((f"{node.module or ''}.{alias.name}".strip("."), node.level))
                 if alias.name == "*":
-                    if node.module and not node.level:
-                        self.module.star_imports.append(node.module)
+                    self.module.star_imports.append((node.module or "", node.level))
                     continue
                 scope.bind(
                     Binding(
@@ -421,7 +439,19 @@ class _Indexer:
     def _expression(self, root: ast.AST, scope: Scope, *, bound_to: str | None = None, statement: bool = False) -> None:
         """Record the calls and walrus bindings anywhere inside one expression."""
         top = unwrap(root) if isinstance(root, ast.expr) else root
-        for node in ast.walk(root):
+        # The same breadth-first order as ``ast.walk``, without visiting the leaves that make up most of a
+        # tree: this loop sees every expression of every file.
+        pending: deque[ast.AST] = deque([root])
+        while pending:
+            node = pending.popleft()
+            if isinstance(node, _LEAVES):
+                continue
+            for name in node._fields:
+                value: object = getattr(node, name, None)
+                if isinstance(value, ast.AST):
+                    pending.append(value)
+                elif isinstance(value, list):
+                    pending.extend(item for item in cast("list[object]", value) if isinstance(item, ast.AST))
             if isinstance(node, ast.Call):
                 is_top = node is top
                 self.module.calls.append(

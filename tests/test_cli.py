@@ -560,9 +560,10 @@ def test_view_says_on_stderr_what_it_skipped_and_puts_it_in_the_page(
         ("missing.py", "file not found: missing.py"),
         ("viz_cli_agents.py:nope", "no agent or graph is assigned to 'nope' at the top level of viz_cli_agents.py"),
         ("viz_cli_agents.py:never", "no agent or graph is assigned to 'never'"),
-        # A module name can only be imported, and importing runs code: that has to be asked for.
-        ("viz_cli_agents:triage", "cannot read 'viz_cli_agents:triage' without importing it"),
-        ("viz_cli_agents", "use --import to import a module by name (this runs its code)"),
+        # A module name is looked for on disk. One that is not there is not imported to find out more.
+        ("no_such_module:triage", "no module named 'no_such_module'"),
+        ("no_such_module", "or use --import to import it by name (this runs its code)"),
+        ("https://example.com/owner/repo", "of remote code only GitHub repositories are fetched"),
     ],
 )
 def test_view_target_that_cannot_be_read_is_a_usage_error(

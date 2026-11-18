@@ -741,10 +741,10 @@ class Session:
 
 
 def default_title(targets: Sequence[Target]) -> str | None:
-    """A session title from what is shown: the first named target, or the one file an analysis read."""
+    """A session title from what is shown: the first named target, or what an analysis read."""
     for target in targets:
         if isinstance(target, Analysis):
-            name: Any = Path(target.files[0]).stem if len(target.files) == 1 else None
+            name: Any = target.title
         else:
             name = getattr(target, "__name__" if isinstance(target, ModuleType) else "name", None)
         if isinstance(name, str) and name:

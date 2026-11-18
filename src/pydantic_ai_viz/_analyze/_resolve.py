@@ -19,11 +19,15 @@ from __future__ import annotations
 import ast
 import bisect
 import builtins
+import os
+import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeAlias
 
+from ._locate import skipped_directory
 from ._source import Binding, FunctionNode, Module, Scope, unwrap
 
 MAX_HOPS = 32
@@ -35,11 +39,16 @@ MAX_DEPTH = 12
 MAX_STEPS = 512
 """How many steps one resolution may take in all, nested ones included."""
 
+_MAX_STAR_DEPTH = 4
+"""How many ``from ... import *`` statements a name is followed through."""
+
 END_OF_MODULE = 10**9
 """A line number after every line: what a name means once its module has finished running."""
 
 _BUILTINS = frozenset(dir(builtins))
 _LIBRARIES = frozenset({"pydantic_ai", "pydantic_ai_slim", "pydantic_graph"})
+_NEVER_PROJECT = _LIBRARIES | {"pydantic", "pydantic_core", "pydantic_settings", "typing_extensions"}
+"""Packages whose names are recognised by the analysis. A project file never stands in for one of them."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,45 +116,157 @@ Resolved: TypeAlias = External | Definition | Expression | ModuleRef | None
 
 @dataclass(slots=True)
 class Project:
-    """The set of files analysed together.
+    """The set of files analysed together, and how an import in one of them finds another.
 
-    Imports are resolved among these files only. A file that is not part of the
-    project is never opened because another file imports it; the name it would
+    An import is only ever resolved to a file of the project: one that was named
+    as a target or, while ``opener`` is set, one inside ``boundaries`` that a file
+    already read imports. Installed packages are never opened; a name they would
     have provided stays an ``External``.
     """
 
     root: Path
+    bases: list[Path] = field(default_factory=list[Path])
+    """Directories an absolute import is looked up in, after the directories above the importing file."""
+    boundaries: list[Path] = field(default_factory=list[Path])
+    """Directories inside which a file that is not yet part of the project may be read."""
+    opener: Callable[[Path], Module | None] | None = None
+    """Reads a file that an import leads to. ``None`` once the set of files is final."""
     modules: list[Module] = field(default_factory=list[Module])
-    _by_path: dict[Path, Module] = field(default_factory=dict[Path, Module])
-    _by_name: dict[str, Module] = field(default_factory=dict[str, Module])
+    # Paths are kept as strings below: these tables are consulted for every name that is resolved.
+    _by_file: dict[str, Module] = field(default_factory=dict[str, Module])
+    _by_tail: dict[str, list[Module]] = field(default_factory=dict[str, list[Module]])
+    _absent: set[str] = field(default_factory=set[str])
+    _listings: dict[str, dict[str, bool]] = field(default_factory=dict[str, dict[str, bool]])
+    _search: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    _found: dict[tuple[str, str, int], Module | None] = field(default_factory=dict[tuple[str, str, int], Module | None])
 
     def add(self, module: Module) -> None:
         self.modules.append(module)
-        self._by_path[module.path] = module
-        self._by_name.setdefault(module.name, module)
+        self._by_file[str(module.path)] = module
+        self._by_tail.setdefault(_parts_of(module.path)[-1], []).append(module)
 
     def find_module(self, importer: Module, dotted: str, level: int) -> Module | None:
-        """The analysed file that ``from <dots><dotted> import ...`` in ``importer`` refers to, if there is one.
+        """The project file that ``from <dots><dotted> import ...`` in ``importer`` refers to, if there is one.
 
         A relative import is looked up from the importing file's package. An absolute
-        one is tried as a module name, then as a path below the importing file's
-        directory (how a script finds its neighbours), then below the root.
+        one is looked up as Python would with a source root anywhere above the
+        importing file: in its own directory (how a script finds its neighbours),
+        then in each directory above it up to where its project starts, then in
+        ``bases``. Failing that, ``a.b.c`` is the one file of the project whose path
+        ends in ``a/b/c.py``, if exactly one does.
         """
-        parts = [part for part in dotted.split(".") if part]
-        if level:
-            base = importer.path.parent
-            for _ in range(level - 1):
-                base = base.parent
-            return self._at(base, parts)
-        if dotted in self._by_name:
-            return self._by_name[dotted]
-        return self._at(importer.path.parent, parts) or self._at(self.root, parts)
+        key = (importer.directory, dotted, level)
+        if key in self._found:
+            return self._found[key]
+        found = self._find(importer, dotted, level)
+        if found is not None or self.opener is None:
+            self._found[key] = found  # a miss is final only once no more files can be read
+        return found
 
-    def _at(self, base: Path, parts: list[str]) -> Module | None:
+    def _find(self, importer: Module, dotted: str, level: int) -> Module | None:
+        parts = [part for part in dotted.split(".") if part]
+        own = importer.directory
+        if level:
+            base = own
+            for _ in range(level - 1):
+                base = os.path.dirname(base)
+            return self._at(base, parts)
+        if not parts or parts[0] in _NEVER_PROJECT:
+            return None
+        if parts[0] in sys.stdlib_module_names:
+            # Only a script's own directory comes before the standard library.
+            return self._at(own, parts) if "." not in importer.name and importer.path.stem != "__init__" else None
+        for base in self._search_path(importer):
+            found = self._at(base, parts)
+            if found is not None:
+                return found
+        return self._by_suffix(parts) if len(parts) > 1 else None
+
+    def _search_path(self, importer: Module) -> list[str]:
+        own = importer.directory
+        cached = self._search.get(own)
+        if cached is None:
+            cached = [own]
+            directory = importer.path.parent
+            limit = next((b for b in self.boundaries if b == directory or b in directory.parents), None)
+            current = directory
+            while limit is not None and current != limit:
+                current = current.parent
+                cached.append(str(current))
+            # Where the importing file's outermost package lives, from which its own name is importable.
+            levels = importer.name.count(".") + (1 if importer.path.stem == "__init__" else 0)
+            package_root = directory
+            for _ in range(levels):
+                package_root = package_root.parent
+            for base in (package_root, *self.bases):
+                if str(base) not in cached:
+                    cached.append(str(base))
+            self._search[own] = cached
+        return cached
+
+    def _at(self, base: str, parts: list[str]) -> Module | None:
         if not parts:
-            return self._by_path.get(base / "__init__.py")
-        target = base.joinpath(*parts)
-        return self._by_path.get(target.with_name(target.name + ".py")) or self._by_path.get(target / "__init__.py")
+            return self._file(os.path.join(base, "__init__.py"))
+        target = os.path.join(base, *parts)
+        return self._file(target + ".py") or self._file(os.path.join(target, "__init__.py"))
+
+    def _file(self, path: str) -> Module | None:
+        known = self._by_file.get(path)
+        if known is not None or self.opener is None or path in self._absent:
+            return known
+        module = self.opener(Path(path)) if self._may_read(path) else None
+        if module is None:
+            self._absent.add(path)
+            return None
+        self.add(module)
+        return module
+
+    def _may_read(self, path: str) -> bool:
+        """Whether ``path`` is a file inside a boundary, and not in a directory of installed or generated code."""
+        for boundary in self.boundaries:
+            prefix = os.path.join(str(boundary), "")
+            if not path.startswith(prefix):
+                continue
+            below = path[len(prefix) :].split(os.sep)
+            if any(skipped_directory(name) for name in below[:-1]):
+                continue
+            # Each part is checked against what its directory really holds, so that on a file system
+            # that ignores case ``from tools import Search`` does not find ``search.py``.
+            directory = str(boundary)
+            for name in below[:-1]:
+                if self._entries(directory).get(name) is not False:
+                    return False
+                directory = os.path.join(directory, name)
+            return self._entries(directory).get(below[-1]) is True
+        return False
+
+    def _entries(self, directory: str) -> dict[str, bool]:
+        """The names in a directory, each with whether it is a file. Empty when it cannot be listed."""
+        known = self._listings.get(directory)
+        if known is None:
+            known = {}
+            try:
+                with os.scandir(directory) as scan:
+                    for entry in scan:
+                        known[entry.name] = entry.is_file()
+            except OSError:
+                known = {}
+            self._listings[directory] = known
+        return known
+
+    def _by_suffix(self, parts: list[str]) -> Module | None:
+        matches = [
+            module for module in self._by_tail.get(parts[-1], ()) if _parts_of(module.path)[-len(parts) :] == parts
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+
+def _parts_of(path: Path) -> list[str]:
+    """The path of a module as the parts of its dotted name would spell it: ``a/b/__init__.py`` -> ``[.., a, b]``."""
+    parts = list(path.parts[:-1])
+    if path.stem != "__init__":
+        parts.append(path.stem)
+    return parts
 
 
 class _Stop:
@@ -230,12 +351,24 @@ class Resolver:
             return self._bound(binding)
         if name in _BUILTINS:
             return External(f"builtins.{name}")
-        for star in scope.module.star_imports:
-            if star.partition(".")[0] in _LIBRARIES:
-                return External(f"{star}.{name}")
-        return None
+        return self._starred(scope.module, name, 0)
 
-    def _bound(self, binding: Binding) -> Resolved:
+    def _starred(self, module: Module, name: str, depth: int, trail: frozenset[int] = frozenset()) -> Resolved:
+        """What ``name`` is when one of the module's ``from ... import *`` statements provides it."""
+        library: Resolved = None
+        for dotted, level in module.star_imports:
+            if not level and dotted.partition(".")[0] in _LIBRARIES:
+                # Whatever the project's own files do not provide is taken to be the library's.
+                library = library or External(f"{dotted}.{name}")
+                continue
+            source = self.project.find_module(module, dotted, level)
+            if source is not None and source is not module and depth < _MAX_STAR_DEPTH:
+                found = self._member(source, name, depth + 1, trail)
+                if found is not None:
+                    return found
+        return library
+
+    def _bound(self, binding: Binding, trail: frozenset[int] = frozenset()) -> Resolved:
         if binding.kind == "assign" and isinstance(binding.node, ast.expr):
             # The value is evaluated before the name is bound, so in ``x = wrap(x)`` the inner
             # ``x`` is the one from an earlier line.
@@ -245,17 +378,20 @@ class Resolver:
         ):
             return Definition(binding.node, binding.scope)
         if binding.kind == "import":
-            return self._imported(binding)
+            # Two files that import a name from each other never lead to a value: stop where the trail closes.
+            if id(binding) in trail or len(trail) >= MAX_HOPS:
+                return None
+            return self._imported(binding, trail | {id(binding)})
         return None
 
-    def _imported(self, binding: Binding) -> Resolved:
+    def _imported(self, binding: Binding, trail: frozenset[int]) -> Resolved:
         importer = binding.scope.module
         dotted = binding.module or ""
         module = self.project.find_module(importer, dotted, binding.level)
         if binding.attr is None:
             return ModuleRef(module) if module is not None else External(dotted)
         if module is not None:
-            member = self._member(module, binding.attr)
+            member = self._member(module, binding.attr, trail=trail)
             if member is not None:
                 return member
         submodule = self.project.find_module(importer, f"{dotted}.{binding.attr}".strip("."), binding.level)
@@ -265,10 +401,12 @@ class Resolver:
         # ``from . import x`` outside any known package keeps its dot: ``.x``.
         return External(f"{base}{binding.attr}" if not base or base.endswith(".") else f"{base}.{binding.attr}")
 
-    def _member(self, module: Module, name: str) -> Resolved:
+    def _member(self, module: Module, name: str, depth: int = 0, trail: frozenset[int] = frozenset()) -> Resolved:
         """What ``name`` is at the top level of ``module`` once the module has run."""
         found = module.scope.bindings.get(name)
-        return self._bound(_closest(found, END_OF_MODULE)) if found else None
+        if found:
+            return self._bound(_closest(found, END_OF_MODULE), trail)
+        return self._starred(module, name, depth, trail) if module.star_imports else None
 
     def _attribute(self, node: ast.Attribute, current: Expression, depth: int) -> Resolved | _Stop:
         # ``a.b.c`` nests as deep as it is long, so the chain is unrolled instead of recursed into.

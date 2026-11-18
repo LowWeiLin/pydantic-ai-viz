@@ -18,9 +18,10 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai_viz import _github
-from pydantic_ai_viz._analyze import is_remote
+from pydantic_ai_viz import Limits, _github, analyze
+from pydantic_ai_viz._analyze import TargetError, is_remote
 from pydantic_ai_viz._github import Checkout, FetchError, Reference, fetch, parse
+from pydantic_ai_viz._models import SourceLocation
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 
@@ -182,6 +183,7 @@ def names_in(checkout: Checkout) -> list[str]:
 def test_a_github_reference_is_read_from_a_url_or_the_short_form(spec: str, expected: Reference) -> None:
     assert parse(spec) == expected
     assert _github.looks_remote(spec)
+    assert is_remote(spec)
     assert expected.slug == f"{expected.owner}/{expected.repo}"
 
 
@@ -216,6 +218,7 @@ def test_a_reference_that_cannot_be_fetched_says_why(spec: str, message: str) ->
     with pytest.raises(FetchError) as exc_info:
         parse(spec)
     assert message in str(exc_info.value)
+    assert is_remote(spec)
 
 
 def test_branch_and_tag_names_are_read_from_what_git_lists() -> None:
@@ -415,3 +418,97 @@ def test_git_is_never_left_waiting_for_a_password(hub: Hub, cache: Path, monkeyp
         assert call["timeout"] > 0
         assert "core.symlinks=false" in call["command"]
         assert "shell" not in call
+
+
+# ---------------------------------------------------------------- analysing
+
+
+def test_a_repository_is_fetched_and_read_like_a_directory(hub: Hub, cache: Path) -> None:
+    found = analyze("gh:acme/shop")
+    assert found.title == f"acme/shop@{hub.second[:7]}"
+    assert found.notices == [
+        f"read acme/shop from GitHub at commit {hub.second}; none of its code was run",
+        # The symbolic link, which arrived as a one-line text file.
+        "skipped src/shop/link.py: it is not valid Python (invalid syntax on line 1)",
+    ]
+    # Named from the top of the repository, as the path reads in a GitHub link.
+    assert found.files == [
+        "examples/demo.py",
+        "src/shop/__init__.py",
+        "src/shop/agents.py",
+        "src/shop/extra.py",
+        "src/shop/models.py",
+    ]
+    assert [(b.name, b.location) for b in found.agents] == [
+        ("demo", SourceLocation(file="examples/demo.py", line=3)),
+        ("helper", SourceLocation(file="src/shop/agents.py", line=10)),
+        ("lead", SourceLocation(file="src/shop/agents.py", line=11)),
+        ("extra", SourceLocation(file="src/shop/extra.py", line=3)),
+    ]
+    lead = found.agents[2]
+    assert [(d.tool_name, d.agent_id) for d in lead.delegates] == [("ask_helper", "a2")]
+    assert found.agents[1].output.location == SourceLocation(file="src/shop/models.py", line=4)
+
+
+def test_a_ref_a_subdirectory_a_file_and_a_name_narrow_what_is_read(hub: Hub, cache: Path) -> None:
+    base = "https://github.com/acme/shop"
+    pinned = analyze(f"{base}/tree/{hub.first}/src")
+    assert pinned.title == f"acme/shop@{hub.first[:7]}"
+    assert pinned.files == ["src/shop/__init__.py", "src/shop/agents.py", "src/shop/models.py"]
+    assert [b.name for b in pinned.agents] == ["helper", "lead"]
+
+    assert [b.name for b in analyze(f"{base}/tree/feature/new-agents/src/shop").agents] == [
+        "helper",
+        "lead",
+        "extra",
+        "feature",
+    ]
+    assert [b.name for b in analyze("gh:acme/shop@v1").agents] == ["helper", "lead"]
+    assert [b.name for b in analyze("gh:acme/shop/examples").agents] == ["demo"]
+
+    # One file, as GitHub links to it. The file it imports is read from the same commit.
+    one = analyze(f"{base}/blob/main/src/shop/agents.py")
+    assert one.files == ["src/shop/agents.py", "src/shop/models.py"]
+    assert [b.name for b in one.agents] == ["helper", "lead"]
+    assert one.agents[0].output.json_schema is not None
+    # And one agent of that file, with the agent it delegates to.
+    named = analyze("gh:acme/shop@main/src/shop/agents.py:lead")
+    assert [(b.id, b.name) for b in named.agents] == [("a1", "lead"), ("a2", "helper")]
+
+
+def test_imports_are_followed_inside_the_fetched_repository_only(hub: Hub, cache: Path, tmp_path: Path) -> None:
+    # The examples directory has its own requirements file, so it is a project of its own.
+    examples = analyze("gh:acme/shop@main/examples")
+    assert examples.files == ["examples/demo.py"]
+    # The link that points out of the repository is a text file here, and no file outside is ever opened.
+    (cache.parent / "outside.py").write_text("from pydantic_ai import Agent\nx = Agent('test')\n", encoding="utf-8")
+    found = analyze("gh:acme/shop@main/src")
+    assert "src/shop/link.py" not in found.files
+    assert [notice.partition(":")[0] for notice in found.notices[1:]] == ["skipped src/shop/link.py"]
+    assert all(not name.startswith("..") for name in found.files)
+
+
+@pytest.mark.parametrize(
+    ("target", "message"),
+    [
+        ("gh:acme/shop@main/nowhere", "acme/shop has no 'nowhere' at commit "),
+        ("gh:acme/shop@main/pyproject.toml", "pyproject.toml is not a .py file; only Python source can be read"),
+        ("gh:acme/shop@nope", "gh:acme/shop@nope: acme/shop has no branch or tag named 'nope'"),
+        ("gh:acme/missing", "gh:acme/missing: git could not fetch acme/missing: "),
+        ("gh:acme/shop@main/src/shop/agents.py:nope", "no agent or graph is assigned to 'nope' at the top level of"),
+        ("gh:acme/shop@main/src/shop/agents.py:1x", "not a name: '1x'"),
+    ],
+)
+def test_a_github_target_that_names_nothing_is_an_error_that_says_why(
+    hub: Hub, cache: Path, target: str, message: str
+) -> None:
+    with pytest.raises(TargetError) as exc_info:
+        analyze(target)
+    assert message in str(exc_info.value)
+
+
+def test_the_time_allowed_for_fetching_is_a_limit_of_its_own(hub: Hub, cache: Path) -> None:
+    with pytest.raises(TargetError, match="fetching acme/shop took too long"):
+        analyze("gh:acme/shop", limits=Limits(max_fetch_seconds=0))
+    # Fetching does not use up the time for reading.
+    assert len(analyze("gh:acme/shop", limits=Limits(max_fetch_seconds=60)).agents) == 4
