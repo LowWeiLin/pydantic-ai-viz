@@ -25,6 +25,7 @@ The third point is the rule the whole analyser follows: **a value is reported wh
 |---|---|
 | `Agent("openai:gpt-5.2", ...)` | The model, split into provider and name |
 | `Agent(get_model(), ...)` | The expression `get_model()`, marked as computed, and a warning |
+| `Agent(OpenAIChatModel("gpt-5.2", provider=...))` | The model name `gpt-5.2`, and the constructor call as its expression |
 | `name="triage"`, or the variable the agent is assigned to | The agent's name, or its label |
 | `instructions="..."`, also concatenated or wrapped in `textwrap.dedent` | The text |
 | `instructions=f"Today is {today}"` | The template, with `{today}` left in place, marked dynamic |
@@ -39,6 +40,8 @@ The third point is the rule the whole analyser follows: **a value is reported wh
 | A tool whose body calls `other_agent.run(...)` (or `run_sync`, `run_stream`, `iter`) | A delegation edge to that agent |
 | `GraphBuilder` with `@builder.step`, `builder.add(...)`, `add_edge`, decisions, joins and maps | The graph's nodes and edges, numbered the way pydantic-graph numbers them |
 | `BaseNode` classes | Edges from what each `run` method declares it returns |
+
+Because the code is read and not run, it does not have to match the Pydantic AI you have installed. Arguments that earlier releases took are read as what they became: `result_type` as the output type, `mcp_servers` as toolsets, `builtin_tools` as native tools, and `Graph(nodes=[...])` as a graph.
 
 Everything found carries the file and line it was found at, so the viewer can say "defined at `agents.py:42`".
 
