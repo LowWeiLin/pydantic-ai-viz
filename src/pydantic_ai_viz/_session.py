@@ -25,9 +25,10 @@ from pydantic_graph import Graph
 
 from . import _compat
 from ._capture import CaptureProcessor
+from ._derive import add_delegate, carry_observed, merge_request, observed_blueprint
 from ._introspect import AnyAgent, AnyGraph, agent_closure, introspect_agent, introspect_graph
 from ._models import WIRE_VERSION, AgentBlueprint, GraphBlueprint, to_wire
-from ._normalize import Normalized
+from ._normalize import Normalized, WireSpan
 from ._version import __version__
 
 Target: TypeAlias = "AnyAgent | AnyGraph | ModuleType"
@@ -284,6 +285,10 @@ class Session:
         self._agent_blueprints: dict[str, AgentBlueprint] = {}
         self._agent_count = 0
         self._graph_count = 0
+        self._open_tool_calls: dict[str, tuple[str | None, str]] = {}
+        """Span id of a running tool call -> (owning agent name, tool name)."""
+        self._merged_requests: set[str] = set()
+        """Agent names whose first model request has been folded into their blueprint."""
 
         with _sessions_lock:
             if instrument:
@@ -379,13 +384,31 @@ class Session:
         added: list[_RegisteredAgent] = []
         for agent in agent_closure(root):
             if id(agent) not in self._agents:
-                self._agent_count += 1
-                entry = _RegisteredAgent(agent, f"a{self._agent_count}", labels.get(id(agent)))
+                # An agent already seen running keeps the id of its observed blueprint,
+                # so the static blueprint replaces that one in the viewer.
+                observed = self._blueprint_named(agent.name, source="observed")
+                entry = _RegisteredAgent(
+                    agent, self._new_agent_id() if observed is None else observed.id, labels.get(id(agent))
+                )
                 self._agents[id(agent)] = entry
                 added.append(entry)
         # Ids are allocated for the whole closure first, so delegation edges can point forward.
         for entry in added:
-            self._emit_agent(self._introspect(entry))
+            blueprint = self._introspect(entry)
+            previous = self._agent_blueprints.get(entry.id)
+            self._emit_agent(blueprint if previous is None else carry_observed(previous, blueprint))
+
+    def _new_agent_id(self) -> str:
+        self._agent_count += 1
+        return f"a{self._agent_count}"
+
+    def _blueprint_named(self, name: str | None, *, source: str | None = None) -> AgentBlueprint | None:
+        if name is None:
+            return None
+        for blueprint in self._agent_blueprints.values():
+            if blueprint.name == name and source in (None, blueprint.source):
+                return blueprint
+        return None
 
     def _introspect(self, entry: _RegisteredAgent) -> AgentBlueprint:
         def delegate_id(agent: AnyAgent) -> str | None:
@@ -394,9 +417,8 @@ class Session:
 
         blueprint = introspect_agent(entry.agent, id=entry.id, label=entry.label, delegate_id=delegate_id)
         name = blueprint.name
-        if name is not None and any(
-            other.name == name and other.id != blueprint.id for other in self._agent_blueprints.values()
-        ):
+        holder = self._blueprint_named(name)
+        if name is not None and holder is not None and holder.id != blueprint.id:
             # Runs are matched to blueprints by agent name, so a name can belong to one blueprint only.
             warning = f"another agent named {name!r} is already registered; runs named {name!r} are shown on that one"
             blueprint = blueprint.model_copy(update={"name": None, "warnings": [*blueprint.warnings, warning]})
@@ -422,12 +444,65 @@ class Session:
     # --------------------------------------------------------------- spans
 
     def _span_started(self, normalized: Normalized) -> None:
+        span = normalized.span
         with self._lock:
-            self._log.append({"type": "span.started", "span": to_wire(normalized.span)})
+            # Blueprint changes go out before the span that caused them, so the
+            # viewer can draw a run on its blueprint from the first event.
+            if span.kind == "agent_run" and span.agent_name is not None:
+                blueprint = self._blueprint_for_run(span.agent_name, normalized.agent_description, span.data.model_name)
+                self._observe_delegation(span, blueprint)
+            elif span.kind == "tool_call":
+                self._open_tool_calls[span.span_id] = (span.agent_name, span.data.tool_name)
+            self._log.append({"type": "span.started", "span": to_wire(span)})
 
     def _span_ended(self, normalized: Normalized) -> None:
+        span = normalized.span
         with self._lock:
-            self._log.append({"type": "span.ended", "span": to_wire(normalized.span)})
+            self._open_tool_calls.pop(span.span_id, None)
+            parameters = normalized.request_parameters
+            name = span.agent_name
+            if (
+                span.kind == "model_request"
+                and name is not None
+                and parameters is not None
+                and name not in self._merged_requests
+            ):
+                # Rule 2, once per agent name: the request says which tools and output mode the model was given.
+                self._merged_requests.add(name)
+                blueprint = self._blueprint_for_run(name, None, span.data.model_name)
+                merged = merge_request(
+                    blueprint, parameters, instructions=span.data.instructions, provider=span.data.provider
+                )
+                if merged is not blueprint:
+                    self._emit_agent(merged)
+            self._log.append({"type": "span.ended", "span": to_wire(span)})
+
+    def _blueprint_for_run(self, name: str, description: str | None, model_name: str | None) -> AgentBlueprint:
+        """The blueprint that runs of the agent called ``name`` belong to (rule 1)."""
+        blueprint = self._blueprint_named(name)
+        if blueprint is not None:
+            return blueprint
+        for entry in self._agents.values():
+            if entry.agent.name == name:
+                # A registered agent whose blueprint does not carry this name yet. The usual case is an
+                # agent created without a name: Pydantic AI infers one when it first runs.
+                blueprint = self._introspect(entry)
+                break
+        else:
+            blueprint = observed_blueprint(self._new_agent_id(), name, description=description, model_name=model_name)
+        self._emit_agent(blueprint)
+        return blueprint
+
+    def _observe_delegation(self, span: WireSpan, blueprint: AgentBlueprint) -> None:
+        """Rule 3: an agent run directly under a tool call means that tool delegates to that agent."""
+        if span.parent_id is None:
+            return
+        owner_name, tool_name = self._open_tool_calls.get(span.parent_id, (None, ""))
+        owner = self._blueprint_named(owner_name)
+        if owner is not None:
+            updated = add_delegate(owner, tool_name, blueprint.id)
+            if updated is not owner:
+                self._emit_agent(updated)
 
     # ----------------------------------------------------------- lifecycle
 
