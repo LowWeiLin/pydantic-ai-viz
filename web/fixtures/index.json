@@ -1,0 +1,22 @@
+{
+  "recordings": [
+    {
+      "id": "sample",
+      "title": "Support triage and a graph pipeline",
+      "description": "A triage agent runs three tools in parallel, retries one, delegates a refund and returns structured output. Then a graph run loops through write and review.",
+      "src": "sample.pviz.jsonl"
+    },
+    {
+      "id": "failed",
+      "title": "A run that fails",
+      "description": "An unregistered agent, observed from its spans. One fetch times out and fails the run; the recording ends with a request still streaming.",
+      "src": "failed.pviz.jsonl"
+    },
+    {
+      "id": "redacted",
+      "title": "Content capture off",
+      "description": "The same structure with include_content=False: no prompts, arguments or results are stored.",
+      "src": "redacted.pviz.jsonl"
+    }
+  ]
+}
