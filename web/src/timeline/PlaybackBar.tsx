@@ -77,7 +77,7 @@ export function PlaybackBar({
               key={speed}
               type="button"
               aria-pressed={playback.speed === speed}
-              aria-label={`${speed} times speed`}
+              aria-label={`${speed}x speed`}
               onClick={() => update((p) => ({ ...p, speed }))}
               className={cx(
                 "h-6 min-w-8 border-0 border-line border-l px-1.5 font-mono text-meta first:border-l-0",
