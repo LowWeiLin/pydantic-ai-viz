@@ -98,6 +98,8 @@ When the script ends, the agents and graphs left in its global namespace are reg
 
 If the script raises, the traceback is printed and the server keeps running, so you can inspect the runs that led to the failure.
 
+A script that calls `sys.exit()` is treated the same way: a non-zero code is reported on stderr, the files are still written and the server keeps running. The script's exit code is not passed on; `run` exits with `0` after ++ctrl+c++. For unattended recording, where the process has to end by itself, use [`pviz.record(...)`](python-api.md#record) in code.
+
 If you stop the script with ++ctrl+c++ while it is running (the only way to end one that loops, such as a chat loop or a worker), the `--record` and `--export` files are still written with everything captured up to then, and the command exits.
 
 !!! note "Options go before the script"
