@@ -1,0 +1,43 @@
+/* Match the viewer's accent: one violet, lighter on dark surfaces. */
+:root,
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #5b47e0;
+  --md-primary-fg-color--light: #7c6bea;
+  --md-primary-fg-color--dark: #4534b8;
+  --md-primary-bg-color: #ffffff;
+  --md-primary-bg-color--light: #ffffffb3;
+  --md-accent-fg-color: #4534b8;
+  --md-typeset-a-color: #5b47e0;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #2a2350;
+  --md-primary-fg-color--light: #3a316b;
+  --md-primary-fg-color--dark: #1d1838;
+  --md-primary-bg-color: #e7eaf0;
+  --md-primary-bg-color--light: #e7eaf0b3;
+  --md-accent-fg-color: #a99cf9;
+  --md-typeset-a-color: #a99cf9;
+}
+
+/* Screenshots: a hairline border so light images do not bleed into the page. */
+.md-typeset img.screenshot,
+.md-typeset figure.screenshot img {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 10px;
+}
+
+.md-typeset figure.screenshot {
+  margin: 1.5em 0;
+}
+
+.md-typeset figure.screenshot figcaption {
+  max-width: none;
+  color: var(--md-default-fg-color--light);
+  font-size: 0.75rem;
+}
+
+/* Reference tables hold identifiers; keep them from wrapping mid-name. */
+.md-typeset table:not([class]) code {
+  white-space: nowrap;
+}
