@@ -312,11 +312,11 @@ async def test_a_run_named_like_no_registered_agent_is_never_bound_to_an_unnamed
 
 async def test_tools_first_offered_on_a_later_request_still_reach_the_blueprint() -> None:
     """A dynamic toolset can offer different tools on every run."""
-    agent: Agent[None, str] = Agent(TestModel(call_tools=[]), name="dynamic")
+    agent = Agent(TestModel(call_tools=[]), name="dynamic")
     calls = 0
 
     @agent.toolset
-    def offered(ctx: RunContext[None]) -> FunctionToolset[None]:  # pyright: ignore[reportUnusedFunction]
+    def offered(ctx: RunContext[Any]) -> FunctionToolset[Any]:  # pyright: ignore[reportUnusedFunction]
         nonlocal calls
         calls += 1
         return FunctionToolset([first_tool if calls == 1 else second_tool])
