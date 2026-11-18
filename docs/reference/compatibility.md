@@ -16,26 +16,26 @@ Pydantic AI 1.x is not supported. The 2.0 release renamed and removed much of wh
 
 A declared range is a promise; this section is the evidence. It lists only combinations that were run.
 
-All runs below are the full Python test suite (`pytest`, 482 tests), on Windows 11, on 18 November 2026. The suite includes the three demos recorded through the real command line and a live demo server followed over HTTP.
+All runs below are the full Python test suite (`pytest`, 507 tests), on Windows 11, on 18 and 19 November 2026. The suite includes the three demos recorded through the real command line and a live demo server followed over HTTP.
 
 | Python | pydantic-ai-slim | opentelemetry-sdk | Result |
 |---|---|---|---|
-| 3.12.9 | 2.70.0 (the locked version, and the newest release) | 1.45.2 | 482 passed |
-| 3.11.14 | 2.70.0 | 1.45.2 | 480 passed, 2 skipped |
-| 3.13.9 | 2.70.0 | 1.45.2 | 480 passed, 2 skipped |
-| 3.14.0 | 2.70.0 | 1.45.2 | 480 passed, 2 skipped |
-| 3.11.14 | 2.60.0 | 1.30.0 | 480 passed, 2 skipped. This is the lowest-direct resolution: every direct dependency at its declared floor. |
-| 3.12.9 | 2.65.0 | 1.45.2 | 482 passed |
-| 3.12.9 | 2.62.0 | 1.45.2 | 482 passed |
-| 3.12.9 | 2.61.0 | 1.45.2 | 482 passed |
-| 3.12.9 | 2.60.0 | 1.45.2 | 482 passed |
+| 3.12.9 | 2.70.0 (the locked version, and the newest release) | 1.45.2 | 507 passed |
+| 3.11.14 | 2.70.0 | 1.45.2 | 507 passed |
+| 3.13.9 | 2.70.0 | 1.45.2 | 507 passed |
+| 3.14.0 | 2.70.0 | 1.45.2 | 507 passed |
+| 3.11.14 | 2.60.0 | 1.30.0 | 506 passed, 1 skipped. This is the lowest-direct resolution: every direct dependency at its declared floor. |
+| 3.12.9 | 2.65.0 | 1.45.2 | 507 passed |
+| 3.12.9 | 2.62.0 | 1.45.2 | 507 passed |
+| 3.12.9 | 2.61.0 | 1.45.2 | 507 passed |
+| 3.12.9 | 2.60.0 | 1.45.2 | 507 passed |
 | 3.12.9 | 2.59.0, 2.58.0, 2.57.0, 2.55.0 | 1.45.2 | **Fails**: 7 tests each, all about tool retries |
 | 3.12.9 | 2.50.0 | 1.45.2 | **Fails**: 8 tests |
 | 3.12.9 | 2.40.0 | 1.45.2 | **Fails**: 10 tests |
 | 3.12.9 | 2.20.0 | 1.45.2 | **Fails**: 30 tests, and 20 more stop with an error |
 | 3.12.9 | 2.0.0 | 1.45.2 | **Fails**: 34 tests, and 23 more stop with an error |
 
-The runs with 2 skipped were made in a clean copy of the repository without the built viewer; the two tests that need it (the demo site builder and the viewer in a browser) are skipped there, as they will be in the CI test matrix.
+The run with 1 skipped was made in a clean copy of the repository, which has no `web/node_modules`; the test that opens the viewer in a browser is skipped there. The CI test matrix has no built viewer either, so it will skip that test and the demo site builder test.
 
 That is the complete list. Releases between the ones named were not run.
 
