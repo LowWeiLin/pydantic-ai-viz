@@ -19,11 +19,12 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol, TextIO
 
+from ._analyze import Analysis, TargetError, analyze
 from ._export import export_html
-from ._server import DEFAULT_PORT, open_in_browser, serve, server_of, wait_for_client
-from ._session import Session, record
+from ._server import DEFAULT_PORT, open_in_browser, serve, serve_session, server_of, wait_for_client
+from ._session import Session, blueprint_session, record
 from ._stream import attach_on_creation
-from ._targets import TargetError, namespace_module, resolve_targets, script_environment
+from ._targets import namespace_module, resolve_targets, script_environment
 from ._version import __version__
 
 EXIT_OK = 0
@@ -165,14 +166,41 @@ def _demo(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def _read_source(targets: list[str]) -> Analysis:
+    """Analyse the targets without importing them, and say on stderr what was found and what was not."""
+    analysis = analyze(*targets)
+    for notice in analysis.notices:
+        _say(f"pydantic-ai-viz: note: {notice}", sys.stderr)
+    if not analysis.blueprints:
+        raise _UsageError(
+            f"no agents or graphs found in the source of {', '.join(targets)}. The code is read, not run: "
+            "an agent built in a way that cannot be seen in the source is not found. "
+            "Use --import to import the code instead (this runs it)"
+        )
+    unresolved = sum(len(blueprint.warnings) for blueprint in analysis.blueprints)
+    summary = (
+        f"Read {_plural(len(analysis.files), 'file')} without running any code: "
+        f"{_plural(len(analysis.agents), 'agent')}, {_plural(len(analysis.graphs), 'graph')}"
+    )
+    if unresolved:
+        summary += f"; {_plural(unresolved, 'warning')} about what the source does not spell out (see the viewer)"
+    _say(summary, sys.stderr)
+    return analysis
+
+
 def _view(args: argparse.Namespace) -> int:
-    targets = resolve_targets(args.targets)
-    # Nothing is run here, so nothing needs instrumenting.
-    if args.export:
-        with record(*targets, instrument=False) as session:
+    # --import loads the targets and reads the live objects. Without it nothing of theirs is executed.
+    targets = resolve_targets(args.targets) if args.import_targets else [_read_source(args.targets)]
+    # Either way no agent is run, so nothing needs instrumenting and no run will ever appear.
+    with blueprint_session(*targets) as session:
+        if args.export:
             _say(f"Wrote HTML export {session.export_html(args.export)}")
-        return EXIT_OK
-    with serve(*targets, instrument=False, port=args.port) as session:
+            return EXIT_OK
+        serve_session(session, port=args.port)
         _announce(session, open_browser=not args.no_open)
         session.wait()
     return EXIT_OK
@@ -277,14 +305,24 @@ def _build_parser() -> argparse.ArgumentParser:
 
     view = commands.add_parser(
         "view",
-        help="draw the blueprint of agents and graphs without running them",
-        description="Draw blueprints. Targets are imported or loaded, but no agent is run and no model is called.",
+        help="draw the blueprint of agents and graphs from their source code, without running it",
+        description="Draw blueprints by reading source files. The code is parsed, never imported or executed: "
+        "its dependencies need not be installed and nothing in it runs. What the source computes at run time "
+        "is shown as the expression that computes it.",
     )
     view.add_argument(
         "targets",
         nargs="+",
         metavar="TARGET",
-        help="pkg.module:attr, pkg.module, path/to/file.py or path/to/file.py:attr",
+        help="path/to/file.py, or path/to/file.py:name for one agent or graph. "
+        "With --import also pkg.module and pkg.module:attr",
+    )
+    view.add_argument(
+        "--import",
+        dest="import_targets",
+        action="store_true",
+        help="import the targets and read the live objects instead of the source. "
+        "This EXECUTES the target code, so use it only on code you trust; its dependencies must be installed",
     )
     view.add_argument("--export", metavar="OUT.html", help="write a blueprint-only HTML file and exit (no server)")
     _add_server_options(view)

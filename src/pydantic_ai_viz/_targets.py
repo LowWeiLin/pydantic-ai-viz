@@ -1,8 +1,9 @@
-"""Command-line targets: ``pkg.module[:attr]`` and ``path/to/file.py[:attr]`` (spec section 4.6).
+"""Targets of ``view --import``: ``pkg.module[:attr]`` and ``path/to/file.py[:attr]``.
 
-Resolving a target imports or executes user code to find its agents and graphs,
-but never runs an agent. Each target resolves to something ``Session.register``
-accepts.
+Resolving a target here imports or executes user code to find its agents and
+graphs, though it never runs an agent. That is the opt-in way; by default ``view``
+reads the source without running it (see ``_analyze``). Each target resolves to
+something ``Session.register`` accepts.
 """
 
 from __future__ import annotations
@@ -19,14 +20,21 @@ from typing import Any, cast
 from pydantic_ai import Agent
 from pydantic_graph import Graph
 
+from ._analyze import TargetError
+from ._analyze._locate import split_target
 from ._session import Target
+
+__all__ = [
+    "FILE_RUN_NAME",
+    "TargetError",
+    "namespace_module",
+    "resolve_target",
+    "resolve_targets",
+    "script_environment",
+]
 
 FILE_RUN_NAME = "__pydantic_ai_viz__"
 """``__name__`` given to a file target, so its ``if __name__ == "__main__":`` block does not run."""
-
-
-class TargetError(Exception):
-    """A target that does not name an agent, a graph, or a place that has some."""
 
 
 def namespace_module(name: str, namespace: Mapping[str, Any]) -> ModuleType:
@@ -51,12 +59,13 @@ def script_environment(path: Path, argv: list[str] | None = None) -> Generator[N
 
 def _split(spec: str) -> tuple[str, str | None, bool]:
     """``(location, attr, is_file)``. A Windows drive colon is not an attribute separator."""
-    if spec.lower().endswith(".py"):
-        return spec, None, True
+    location, attr = split_target(spec)
+    if location.lower().endswith(".py"):
+        return location, attr, True
     location, colon, attr = spec.rpartition(":")
     if not colon:
         return spec, None, False
-    return location, attr, location.lower().endswith(".py")
+    return location, attr, False
 
 
 def _load_file(location: str) -> dict[str, Any]:

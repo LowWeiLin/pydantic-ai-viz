@@ -446,28 +446,187 @@ def blueprint_labels(events: list[dict[str, Any]]) -> list[str]:
     return [e["agent"]["label"] for e in events if e["type"] == "blueprint.agent"]
 
 
-def test_view_export_on_a_module_attribute_and_on_a_file(capsys: pytest.CaptureFixture[str], project: Path) -> None:
+READ_ONE_FILE = "Read 1 file without running any code: "
+
+
+def test_view_reads_the_source_and_runs_none_of_it(capsys: pytest.CaptureFixture[str], project: Path) -> None:
+    # A file that cannot be imported: it needs a package that is not installed, and it fails when run.
+    source = (
+        "import a_package_that_is_not_installed\n"
+        "from pathlib import Path\n"
+        "Path('ran.txt').write_text('the file was executed')\n"
+        "raise RuntimeError('boom at import')\n" + AGENTS
+    )
+    (project / "unimportable.py").write_text(source, encoding="utf-8")
     before = _compat.instrumentation_default()
-    code, out, err = run_cli(capsys, "view", "viz_cli_agents:triage", "--export", "one.html")
+    modules = set(sys.modules)
+
+    code, out, err = run_cli(capsys, "view", "unimportable.py", "--export", "all.html")
+
+    assert (code, out) == (0, "Wrote HTML export all.html\n")
+    assert err == READ_ONE_FILE + "3 agents, 0 graphs\n"
+    assert not (project / "ran.txt").exists()
+    assert not {name for name in set(sys.modules) - modules if "unimportable" in name or "not_installed" in name}
+    events = boot_of(project / "all.html")["events"]
+    assert [e["type"] for e in events] == ["session.started", *["blueprint.agent"] * 3]
+    assert (events[0]["title"], events[0]["mode"], events[0]["notices"]) == ("unimportable", "blueprint", [])
+    helper, triage, unnamed = (e["agent"] for e in events[1:])
+    assert [(a["label"], a["source"]) for a in (helper, triage, unnamed)] == [
+        ("helper", "code"),
+        ("triage", "code"),
+        ("unnamed", "code"),
+    ]
+    assert triage["location"] == {"file": "unimportable.py", "line": 15}
+    assert triage["instructions"][0]["text"] == "Triage tickets."
+    assert triage["delegates"] == [{"tool_name": "ask_helper", "agent_id": "a1", "evidence": "code"}]
+    assert [(t["name"], t["description"], t["origin"]) for t in triage["tools"]] == [
+        ("ask_helper", "Ask the helper.", "code")
+    ]
+    assert unnamed["model"]["id"] == "openai:gpt-5.2"
+    # A model built by a call is shown as the call; that it is Pydantic AI's offline FunctionModel is in the source.
+    assert helper["model"] == {
+        "id": None,
+        "name": "FunctionModel(never)",
+        "provider": "function",
+        "offline": True,
+        "expression": "FunctionModel(never)",
+    }
+    # Nothing ran and nothing global was touched.
+    assert _compat.instrumentation_default() is before
+    assert active_session() is None
+
+
+def test_view_on_a_name_in_a_file_shows_that_agent_and_its_delegates(
+    capsys: pytest.CaptureFixture[str], project: Path
+) -> None:
+    code, out, err = run_cli(capsys, "view", "viz_cli_agents.py:triage", "--export", "one.html")
+    assert (code, out, err) == (0, "Wrote HTML export one.html\n", READ_ONE_FILE + "2 agents, 0 graphs\n")
+    events = boot_of(project / "one.html")["events"]
+    assert blueprint_labels(events) == ["triage", "helper"]  # the delegate comes along
+    assert events[1]["agent"]["delegates"] == [{"tool_name": "ask_helper", "agent_id": "a2", "evidence": "code"}]
+    assert events[0]["title"] == "viz_cli_agents"
+
+
+def test_view_serves_what_it_read_and_says_that_no_run_will_come(
+    capsys: pytest.CaptureFixture[str],
+    project: Path,
+    opened: list[str],
+    serving: Callable[[Watch], list[Session]],
+) -> None:
+    (project / "more.py").write_text("from pydantic_ai import Agent\nextra = Agent(pick_model())\n", encoding="utf-8")
+    before = _compat.instrumentation_default()
+    seen: dict[str, Any] = {}
+
+    def watch(session: Session) -> None:
+        seen["events"] = follow(session, lambda events: len(events) == len(session.events))
+        seen["rerun"] = fetch(session, "POST", "/api/v1/rerun")[0]
+        seen["instrumentation"] = _compat.instrumentation_default()
+
+    served = serving(watch)
+    code, out, err = run_cli(capsys, "view", "viz_cli_agents.py:unnamed", "more.py", "--port", "0")
+    assert (code, err) == (
+        0,
+        "Read 2 files without running any code: 2 agents, 0 graphs; 1 warning about what the source does not "
+        "spell out (see the viewer)\n",
+    )
+    (session,) = served
+    assert out == f"pydantic-ai-viz {pydantic_ai_viz.__version__} - serving {session.url} (Ctrl+C to stop)\n"
+    assert opened == [session.url]
+    assert seen["events"][0]["mode"] == "blueprint"
+    assert blueprint_labels(seen["events"]) == ["unnamed", "extra"]
+    assert seen["rerun"] == 404  # not a demo
+    assert seen["instrumentation"] is before  # viewing instruments nothing
+    assert session.closed
+
+
+def test_view_says_on_stderr_what_it_skipped_and_puts_it_in_the_page(
+    capsys: pytest.CaptureFixture[str], project: Path
+) -> None:
+    (project / "broken.py").write_text("def (:\n", encoding="utf-8")
+    code, out, err = run_cli(capsys, "view", "broken.py", "viz_cli_agents.py", "--export", "x.html")
+    assert (code, out) == (0, "Wrote HTML export x.html\n")
+    assert err == (
+        "pydantic-ai-viz: note: skipped broken.py: it is not valid Python (invalid syntax on line 1)\n"
+        + READ_ONE_FILE
+        + "3 agents, 0 graphs\n"
+    )
+    started = boot_of(project / "x.html")["events"][0]
+    assert started["notices"] == ["skipped broken.py: it is not valid Python (invalid syntax on line 1)"]
+
+
+@pytest.mark.parametrize(
+    ("target", "message"),
+    [
+        ("missing.py", "file not found: missing.py"),
+        ("viz_cli_agents.py:nope", "no agent or graph is assigned to 'nope' at the top level of viz_cli_agents.py"),
+        ("viz_cli_agents.py:never", "no agent or graph is assigned to 'never'"),
+        # A module name can only be imported, and importing runs code: that has to be asked for.
+        ("viz_cli_agents:triage", "cannot read 'viz_cli_agents:triage' without importing it"),
+        ("viz_cli_agents", "use --import to import a module by name (this runs its code)"),
+    ],
+)
+def test_view_target_that_cannot_be_read_is_a_usage_error(
+    capsys: pytest.CaptureFixture[str], project: Path, target: str, message: str
+) -> None:
+    code, out, err = run_cli(capsys, "view", "viz_cli_agents.py", target, "--export", "x.html")
+    assert (code, out) == (2, "")
+    assert err.startswith("pydantic-ai-viz: error: ")
+    assert message in err
+    assert not (project / "x.html").exists()
+    assert active_session() is None
+
+
+def test_view_on_source_without_agents_says_so_and_points_at_import(
+    capsys: pytest.CaptureFixture[str], project: Path
+) -> None:
+    (project / "plain.py").write_text("agents = build_agents_somehow()\n", encoding="utf-8")
+    (project / "broken.py").write_text("def (:\n", encoding="utf-8")
+    code, out, err = run_cli(capsys, "view", "plain.py", "broken.py", "--export", "x.html")
+    assert (code, out) == (2, "")
+    assert err.splitlines() == [
+        "pydantic-ai-viz: note: skipped broken.py: it is not valid Python (invalid syntax on line 1)",
+        "pydantic-ai-viz: error: no agents or graphs found in the source of plain.py, broken.py. The code is read, "
+        "not run: an agent built in a way that cannot be seen in the source is not found. Use --import to import "
+        "the code instead (this runs it)",
+    ]
+    assert not (project / "x.html").exists()
+
+
+def test_view_help_says_that_import_executes_the_code(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        cli.main(["view", "--help"])
+    text = " ".join(capsys.readouterr().out.split())
+    assert "The code is parsed, never imported or executed" in text
+    assert "--import" in text
+    assert "This EXECUTES the target code, so use it only on code you trust" in text
+
+
+# ------------------------------------------------------------- view --import
+
+
+def test_view_import_on_a_module_attribute_and_on_a_file(capsys: pytest.CaptureFixture[str], project: Path) -> None:
+    before = _compat.instrumentation_default()
+    code, out, err = run_cli(capsys, "view", "--import", "viz_cli_agents:triage", "--export", "one.html")
     assert (code, out, err) == (0, "Wrote HTML export one.html\n", "")
     events = boot_of(project / "one.html")["events"]
     assert [e["type"] for e in events] == ["session.started", "blueprint.agent", "blueprint.agent"]
     assert blueprint_labels(events) == ["triage", "helper"]  # the delegate comes along
     assert events[1]["agent"]["delegates"] == [{"tool_name": "ask_helper", "agent_id": "a2", "evidence": "object"}]
-    assert events[0]["title"] == "triage"
+    assert (events[0]["title"], events[0]["mode"]) == ("triage", "blueprint")
 
-    code, out, _ = run_cli(capsys, "view", "viz_cli_agents.py", "--export", "all.html")
+    code, out, _ = run_cli(capsys, "view", "viz_cli_agents.py", "--import", "--export", "all.html")
     assert code == 0
     events = boot_of(project / "all.html")["events"]
     assert sorted(blueprint_labels(events)) == ["helper", "triage", "unnamed"]
     assert events[0]["title"] == "viz_cli_agents"
-    # Blueprints only: nothing ran, and nothing global was touched.
+    assert {e["agent"]["source"] for e in events[1:]} == {"object"}  # read from the live objects
+    # Blueprints only: no agent ran, and nothing global was touched.
     assert {e["type"] for e in events} == {"session.started", "blueprint.agent"}
     assert _compat.instrumentation_default() is before
     assert active_session() is None
 
 
-def test_view_serves_the_blueprints_of_several_targets(
+def test_view_import_serves_the_blueprints_of_several_targets(
     capsys: pytest.CaptureFixture[str],
     project: Path,
     opened: list[str],
@@ -482,11 +641,14 @@ def test_view_serves_the_blueprints_of_several_targets(
         seen["instrumentation"] = _compat.instrumentation_default()
 
     served = serving(watch)
-    code, out, err = run_cli(capsys, "view", "viz_cli_agents.py:unnamed", "viz_cli_agents:triage", "--port", "0")
+    code, out, err = run_cli(
+        capsys, "view", "--import", "viz_cli_agents.py:unnamed", "viz_cli_agents:triage", "--port", "0"
+    )
     assert (code, err) == (0, "")
     (session,) = served
     assert out == f"pydantic-ai-viz {pydantic_ai_viz.__version__} - serving {session.url} (Ctrl+C to stop)\n"
     assert opened == [session.url]
+    assert seen["events"][0]["mode"] == "blueprint"
     assert blueprint_labels(seen["events"]) == ["unnamed", "triage", "helper"]
     assert seen["rerun"] == 404  # not a demo
     assert seen["instrumentation"] is before  # viewing instruments nothing
@@ -502,10 +664,10 @@ def test_view_serves_the_blueprints_of_several_targets(
         ("viz_cli_agents.py:never", "viz_cli_agents.py:never is a function, not a pydantic_ai.Agent"),
     ],
 )
-def test_view_target_not_found_is_a_usage_error(
+def test_view_import_target_not_found_is_a_usage_error(
     capsys: pytest.CaptureFixture[str], project: Path, target: str, message: str
 ) -> None:
-    code, out, err = run_cli(capsys, "view", "viz_cli_agents.py", target, "--export", "x.html")
+    code, out, err = run_cli(capsys, "view", "--import", "viz_cli_agents.py", target, "--export", "x.html")
     assert (code, out) == (2, "")
     assert err.startswith("pydantic-ai-viz: error: ")
     assert message in err
@@ -513,19 +675,21 @@ def test_view_target_not_found_is_a_usage_error(
     assert active_session() is None
 
 
-def test_view_reports_an_error_inside_the_target_as_a_runtime_error(
+def test_view_import_reports_an_error_inside_the_target_as_a_runtime_error(
     capsys: pytest.CaptureFixture[str], project: Path
 ) -> None:
     (project / "broken.py").write_text("raise RuntimeError('boom at import')\n", encoding="utf-8")
-    code, _, err = run_cli(capsys, "view", "broken.py", "--export", "x.html")
+    code, _, err = run_cli(capsys, "view", "--import", "broken.py", "--export", "x.html")
     assert code == 1
     assert err == "pydantic-ai-viz: error: RuntimeError: boom at import\n"
 
 
-def test_view_on_a_file_that_exits_while_loading_says_so(capsys: pytest.CaptureFixture[str], project: Path) -> None:
+def test_view_import_on_a_file_that_exits_while_loading_says_so(
+    capsys: pytest.CaptureFixture[str], project: Path
+) -> None:
     source = "from viz_cli_agents import triage\nimport sys\nsys.exit(7)\n"
     (project / "exits.py").write_text(source, encoding="utf-8")
-    code, out, err = run_cli(capsys, "view", "exits.py", "--export", "x.html")
+    code, out, err = run_cli(capsys, "view", "--import", "exits.py", "--export", "x.html")
     assert (code, out) == (2, "")
     assert err == (
         "pydantic-ai-viz: error: exits.py called sys.exit(7) while being loaded; a target is loaded without "
@@ -534,7 +698,7 @@ def test_view_on_a_file_that_exits_while_loading_says_so(capsys: pytest.CaptureF
     assert not (project / "x.html").exists()
     assert active_session() is None
     # The same for a module target, which is imported.
-    code, _, err = run_cli(capsys, "view", "exits:triage")
+    code, _, err = run_cli(capsys, "view", "--import", "exits:triage")
     assert code == 2
     assert "exits called sys.exit(7) while being loaded" in err
 
