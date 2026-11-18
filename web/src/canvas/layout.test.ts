@@ -1,0 +1,288 @@
+// @vitest-environment node
+import { describe, expect, test } from "vitest";
+import { canvasModel } from "../data/selectors";
+import { agentBlueprint, fixtureState, graphBlueprint, stateOf } from "../test/factory";
+import type { AgentBlueprint, Event, GraphBlueprint } from "../wire";
+import {
+  agentLayoutKey,
+  backEdges,
+  graphLayoutKey,
+  graphNodeLabel,
+  graphNodeSize,
+  type LayoutNode,
+  layoutAgentCanvas,
+  layoutGraph,
+  nodeKind,
+  SEEN_GROUP,
+  SIZE,
+  toolGroups,
+} from "./layout";
+import { agentNodeId, graphNodeId, outputNodeId, toolNodeId } from "./targets";
+
+const sample = fixtureState("sample.pviz.jsonl");
+
+const stateWith = (...agents: AgentBlueprint[]) =>
+  stateOf(
+    ...agents.map((agent, i) => [i + 1, { type: "blueprint.agent", agent }] as [number, Event]),
+  );
+
+const tool = (name: string, toolset = "ts0"): AgentBlueprint["tools"][number] => ({
+  name,
+  toolset,
+  description: null,
+  parameters_schema: {},
+  return_schema: null,
+  kind: "function",
+  takes_ctx: null,
+  is_async: null,
+  max_retries: null,
+  function: null,
+  origin: "static",
+});
+
+const toolset = (id: string, opaque = false): AgentBlueprint["toolsets"][number] => ({
+  id,
+  toolset_id: id,
+  label: id,
+  kind: opaque ? "dynamic" : "agent",
+  wrappers: [],
+  opaque,
+});
+
+type Box = { id: string; x: number; y: number; width: number; height: number };
+
+const apart = (a: Box, b: Box): boolean =>
+  a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y;
+
+function expectNoOverlap(nodes: Box[]): void {
+  for (const [i, a] of nodes.entries()) {
+    for (const b of nodes.slice(i + 1)) expect(apart(a, b), `${a.id} over ${b.id}`).toBe(true);
+  }
+}
+
+describe("backEdges", () => {
+  const edges = (pairs: string): [string, string][] =>
+    pairs.split(" ").map((pair) => pair.split(">") as [string, string]);
+
+  test("a chain has none", () => {
+    expect(backEdges(["a", "b", "c"], edges("a>b b>c"), ["a"])).toEqual(new Set());
+  });
+
+  test("the edge that returns to an earlier node is the back edge, wherever it is listed", () => {
+    // start > write > review > decision > (publish | write)
+    const list = edges("s>w w>r r>d d>p d>w p>e");
+    expect(backEdges(["s", "w", "r", "d", "p", "e"], list, ["s"])).toEqual(new Set([4]));
+    // Listing the loop first, and the nodes in another order, changes nothing.
+    const shuffled = edges("d>w p>e d>p r>d w>r s>w");
+    expect(backEdges(["e", "p", "d", "r", "w", "s"], shuffled, ["s"])).toEqual(new Set([0]));
+  });
+
+  test("a diamond is not a cycle; a self loop is", () => {
+    expect(backEdges(["a", "b", "c", "d"], edges("a>b a>c b>d c>d"), ["a"])).toEqual(new Set());
+    expect(backEdges(["a"], edges("a>a"), ["a"])).toEqual(new Set([0]));
+  });
+
+  test("nodes the roots do not reach are still walked, and unknown roots are harmless", () => {
+    expect(backEdges(["a", "x", "y"], edges("x>y y>x"), ["a", "ghost"])).toEqual(new Set([1]));
+  });
+});
+
+describe("toolGroups", () => {
+  const agentOf = (blueprint: AgentBlueprint, unlisted: string[] = []) => {
+    const model = canvasModel(stateWith(blueprint), blueprint.id, null);
+    const agent = model?.agents[0];
+    if (!agent) throw new Error("expected an agent");
+    const idle = { state: "idle" as const, calls: 0, retries: 0, errors: 0, spanIds: [] };
+    return { ...agent, unlisted: unlisted.map((name) => ({ name, activity: idle })) };
+  };
+
+  test("groups tools by toolset and leaves empty plain toolsets out", () => {
+    const agent = agentOf(
+      agentBlueprint({
+        id: "a1",
+        toolsets: [toolset("ts0"), toolset("ts1"), toolset("empty")],
+        tools: [tool("a"), tool("b", "ts1"), tool("c")],
+      }),
+    );
+    expect(toolGroups(agent)).toEqual([
+      { toolsetId: "ts0", tools: ["a", "c"], placeholder: false },
+      { toolsetId: "ts1", tools: ["b"], placeholder: false },
+    ]);
+  });
+
+  test("an opaque toolset shows a placeholder until a run reveals its tools", () => {
+    const blueprint = agentBlueprint({ id: "a1", toolsets: [toolset("dyn", true)] });
+    expect(toolGroups(agentOf(blueprint))).toEqual([
+      { toolsetId: "dyn", tools: [], placeholder: true },
+    ]);
+    expect(toolGroups(agentOf(blueprint, ["fetch"]))).toEqual([
+      { toolsetId: "dyn", tools: ["fetch"], placeholder: false },
+    ]);
+  });
+
+  test("unlisted tools with no single opaque home get a group of their own", () => {
+    const blueprint = agentBlueprint({ id: "a1", toolsets: [toolset("ts0")], tools: [tool("a")] });
+    expect(toolGroups(agentOf(blueprint, ["mystery"])).at(-1)).toEqual({
+      toolsetId: SEEN_GROUP,
+      tools: ["mystery"],
+      placeholder: false,
+    });
+  });
+});
+
+describe("layoutAgentCanvas", () => {
+  const model = canvasModel(sample, "a1", null);
+  if (!model) throw new Error("expected the triage canvas");
+  const layout = layoutAgentCanvas(model);
+  const byId = new Map(layout.nodes.map((node) => [node.id, node]));
+  const node = (id: string): LayoutNode => {
+    const found = byId.get(id);
+    if (!found) throw new Error(`no node ${id}`);
+    return found;
+  };
+
+  test("is deterministic", () => {
+    expect(layoutAgentCanvas(model)).toEqual(layout);
+  });
+
+  test("reads left to right: agent, its tools and output, then the agent it delegates to", () => {
+    const triage = node(agentNodeId("a1"));
+    const refunds = node(agentNodeId("a2"));
+    const output = node(outputNodeId("a1"));
+    const escalate = node(toolNodeId("a1", "escalate_refund"));
+    const group = node(escalate.parentId ?? "");
+    expect(output.x).toBeGreaterThanOrEqual(triage.x + triage.width);
+    expect(group.x).toBeGreaterThanOrEqual(triage.x + triage.width);
+    expect(refunds.x).toBeGreaterThanOrEqual(group.x + group.width);
+    expect(node(outputNodeId("a2")).x).toBeGreaterThanOrEqual(refunds.x + refunds.width);
+  });
+
+  test("no two blocks overlap, and tool rows stay inside their toolset box", () => {
+    expectNoOverlap(layout.nodes.filter((n) => n.parentId === null));
+    const rows = layout.nodes.filter((n) => n.parentId !== null);
+    expect(rows).toHaveLength(5);
+    for (const row of rows) {
+      const box = node(row.parentId ?? "");
+      expect(row.x).toBeGreaterThanOrEqual(0);
+      expect(row.y).toBeGreaterThanOrEqual(SIZE.groupHeader);
+      expect(row.x + row.width).toBeLessThanOrEqual(box.width);
+      expect(row.y + row.height).toBeLessThanOrEqual(box.height);
+    }
+  });
+
+  test("every tool has a flow edge, every agent an output edge; delegation starts at the tool", () => {
+    const kinds = layout.edges.map((edge) => edge.kind);
+    expect(kinds.filter((k) => k === "flow")).toHaveLength(5);
+    expect(kinds.filter((k) => k === "output")).toHaveLength(2);
+    const delegation = layout.edges.find((edge) => edge.kind === "delegation");
+    expect(delegation).toMatchObject({
+      source: toolNodeId("a1", "escalate_refund"),
+      target: agentNodeId("a2"),
+      toAgentId: "a2",
+      back: false,
+    });
+  });
+
+  test("a delegation cycle keeps the subject on the left and draws the way back as an arc", () => {
+    const a = agentBlueprint({
+      id: "a1",
+      toolsets: [toolset("ts0")],
+      tools: [tool("ask_b")],
+      delegates: [{ tool_name: "ask_b", agent_id: "a2", evidence: "static" }],
+    });
+    const b = agentBlueprint({
+      id: "a2",
+      toolsets: [toolset("ts0")],
+      tools: [tool("ask_a")],
+      delegates: [{ tool_name: "ask_a", agent_id: "a1", evidence: "static" }],
+    });
+    for (const subject of ["a1", "a2"]) {
+      const other = subject === "a1" ? "a2" : "a1";
+      const cyclic = canvasModel(stateWith(a, b), subject, null);
+      if (!cyclic) throw new Error("expected a model");
+      const result = layoutAgentCanvas(cyclic);
+      const x = (id: string) => result.nodes.find((n) => n.id === agentNodeId(id))?.x ?? 0;
+      expect(x(subject)).toBeLessThan(x(other));
+      const back = result.edges.filter((edge) => edge.kind === "delegation").map((e) => e.back);
+      expect(back).toEqual([false, true]);
+      expectNoOverlap(result.nodes.filter((n) => n.parentId === null));
+    }
+  });
+
+  test("the layout key changes with structure only", () => {
+    const key = agentLayoutKey(model);
+    const again = canvasModel(sample, "a1", null);
+    expect(again && agentLayoutKey(again)).toBe(key);
+    const other = canvasModel(sample, "a2", null);
+    expect(other && agentLayoutKey(other)).not.toBe(key);
+  });
+});
+
+describe("graph layout", () => {
+  const graph = sample.graphs.g1 as GraphBlueprint;
+  const layout = layoutGraph(graph, []);
+  const x = (id: string): number => layout.nodes.find((n) => n.nodeId === id)?.x ?? Number.NaN;
+
+  test("follows the flow from start to end, even though the graph has a loop", () => {
+    const order = ["__start__", "write", "review", "decision", "publish", "__end__"];
+    const xs = order.map(x);
+    expect(xs).toEqual([...xs].sort((a, b) => a - b));
+    expect(new Set(xs).size).toBe(order.length);
+  });
+
+  test("only the edge that goes back is drawn as a loop", () => {
+    const back = layout.edges.filter((edge) => edge.back);
+    expect(back).toHaveLength(1);
+    expect(back[0]).toMatchObject({
+      source: graphNodeId("decision"),
+      target: graphNodeId("write"),
+      label: "needs work",
+    });
+  });
+
+  test("nodes do not overlap, and a self loop does not break the layout", () => {
+    const looped: GraphBlueprint = {
+      ...graphBlueprint("g2", ["a", "b"]),
+      edges: [
+        { source: "a", target: "b", label: null },
+        { source: "b", target: "b", label: "again" },
+      ],
+    };
+    const result = layoutGraph(looped, []);
+    expect(result.edges.map((edge) => edge.back)).toEqual([false, true]);
+    expectNoOverlap(layout.nodes);
+    expectNoOverlap(result.nodes);
+  });
+
+  test("nodes a run visited but the blueprint does not list are added as steps", () => {
+    const result = layoutGraph(graph, ["mystery", "write"]);
+    expect(result.nodes).toHaveLength(graph.nodes.length + 1);
+    expect(result.nodes.at(-1)).toMatchObject({ nodeId: "mystery", kind: "step" });
+    expect(graphLayoutKey(graph, ["mystery"])).not.toBe(graphLayoutKey(graph, []));
+  });
+
+  test("edges to nodes that do not exist are dropped", () => {
+    const broken: GraphBlueprint = {
+      ...graphBlueprint("g3", ["a", "b"]),
+      edges: [
+        { source: "a", target: "b", label: null },
+        { source: "a", target: "ghost", label: null },
+      ],
+    };
+    expect(layoutGraph(broken, []).edges).toHaveLength(1);
+  });
+
+  test("labels and sizes: terminals are named, unknown kinds are steps, decisions are wider", () => {
+    expect(graphNodeLabel({ id: "__start__", kind: "start", label: null })).toBe("Start");
+    expect(graphNodeLabel({ id: "__end__", kind: "end", label: null })).toBe("End");
+    expect(graphNodeLabel({ id: "write", kind: "step", label: "Write draft" })).toBe("Write draft");
+    expect(graphNodeLabel({ id: "write", kind: "step", label: null })).toBe("write");
+    expect(nodeKind("teleport")).toBe("step");
+    expect(nodeKind("decision")).toBe("decision");
+    const step = graphNodeSize({ id: "x", kind: "step", label: "approved?", note: null });
+    const decision = graphNodeSize({ id: "x", kind: "decision", label: null, note: "approved?" });
+    expect(decision.width).toBeGreaterThan(step.width);
+    const long = graphNodeSize({ id: "x", kind: "step", label: "x".repeat(200), note: null });
+    expect(long.width).toBe(240);
+  });
+});

@@ -18,6 +18,7 @@ import {
   assembleStream,
   blueprintForAgentName,
   canvasModel,
+  conversationSoFar,
   displayStatus,
   graphCanvasModel,
   projectSpan,
@@ -205,6 +206,52 @@ describe("runView", () => {
   });
 });
 
+describe("conversationSoFar", () => {
+  const user = { role: "user" as const, parts: [{ type: "text" as const, content: "hi" }] };
+  const first = modelRequest({ id: "m1", parent: "root", start: 110, end: 200, text: "one" });
+  first.data.input_messages = [user];
+  const second = modelRequest({ id: "m2", parent: "root", start: 300, end: 400, text: "two" });
+  second.data.input_messages = [user, ...(first.data.output_messages ?? [])];
+  const events = [
+    ...lifecycle(agentRun({ id: "root", start: 100, end: 500 }), first, second),
+    [320, delta("m2", 0, "tw")] as [number, Event],
+  ];
+  const state = stateOf(...events.sort((a, b) => a[0] - b[0]));
+  const at = (t: number) => {
+    const view = runView(state, TRACE, t);
+    if (!view) throw new Error("expected a view");
+    return conversationSoFar(view, sid("root"));
+  };
+  const texts = (messages: readonly { parts: readonly unknown[] }[] | null) =>
+    messages?.flatMap((m) => m.parts.map((p) => (p as { content: string }).content));
+
+  test("before any request has answered there is nothing to show", () => {
+    expect(at(105)).toEqual({ messages: null, stream: null });
+    expect(at(150)).toEqual({ messages: null, stream: null });
+  });
+
+  test("a finished request gives the history up to its response", () => {
+    expect(texts(at(250).messages)).toEqual(["hi", "one"]);
+    expect(at(250).stream).toBeNull();
+  });
+
+  test("a request in flight adds its stream after the history so far", () => {
+    const mid = at(350);
+    expect(texts(mid.messages)).toEqual(["hi", "one"]);
+    expect(mid.stream).toEqual([{ index: 0, kind: "text", tool_name: null, text: "tw" }]);
+  });
+
+  test("the latest finished request wins and ends the stream", () => {
+    expect(texts(at(450).messages)).toEqual(["hi", "one", "two"]);
+    expect(at(450).stream).toBeNull();
+  });
+
+  test("a span with no requests has nothing to say", () => {
+    const view = runView(state, TRACE, 450);
+    expect(view && conversationSoFar(view, sid("m1"))).toEqual({ messages: null, stream: null });
+  });
+});
+
 describe("runs and totals", () => {
   test("totals come from model requests only, never from agent runs", () => {
     // The sub-agent shares usage with its parent, so the parent's figure already includes it.
@@ -382,6 +429,43 @@ describe("blueprints and canvas models", () => {
     expect(during?.agents[0]?.model.state).toBe("ok");
   });
 
+  test("a delegation counts as observed from the moment a run first shows it", () => {
+    const view = runView(sample, triageRun.traceId, LIVE);
+    const refunds = view?.order
+      .flatMap((id) => view.spans[id] ?? [])
+      .find((s) => s.name === "refunds");
+    if (!refunds) throw new Error("expected the refunds run");
+    const evidenceAt = (t: number | null) =>
+      canvasModel(sample, "a1", t === null ? null : runView(sample, triageRun.traceId, t))
+        ?.delegations[0]?.evidence;
+    expect(evidenceAt(refunds.start_ms - 1)).toBe("pending");
+    expect(evidenceAt(refunds.start_ms)).toBe("observed");
+    expect(evidenceAt(LIVE)).toBe("observed");
+    // The plain blueprint shows what the session knows in the end.
+    expect(evidenceAt(null)).toBe("observed");
+
+    // A later run starts with the edge already solid: an earlier run showed it.
+    const later = structuredClone(sample);
+    const root = later.spans[triageRun.rootSpanId];
+    if (!root) throw new Error("expected the root span");
+    const again = {
+      ...root,
+      span_id: sid("again"),
+      trace_id: "c".repeat(32),
+      start_ms: root.start_ms + 60_000,
+      end_ms: null,
+      status: "running" as const,
+    };
+    const state = {
+      ...later,
+      spans: { ...later.spans, [again.span_id]: again as Span },
+      traces: { ...later.traces, [again.trace_id]: [again.span_id] },
+      traceOrder: [...later.traceOrder, again.trace_id],
+    };
+    const second = canvasModel(state, "a1", runView(state, again.trace_id, again.start_ms + 1));
+    expect(second?.delegations[0]?.evidence).toBe("observed");
+  });
+
   test("calls to tools the blueprint does not list are kept, not dropped", () => {
     const root = agentRun({ id: "root", start: 0, end: 50 });
     const tool = toolCall({ id: "t", parent: "root", start: 5, end: 9, tool: "mcp_search" });
@@ -441,6 +525,93 @@ describe("blueprints and canvas models", () => {
     expect(
       graphCanvasModel(sample, "g1", null)?.nodes.every((n) => n.activity.state === "idle"),
     ).toBe(true);
+  });
+
+  test("a graph run marks the edges it took, through decisions and round the loop", () => {
+    const view = runView(sample, graphRunSummary.traceId, LIVE);
+    const model = graphCanvasModel(sample, "g1", view);
+    const taken = Object.fromEntries(
+      model?.edges.map((edge, i) => [`${edge.source}>${edge.target}`, model.edgeVisits[i] ?? 0]) ??
+        [],
+    );
+    expect(taken).toEqual({
+      "__start__>write": 1,
+      "write>review": 2,
+      "review>decision": 2,
+      "decision>publish": 1,
+      "decision>write": 1,
+      "publish>__end__": 1,
+    });
+    // Nodes without a span of their own are passed on the way to one.
+    const passes = Object.fromEntries(model?.nodes.map((n) => [n.node.id, n.passes]) ?? []);
+    expect(passes).toEqual({
+      __start__: 1,
+      write: 0,
+      review: 0,
+      decision: 2,
+      publish: 0,
+      __end__: 0,
+    });
+    expect(model?.activeEdges).toEqual([]);
+
+    // Half a second in, only the edge into the running node is active.
+    const mid = graphCanvasModel(
+      sample,
+      "g1",
+      runView(sample, graphRunSummary.traceId, graphRunSummary.startMs + 500),
+    );
+    expect(mid?.activeEdges.map((i) => mid.edges[i]?.target)).toEqual(["write"]);
+    expect(mid?.edgeVisits.reduce((a, b) => a + b, 0)).toBe(1);
+
+    // Without a run nothing is taken.
+    const still = graphCanvasModel(sample, "g1", null);
+    expect(still?.edgeVisits.every((n) => n === 0)).toBe(true);
+    expect(still?.nodes.every((n) => n.passes === 0)).toBe(true);
+  });
+
+  test("a finished run reaches an end node that has no span of its own", () => {
+    const graph = graphBlueprint("g1", ["__start__", "work", "__end__"]);
+    for (const node of graph.nodes) {
+      if (node.id === "__start__") node.kind = "start";
+      if (node.id === "__end__") node.kind = "end";
+    }
+    const node = (id: string, start: number, end: number | null): Span => ({
+      trace_id: TRACE,
+      span_id: sid(id),
+      parent_id: sid("run"),
+      name: "work",
+      start_ms: start,
+      end_ms: end,
+      status: end === null ? "running" : "ok",
+      agent_name: null,
+      run_id: null,
+      error: null,
+      attributes: {},
+      kind: "graph_node",
+      data: { graph_id: "g1", node_id: "work", inputs: null },
+    });
+    const run = (end: number | null): Span => ({
+      ...node("run", 10, end),
+      parent_id: null,
+      name: "g1",
+      kind: "graph_run",
+      data: { graph_id: "g1", graph_name: "g1", inputs: null, output: null },
+    });
+    const done = stateOf(
+      [1, { type: "blueprint.graph", graph }],
+      ...lifecycle(run(40), node("n1", 12, 30)),
+    );
+    const model = graphCanvasModel(done, "g1", runView(done, TRACE, LIVE));
+    expect(model?.edgeVisits).toEqual([1, 1]);
+    expect(model?.nodes.map((n) => n.passes)).toEqual([1, 0, 1]);
+
+    const going = stateOf(
+      [1, { type: "blueprint.graph", graph }],
+      ...lifecycle(run(null), node("n1", 12, null)),
+    );
+    const live = graphCanvasModel(going, "g1", runView(going, TRACE, LIVE));
+    expect(live?.edgeVisits).toEqual([1, 0]);
+    expect(live?.activeEdges).toEqual([0]);
   });
 
   test("run subjects list the blueprints involved, root first", () => {

@@ -1,0 +1,441 @@
+/**
+ * Canvas layout: pure functions from a canvas model to boxes and edges. dagre ranks the blocks
+ * left to right; rows inside a toolset are stacked here. Every node has a fixed size that
+ * follows from its content, so the result is deterministic and needs no DOM measurement.
+ *
+ * Layout depends on structure only (which nodes and edges exist), never on run activity:
+ * `agentLayoutKey` and `graphLayoutKey` say when it has to be computed again.
+ */
+import dagre from "@dagrejs/dagre";
+import type { CanvasAgent, CanvasModel } from "../data/selectors";
+import type { GraphBlueprint } from "../wire";
+import { agentNodeId, graphNodeId, outputNodeId, toolNodeId } from "./targets";
+
+export const SIZE = {
+  agentWidth: 240,
+  agentHeight: 104,
+  /** Extra height for a two-line description. */
+  agentDescription: 40,
+  groupWidth: 208,
+  groupHeader: 30,
+  groupPadding: 8,
+  rowWidth: 192,
+  rowHeight: 34,
+  rowGap: 6,
+  outputWidth: 208,
+  outputHeight: 58,
+} as const;
+
+const RANK_GAP = 64;
+const NODE_GAP = 24;
+
+export type AgentNodeKind = "agent" | "toolset" | "tool" | "placeholder" | "output";
+
+export type LayoutNode = {
+  id: string;
+  kind: AgentNodeKind;
+  agentId: string;
+  /** Toolset id for `toolset` and `placeholder`, tool name for `tool`, else "". */
+  ref: string;
+  /** Top-left corner; relative to the parent when `parentId` is set. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  parentId: string | null;
+};
+
+export type LayoutEdge = {
+  id: string;
+  /** `flow`: agent to tool; `output`: agent to output; `delegation`: tool to sub-agent. */
+  kind: "flow" | "output" | "delegation";
+  source: string;
+  target: string;
+  /** The agent the edge leaves from. */
+  agentId: string;
+  /** Tool name for `flow` and `delegation` edges. */
+  ref: string;
+  /** For delegation edges: the agent delegated to. */
+  toAgentId: string | null;
+  /** The target sits left of the source (a delegation cycle): drawn as an arc underneath. */
+  back: boolean;
+};
+
+export type AgentLayout = { nodes: LayoutNode[]; edges: LayoutEdge[] };
+
+/** The id of the group that collects tools seen in a run but not listed by the blueprint. */
+export const SEEN_GROUP = "~seen";
+
+export const toolsetNodeId = (agentId: string, toolsetId: string): string =>
+  `toolset:${agentId}:${toolsetId}`;
+export const placeholderNodeId = (agentId: string, toolsetId: string): string =>
+  `placeholder:${agentId}:${toolsetId}`;
+
+type Group = { toolsetId: string; tools: string[]; placeholder: boolean };
+
+/**
+ * The rows of each toolset box. Tools a run used but the blueprint does not list are shown in
+ * the opaque toolset when there is exactly one (that is where they came from), otherwise in a
+ * group of their own. Empty toolsets that are not opaque are left out.
+ */
+export function toolGroups(agent: CanvasAgent): Group[] {
+  const opaque = agent.toolsets.filter((group) => group.toolset.opaque);
+  const home = opaque.length === 1 ? opaque[0]?.toolset.id : undefined;
+  const unlisted = agent.unlisted.map((tool) => tool.name);
+  const groups: Group[] = [];
+  for (const { toolset, tools } of agent.toolsets) {
+    const names = tools.map((entry) => entry.tool.name);
+    if (toolset.id === home) names.push(...unlisted);
+    if (names.length > 0) groups.push({ toolsetId: toolset.id, tools: names, placeholder: false });
+    else if (toolset.opaque) groups.push({ toolsetId: toolset.id, tools: [], placeholder: true });
+  }
+  if (home === undefined && unlisted.length > 0) {
+    groups.push({ toolsetId: SEEN_GROUP, tools: unlisted, placeholder: false });
+  }
+  return groups;
+}
+
+const agentHeight = (agent: CanvasAgent): number =>
+  SIZE.agentHeight + (agent.blueprint.description ? SIZE.agentDescription : 0);
+
+const groupHeight = (rows: number): number =>
+  SIZE.groupHeader + rows * SIZE.rowHeight + (rows - 1) * SIZE.rowGap + SIZE.groupPadding;
+
+/** Changes exactly when `layoutAgentCanvas` would return something different. */
+export function agentLayoutKey(model: CanvasModel): string {
+  return JSON.stringify([
+    model.agents.map((agent) => [
+      agent.blueprint.id,
+      agent.blueprint.description ? 1 : 0,
+      toolGroups(agent).map((group) => [group.toolsetId, group.tools]),
+    ]),
+    model.delegations.map((d) => [d.fromAgentId, d.toolName, d.toAgentId]),
+  ]);
+}
+
+/**
+ * Which edges close a cycle, by index: those that lead back to a node still being explored in
+ * a depth-first walk from `roots` (then from every other node, in order). Leaving them out, or
+ * turning them round, makes the rest acyclic, and unlike a generic heuristic it keeps the
+ * reading order the roots imply: a loop back to an earlier step is the edge that is "back".
+ */
+export function backEdges(
+  nodes: readonly string[],
+  edges: readonly (readonly [source: string, target: string])[],
+  roots: readonly string[],
+): Set<number> {
+  const out = new Map<string, number[]>();
+  for (const [index, [source]] of edges.entries()) {
+    const list = out.get(source);
+    if (list) list.push(index);
+    else out.set(source, [index]);
+  }
+  const back = new Set<number>();
+  /** Absent: not seen; false: on the current path; true: finished. */
+  const done = new Map<string, boolean>();
+  for (const root of [...roots, ...nodes]) {
+    if (done.has(root)) continue;
+    done.set(root, false);
+    const stack = [{ id: root, next: 0 }];
+    for (let top = stack.at(-1); top; top = stack.at(-1)) {
+      const index = out.get(top.id)?.[top.next++];
+      if (index === undefined) {
+        done.set(top.id, true);
+        stack.pop();
+        continue;
+      }
+      const target = edges[index]?.[1];
+      if (target === undefined) continue;
+      const state = done.get(target);
+      if (state === false) back.add(index);
+      else if (state === undefined) {
+        done.set(target, false);
+        stack.push({ id: target, next: 0 });
+      }
+    }
+  }
+  return back;
+}
+
+function newGraph() {
+  const g = new dagre.graphlib.Graph({ multigraph: true });
+  g.setGraph({
+    rankdir: "LR",
+    nodesep: NODE_GAP,
+    ranksep: RANK_GAP,
+    marginx: 0,
+    marginy: 0,
+  });
+  g.setDefaultEdgeLabel(() => ({}));
+  return g;
+}
+
+export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
+  const g = newGraph();
+  const nodes: LayoutNode[] = [];
+  const edges: LayoutEdge[] = [];
+  /** Tool node id by "agent tool" for delegation sources. */
+  const toolNodes = new Map<string, { id: string; group: string }>();
+  const present = new Set(model.agents.map((agent) => agent.blueprint.id));
+
+  for (const agent of model.agents) {
+    const agentId = agent.blueprint.id;
+    const card = agentNodeId(agentId);
+    g.setNode(card, { width: SIZE.agentWidth, height: agentHeight(agent) });
+    nodes.push({
+      id: card,
+      kind: "agent",
+      agentId,
+      ref: "",
+      x: 0,
+      y: 0,
+      width: SIZE.agentWidth,
+      height: agentHeight(agent),
+      parentId: null,
+    });
+
+    for (const group of toolGroups(agent)) {
+      const box = toolsetNodeId(agentId, group.toolsetId);
+      const rows = group.placeholder ? 1 : group.tools.length;
+      g.setNode(box, { width: SIZE.groupWidth, height: groupHeight(rows) });
+      g.setEdge(card, box, { weight: 2 }, box);
+      nodes.push({
+        id: box,
+        kind: "toolset",
+        agentId,
+        ref: group.toolsetId,
+        x: 0,
+        y: 0,
+        width: SIZE.groupWidth,
+        height: groupHeight(rows),
+        parentId: null,
+      });
+      const row = (index: number) => ({
+        x: (SIZE.groupWidth - SIZE.rowWidth) / 2,
+        y: SIZE.groupHeader + index * (SIZE.rowHeight + SIZE.rowGap),
+        width: SIZE.rowWidth,
+        height: SIZE.rowHeight,
+        parentId: box,
+      });
+      if (group.placeholder) {
+        nodes.push({
+          id: placeholderNodeId(agentId, group.toolsetId),
+          kind: "placeholder",
+          agentId,
+          ref: group.toolsetId,
+          ...row(0),
+        });
+      }
+      for (const [index, name] of group.tools.entries()) {
+        const id = toolNodeId(agentId, name);
+        toolNodes.set(`${agentId} ${name}`, { id, group: box });
+        nodes.push({ id, kind: "tool", agentId, ref: name, ...row(index) });
+        edges.push({
+          id: `flow:${agentId}:${name}`,
+          kind: "flow",
+          source: card,
+          target: id,
+          agentId,
+          ref: name,
+          toAgentId: null,
+          back: false,
+        });
+      }
+    }
+
+    const output = outputNodeId(agentId);
+    g.setNode(output, { width: SIZE.outputWidth, height: SIZE.outputHeight });
+    g.setEdge(card, output, { weight: 2 }, output);
+    nodes.push({
+      id: output,
+      kind: "output",
+      agentId,
+      ref: "",
+      x: 0,
+      y: 0,
+      width: SIZE.outputWidth,
+      height: SIZE.outputHeight,
+      parentId: null,
+    });
+    edges.push({
+      id: `output:${agentId}`,
+      kind: "output",
+      source: card,
+      target: output,
+      agentId,
+      ref: "",
+      toAgentId: null,
+      back: false,
+    });
+  }
+
+  const shown = model.delegations.filter((d) => present.has(d.toAgentId));
+  const cycles = backEdges(
+    [...present],
+    shown.map((d) => [d.fromAgentId, d.toAgentId] as const),
+    [model.subjectId],
+  );
+  for (const [index, delegation] of shown.entries()) {
+    const back = cycles.has(index);
+    const tool = toolNodes.get(`${delegation.fromAgentId} ${delegation.toolName}`);
+    const target = agentNodeId(delegation.toAgentId);
+    const id = `delegation:${delegation.fromAgentId}:${delegation.toolName}:${delegation.toAgentId}`;
+    // dagre ranks the toolset box; the drawn edge starts at the tool row inside it.
+    // An edge that closes a cycle is left out of the ranking and drawn as an arc underneath.
+    if (!back) g.setEdge(tool?.group ?? agentNodeId(delegation.fromAgentId), target, {}, id);
+    edges.push({
+      id,
+      kind: "delegation",
+      source: tool?.id ?? agentNodeId(delegation.fromAgentId),
+      target,
+      agentId: delegation.fromAgentId,
+      ref: delegation.toolName,
+      toAgentId: delegation.toAgentId,
+      back,
+    });
+  }
+
+  dagre.layout(g);
+
+  const left = new Map<string, number>();
+  for (const node of nodes) {
+    if (node.parentId !== null) continue;
+    const placed = g.node(node.id);
+    // dagre reports centres; the canvas wants top-left corners.
+    node.x = Math.round((placed?.x ?? 0) - node.width / 2);
+    node.y = Math.round((placed?.y ?? 0) - node.height / 2);
+    left.set(node.id, node.x);
+  }
+  for (const node of nodes) {
+    if (node.parentId !== null) left.set(node.id, (left.get(node.parentId) ?? 0) + node.x);
+  }
+  // Two sibling agents can also delegate "leftwards" without closing a cycle.
+  for (const edge of edges) {
+    if (edge.kind !== "delegation" || edge.back) continue;
+    edge.back = (left.get(edge.target) ?? 0) <= (left.get(edge.source) ?? 0);
+  }
+  return { nodes, edges };
+}
+
+// ---------- graph ----------
+
+const KNOWN_KINDS = new Set(["start", "end", "step", "decision", "join", "broadcast", "map"]);
+
+/** Unknown node kinds are drawn as steps (forward compatibility). */
+export const nodeKind = (kind: string): string => (KNOWN_KINDS.has(kind) ? kind : "step");
+
+/** What a graph node is called on screen. Start and end nodes usually have no label. */
+export function graphNodeLabel(node: { id: string; kind: string; label: string | null }): string {
+  if (node.label) return node.label;
+  if (node.kind === "start") return "Start";
+  if (node.kind === "end") return "End";
+  return node.id;
+}
+
+export type GraphLayoutNode = {
+  id: string;
+  /** The blueprint node id (`GraphNode.id`). */
+  nodeId: string;
+  /** Drawn kind: an unknown kind has already become "step". */
+  kind: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type GraphLayoutEdge = {
+  id: string;
+  /** Index into `graph.edges`. */
+  index: number;
+  source: string;
+  target: string;
+  label: string | null;
+  /** The target is not to the right of the source (a loop): drawn as an arc underneath. */
+  back: boolean;
+};
+
+export type GraphLayout = { nodes: GraphLayoutNode[]; edges: GraphLayoutEdge[] };
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
+
+/** Box size for a graph node: enough for its text at the canvas font sizes. */
+export function graphNodeSize(node: {
+  id: string;
+  kind: string;
+  label: string | null;
+  note: string | null;
+}): { width: number; height: number } {
+  const kind = nodeKind(node.kind);
+  const label = graphNodeLabel(node);
+  if (kind === "start" || kind === "end") {
+    return { width: clamp(label.length * 8 + 44, 76, 180), height: 34 };
+  }
+  if (kind === "decision") {
+    // A diamond only holds text in its middle half, so it is wider than a card for the same words.
+    const text = Math.max((node.note ?? "").length, node.label ? node.label.length : 0);
+    return { width: clamp(text * 9 + 84, 132, 260), height: 88 };
+  }
+  const longest = Math.max(label.length, label === node.id ? 0 : node.id.length * 0.85);
+  return { width: clamp(Math.round(longest * 8) + 56, 136, 240), height: 54 };
+}
+
+export function graphLayoutKey(graph: GraphBlueprint, extraNodeIds: readonly string[]): string {
+  return JSON.stringify([
+    graph.nodes.map((node) => [node.id, node.kind, node.label, node.note]),
+    graph.edges.map((edge) => [edge.source, edge.target, edge.label]),
+    extraNodeIds,
+  ]);
+}
+
+/**
+ * Lays a graph blueprint out left to right. `extraNodeIds` are nodes a run visited that the
+ * blueprint does not list; they are drawn as unconnected steps.
+ */
+export function layoutGraph(graph: GraphBlueprint, extraNodeIds: readonly string[]): GraphLayout {
+  const g = newGraph();
+  const nodes: GraphLayoutNode[] = [];
+  const listed = new Set<string>();
+  const add = (node: { id: string; kind: string; label: string | null; note: string | null }) => {
+    if (listed.has(node.id)) return;
+    listed.add(node.id);
+    const size = graphNodeSize(node);
+    const id = graphNodeId(node.id);
+    g.setNode(id, size);
+    nodes.push({ id, nodeId: node.id, kind: nodeKind(node.kind), x: 0, y: 0, ...size });
+  };
+  for (const node of graph.nodes) add(node);
+  for (const id of extraNodeIds) add({ id, kind: "step", label: null, note: null });
+
+  const loops = backEdges(
+    graph.nodes.map((node) => node.id),
+    graph.edges.map((edge) => [edge.source, edge.target] as const),
+    graph.nodes.filter((node) => node.kind === "start").map((node) => node.id),
+  );
+  const edges: GraphLayoutEdge[] = [];
+  for (const [index, edge] of graph.edges.entries()) {
+    if (!listed.has(edge.source) || !listed.has(edge.target)) continue;
+    const back = loops.has(index);
+    const id = `edge:${index}`;
+    const source = graphNodeId(edge.source);
+    const target = graphNodeId(edge.target);
+    // Reserving the label's width keeps ranks far enough apart for it to fit.
+    const width = edge.label ? edge.label.length * 7 + 20 : 0;
+    // A loop takes no part in the ranking: the node it returns to is already upstream, and
+    // its label sits on the arc, so it needs no room between ranks.
+    if (!back) {
+      g.setEdge(source, target, { width, height: edge.label ? 20 : 0, labelpos: "c" }, id);
+    }
+    edges.push({ id, index, source, target, label: edge.label, back });
+  }
+
+  dagre.layout(g);
+
+  for (const node of nodes) {
+    const placed = g.node(node.id);
+    node.x = Math.round((placed?.x ?? 0) - node.width / 2);
+    node.y = Math.round((placed?.y ?? 0) - node.height / 2);
+  }
+  return { nodes, edges };
+}

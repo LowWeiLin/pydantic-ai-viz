@@ -1,0 +1,84 @@
+@import "@xyflow/react/dist/base.css";
+
+/*
+ * The canvas wears the viewer's tokens, not React Flow's defaults. Only what the base sheet
+ * hard-codes is overridden here; nodes and labels are styled with utility classes.
+ */
+.react-flow {
+  --xy-background-color: var(--bg);
+  --xy-edge-stroke: var(--border-strong);
+  --xy-edge-stroke-width: 1.5;
+  --xy-attribution-background-color: transparent;
+  background: var(--bg);
+}
+
+/* Nodes are fixed boxes laid out by layout.ts; React Flow must not add chrome of its own. */
+.react-flow__node {
+  cursor: default;
+}
+
+.react-flow__handle {
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.react-flow__attribution {
+  padding: 2px 6px;
+  font-size: 10px;
+}
+
+.react-flow__attribution a {
+  color: var(--text-faint);
+  text-decoration: none;
+}
+
+.react-flow__edge-path.pviz-edge {
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+  transition: stroke 150ms var(--ease-out);
+}
+
+.react-flow__edge-path.pviz-edge-dashed {
+  stroke-dasharray: 5 5;
+}
+
+.react-flow__edge-path.pviz-edge-done {
+  stroke: var(--edge-tone);
+}
+
+/* Active: a dash that moves towards the target. The motion stops under reduced motion. */
+.react-flow__edge-path.pviz-edge-active {
+  stroke: var(--edge-tone);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  animation: pviz-dash 0.5s linear infinite;
+}
+
+/* The selected node: one accent outline, the same on every node shape. */
+.pviz-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* The subject of the canvas carries a short rail in its kind colour on its left edge. */
+.pviz-subject::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: -1px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--kind-agent);
+}
+
+/* A count badge that sits on a node's corner: tinted, but opaque. */
+.pviz-badge {
+  background: color-mix(in srgb, var(--tone) var(--tint), var(--surface));
+}

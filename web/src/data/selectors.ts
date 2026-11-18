@@ -13,6 +13,7 @@ import type {
   GraphBlueprint,
   GraphEdge,
   GraphNode,
+  Message,
   Span,
   SpanKind,
   SpanStatus,
@@ -351,6 +352,31 @@ export function runTotals(data: DataState, traceId: string, t: number): RunTotal
   return totals;
 }
 
+/**
+ * What an agent run that has not ended has said so far. The full conversation only arrives
+ * when the run ends, but every model request carries the history up to its own response: the
+ * latest finished request gives the messages, and a request still in flight gives its stream.
+ */
+export function conversationSoFar(
+  view: RunView,
+  agentRunId: string,
+): { messages: readonly Message[] | null; stream: readonly StreamPart[] | null } {
+  let messages: readonly Message[] | null = null;
+  let stream: readonly StreamPart[] | null = null;
+  for (const id of view.children[agentRunId] ?? []) {
+    const span = view.spans[id];
+    if (span?.kind !== "model_request") continue;
+    const { input_messages, output_messages } = span.data;
+    if (input_messages !== null || output_messages !== null) {
+      messages = [...(input_messages ?? []), ...(output_messages ?? [])];
+      stream = null;
+    } else if (span.status === "running") {
+      stream = view.streams[id] ?? null;
+    }
+  }
+  return { messages, stream };
+}
+
 // ---------- blueprints ----------
 
 /** The first blueprint with this agent name (names are unique per session by contract). */
@@ -436,7 +462,11 @@ export type CanvasDelegation = {
   fromAgentId: string;
   toolName: string;
   toAgentId: string;
-  evidence: "static" | "observed";
+  /**
+   * `pending`: a run shows this delegation, but later than the replay position. The blueprint
+   * in a recording is the final one, so without this the edge would be solid from the start.
+   */
+  evidence: "static" | "observed" | "pending";
   /** True while the delegated run is in flight. */
   active: boolean;
 };
@@ -446,6 +476,31 @@ export type CanvasModel = {
   agents: CanvasAgent[];
   delegations: CanvasDelegation[];
 };
+
+const delegationKey = (from: string | null, tool: string, to: string | null): string =>
+  `${from}\u0000${tool}\u0000${to}`;
+
+const firstSeenCache = new WeakMap<DataState, ReadonlyMap<string, number>>();
+
+/**
+ * When each delegation was first seen to happen: the earliest start of a sub-agent run under
+ * a tool call, by `delegationKey`. Runs evicted from a long session are simply not in here.
+ */
+function delegationFirstSeen(data: DataState): ReadonlyMap<string, number> {
+  const cached = firstSeenCache.get(data);
+  if (cached) return cached;
+  const first = new Map<string, number>();
+  for (const span of Object.values(data.spans)) {
+    if (span.kind !== "agent_run" || span.parent_id === null) continue;
+    const parent = data.spans[span.parent_id];
+    if (parent?.kind !== "tool_call") continue;
+    const key = delegationKey(parent.agent_name, parent.data.tool_name, span.agent_name);
+    const known = first.get(key);
+    if (known === undefined || span.start_ms < known) first.set(key, span.start_ms);
+  }
+  firstSeenCache.set(data, first);
+  return first;
+}
 
 /** How far the canvas follows delegation edges from its subject. */
 export const MAX_DELEGATION_DEPTH = 3;
@@ -540,6 +595,7 @@ export function canvasModel(
   });
 
   const delegations: CanvasDelegation[] = [];
+  const firstSeen = view ? delegationFirstSeen(data) : null;
   for (const { blueprint } of agents) {
     for (const delegate of blueprint.delegates) {
       const target = data.agents[delegate.agent_id];
@@ -554,11 +610,17 @@ export function canvasModel(
           parent.agent_name === blueprint.name
         );
       });
+      const seenAt = firstSeen?.get(delegationKey(blueprint.name, delegate.tool_name, target.name));
+      const notYet =
+        view !== null &&
+        delegate.evidence === "observed" &&
+        seenAt !== undefined &&
+        seenAt > view.t;
       delegations.push({
         fromAgentId: blueprint.id,
         toolName: delegate.tool_name,
         toAgentId: target.id,
-        evidence: delegate.evidence,
+        evidence: notYet ? "pending" : delegate.evidence,
         active,
       });
     }
@@ -569,8 +631,13 @@ export function canvasModel(
 
 export type GraphCanvasNode = {
   node: GraphNode;
-  /** `calls` is the visit count; `state: "running"` marks the active node. */
+  /** `calls` counts this node's own spans; `state: "running"` marks the active node. */
   activity: Activity;
+  /**
+   * Times the run went through this node without a span of its own. Decisions and the start
+   * node are not tasks, so they never get a span; they are visited on the way to one.
+   */
+  passes: number;
 };
 
 export type GraphCanvasModel = {
@@ -578,9 +645,51 @@ export type GraphCanvasModel = {
   run: Activity;
   nodes: GraphCanvasNode[];
   edges: GraphEdge[];
+  /** How often each edge was taken so far, by index into `edges`. */
+  edgeVisits: number[];
+  /** Indices of the edges leading to nodes that are running now. */
+  activeEdges: number[];
   /** Node spans whose `node_id` the blueprint does not list. */
   unlisted: { nodeId: string; activity: Activity }[];
 };
+
+/** Node kinds a run passes through without running a task. */
+const isWaypoint = (kind: string): boolean => kind !== "step" && kind !== "start" && kind !== "end";
+
+/** How far back to look for the node a step was reached from (covers parallel batches). */
+const LOOKBACK = 4;
+/** Longest chain of waypoints (decisions, joins) allowed between two steps. */
+const MAX_HOPS = 5;
+
+/**
+ * The shortest chain of edges from one of `from` to `to` whose inner nodes are all waypoints
+ * without spans. Returns edge indices, or null when there is no such chain.
+ */
+function edgePath(
+  graph: GraphBlueprint,
+  from: readonly string[],
+  to: string,
+  spanned: ReadonlySet<string>,
+): number[] | null {
+  const kinds = new Map(graph.nodes.map((node) => [node.id, node.kind]));
+  let frontier = from.map((id) => ({ id, path: [] as number[] }));
+  const seen = new Set(from);
+  for (let hop = 0; hop < MAX_HOPS && frontier.length > 0; hop++) {
+    const next: typeof frontier = [];
+    for (const { id, path } of frontier) {
+      for (const [index, edge] of graph.edges.entries()) {
+        if (edge.source !== id) continue;
+        if (edge.target === to) return [...path, index];
+        if (seen.has(edge.target) || spanned.has(edge.target)) continue;
+        if (!isWaypoint(kinds.get(edge.target) ?? "step")) continue;
+        seen.add(edge.target);
+        next.push({ id: edge.target, path: [...path, index] });
+      }
+    }
+    frontier = next;
+  }
+  return null;
+}
 
 /** Everything the graph canvas draws, with the run overlay when a view is given. */
 export function graphCanvasModel(
@@ -592,6 +701,7 @@ export function graphCanvasModel(
   if (!graph) return null;
   const run = idle();
   const byNode = new Map<string, Activity>();
+  const visits: Extract<Span, { kind: "graph_node" }>[] = [];
   if (view) {
     for (const id of view.order) {
       const span = view.spans[id];
@@ -605,15 +715,71 @@ export function graphCanvasModel(
           byNode.set(span.data.node_id, activity);
         }
         touch(activity, span);
+        visits.push(span);
       }
     }
   }
+
+  // Which edges were taken is not on the wire; it is read off the order of the node spans.
   const listed = new Set(graph.nodes.map((node) => node.id));
+  const spanned = new Set(byNode.keys());
+  const passes = new Map<string, number>();
+  const edgeVisits = graph.edges.map(() => 0);
+  const activeEdges = new Set<number>();
+  const starts = graph.nodes.filter((node) => node.kind === "start").map((node) => node.id);
+  const take = (path: number[], from: readonly string[], active: boolean): void => {
+    for (const [hop, index] of path.entries()) {
+      const edge = graph.edges[index];
+      if (!edge) continue;
+      edgeVisits[index] = (edgeVisits[index] ?? 0) + 1;
+      if (active) activeEdges.add(index);
+      // The source of every hop but the first is a waypoint; so is a start node.
+      if (hop > 0 || (from === starts && !spanned.has(edge.source))) {
+        passes.set(edge.source, (passes.get(edge.source) ?? 0) + 1);
+      }
+    }
+  };
+  visits.sort((a, b) => a.start_ms - b.start_ms);
+  for (const [i, span] of visits.entries()) {
+    const to = span.data.node_id;
+    if (!listed.has(to)) continue;
+    let found: { path: number[]; from: readonly string[] } | null = null;
+    for (let j = i - 1; j >= Math.max(0, i - LOOKBACK) && !found; j--) {
+      const from = visits[j]?.data.node_id;
+      if (from === undefined || !listed.has(from)) continue;
+      const path = edgePath(graph, [from], to, spanned);
+      if (path) found = { path, from: [from] };
+    }
+    if (!found && i === 0) {
+      const path = edgePath(graph, starts, to, spanned);
+      if (path) found = { path, from: starts };
+    }
+    if (found) take(found.path, found.from, span.status === "running");
+  }
+  // Some versions emit no span for the end node: a finished run still reached it.
+  const last = visits.at(-1);
+  if (run.state === "ok" && last && listed.has(last.data.node_id)) {
+    for (const end of graph.nodes) {
+      if (end.kind !== "end" || spanned.has(end.id)) continue;
+      const path = edgePath(graph, [last.data.node_id], end.id, spanned);
+      if (!path) continue;
+      take(path, [last.data.node_id], false);
+      passes.set(end.id, (passes.get(end.id) ?? 0) + 1);
+      break;
+    }
+  }
+
   return {
     graph,
     run,
-    nodes: graph.nodes.map((node) => ({ node, activity: byNode.get(node.id) ?? idle() })),
+    nodes: graph.nodes.map((node) => ({
+      node,
+      activity: byNode.get(node.id) ?? idle(),
+      passes: passes.get(node.id) ?? 0,
+    })),
     edges: graph.edges,
+    edgeVisits,
+    activeEdges: [...activeEdges].sort((a, b) => a - b),
     unlisted: [...byNode]
       .filter(([nodeId]) => !listed.has(nodeId))
       .map(([nodeId, activity]) => ({ nodeId, activity })),

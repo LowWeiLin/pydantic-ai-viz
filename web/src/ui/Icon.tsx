@@ -111,6 +111,29 @@ const paths = {
     </>
   ),
   reload: <path d="M13 8a5 5 0 1 1-1.6-3.7M13.2 2.3v2.8h-2.8" />,
+  // canvas and playback
+  plus: <path d="M8 3.5v9M3.5 8h9" />,
+  minus: <path d="M3.5 8h9" />,
+  fit: (
+    <path d="M2.5 6V3.5a1 1 0 0 1 1-1H6M10 2.5h2.5a1 1 0 0 1 1 1V6M13.5 10v2.5a1 1 0 0 1-1 1H10M6 13.5H3.5a1 1 0 0 1-1-1V10" />
+  ),
+  stepBack: <path d="M12 3.2v9.6L5.5 8zM4 3v10" />,
+  stepForward: <path d="M4 3.2v9.6L10.5 8zM12 3v10" />,
+  instructions: <path d="M3 4h10M3 8h10M3 12h6" />,
+  toolset: (
+    <>
+      <rect x="2.5" y="2.5" width="11" height="4" rx="1" />
+      <rect x="2.5" y="9.5" width="11" height="4" rx="1" />
+    </>
+  ),
+  decision: <path d="M8 2l6 6-6 6-6-6z" />,
+  arrowRight: <path d="M2.5 8h10M9 4.5L12.5 8 9 11.5" />,
+  user: (
+    <>
+      <circle cx="8" cy="5.5" r="2.6" />
+      <path d="M3 13.5c.6-2.4 2.6-3.6 5-3.6s4.4 1.2 5 3.6" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof paths;
