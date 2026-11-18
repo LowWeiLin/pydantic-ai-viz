@@ -11,6 +11,7 @@ import { RunScreen } from "./screens/RunScreen";
 import { Announcer } from "./shell/announce";
 import { WindowDropTarget } from "./shell/DropZone";
 import { ErrorBoundary } from "./shell/ErrorBoundary";
+import { useFollowLive } from "./shell/follow";
 import { Gallery } from "./shell/Gallery";
 import { formatRoute, homeRoute, navigate, parseHash, type Route, useRoute } from "./shell/router";
 import { ShortcutsDialog } from "./shell/ShortcutsDialog";
@@ -42,7 +43,8 @@ function Screen({ route }: { route: Route }): ReactNode {
     case "graph":
       return <GraphScreen id={route.id} />;
     case "run":
-      return <RunScreen traceId={route.traceId} spanId={route.spanId} />;
+      // Keyed by run: the canvas subject and a picked node belong to one run.
+      return <RunScreen key={route.traceId} traceId={route.traceId} spanId={route.spanId} />;
     case "home":
       // With something to show, the redirect below is about to replace this route.
       return hasHome ? null : (
@@ -77,6 +79,8 @@ export function App({ plan }: { plan?: BootPlan }) {
   useEffect(() => {
     if (route.name === "home" && homeHash) navigate(parseHash(homeHash), { replace: true });
   }, [route.name, homeHash]);
+
+  useFollowLive(route);
 
   useShortcuts({ toggleTheme, showShortcuts: () => setShortcutsOpen(true) });
 

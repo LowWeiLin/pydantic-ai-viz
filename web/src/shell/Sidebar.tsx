@@ -1,6 +1,7 @@
 import { type ReactNode, useMemo } from "react";
-import { type RunSummary, runs } from "../data/selectors";
+import { projectSpan, type RunSummary, runs, runTotals } from "../data/selectors";
 import { useViewer } from "../data/store";
+import { usePlaybackTime } from "../data/usePlayback";
 import { Badge, StatusDot } from "../ui/Badge";
 import { Skeleton } from "../ui/EmptyState";
 import { Icon, type IconName } from "../ui/Icon";
@@ -155,6 +156,20 @@ export function RunListItem({ run, active }: { run: RunSummary; active: boolean 
   );
 }
 
+/** The run on screen follows the replay clock, like everything else about it. */
+function OpenRunItem({ run }: { run: RunSummary }) {
+  const data = useViewer((state) => state.data);
+  const t = usePlaybackTime();
+  const shown = useMemo((): RunSummary => {
+    const root = data.spans[run.rootSpanId];
+    const projected = root ? projectSpan(root, t) : null;
+    if (!projected) return run;
+    const totals = runTotals(data, run.traceId, t);
+    return { ...run, status: projected.status, durationMs: totals.durationMs, usage: totals.usage };
+  }, [data, run, t]);
+  return <RunListItem run={shown} active />;
+}
+
 export function RunList({ route }: { route: Route }) {
   const data = useViewer((state) => state.data);
   const list = useMemo(() => runs(data), [data]);
@@ -164,13 +179,13 @@ export function RunList({ route }: { route: Route }) {
         <p className="m-0 px-3 pb-2 text-faint text-ui">No runs yet.</p>
       ) : (
         <ul className="m-0 min-h-0 list-none overflow-y-auto p-0">
-          {list.map((run) => (
-            <RunListItem
-              key={run.traceId}
-              run={run}
-              active={route.name === "run" && route.traceId === run.traceId}
-            />
-          ))}
+          {list.map((run) =>
+            route.name === "run" && route.traceId === run.traceId ? (
+              <OpenRunItem key={run.traceId} run={run} />
+            ) : (
+              <RunListItem key={run.traceId} run={run} active={false} />
+            ),
+          )}
         </ul>
       )}
     </Section>
