@@ -208,8 +208,10 @@ def test_fan_out_graph_node_kinds_and_edges() -> None:
             ("__end__", "end"),
         ]
     )
-    assert [(e.source, e.target, e.label) for e in result.edges] == snapshot(
-        [
+    # Compared as a set: pydantic-graph 2.60 and 2.61 list the branches of a broadcast in the
+    # opposite order to later releases, and the order carries no meaning.
+    assert {(e.source, e.target, e.label) for e in result.edges} == snapshot(
+        {
             ("__start__", "source", None),
             ("source", "map", None),
             ("square", "reduce_list_append", None),
@@ -218,8 +220,9 @@ def test_fan_out_graph_node_kinds_and_edges() -> None:
             ("broadcast", "square", None),
             ("broadcast", "negate", None),
             ("reduce_list_append", "__end__", None),
-        ]
+        }
     )
+    assert len(result.edges) == 8
     assert (result.name, result.label, result.state_type) == (None, "graph-1", None)
     assert (result.input_type, result.output_type) == ("list[int]", "list[int]")
 
