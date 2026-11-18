@@ -6,7 +6,7 @@ import { Badge, StatusDot } from "../ui/Badge";
 import { Skeleton } from "../ui/EmptyState";
 import { Icon, type IconName } from "../ui/Icon";
 import { cx, kindMeta, type Tone, toneClass } from "../ui/tone";
-import { formatCount, formatDuration } from "./format";
+import { formatClock, formatCount, formatDuration } from "./format";
 import { formatRoute, type Route } from "./router";
 
 function Section({
@@ -137,11 +137,15 @@ export function BlueprintList({ route }: { route: Route }) {
 export function RunListItem({ run, active }: { run: RunSummary; active: boolean }) {
   const kind = kindMeta[run.kind];
   const tokens = run.usage.input_tokens + run.usage.output_tokens;
+  // The same agent is run again and again, so the name says little. When it started tells
+  // one run from the next.
+  const started = new Date(run.startMs);
   return (
     <li className="animate-fade-in">
       <a
         href={formatRoute({ name: "run", traceId: run.traceId, spanId: null })}
         aria-current={active ? "page" : undefined}
+        title={`Started ${started.toLocaleString()}, trace ${run.traceId}`}
         className={cx(toneClass[kind.tone], rowClass(active), "items-start py-1.5")}
       >
         <StatusDot status={run.status} className="mt-0.5" />
@@ -150,7 +154,8 @@ export function RunListItem({ run, active }: { run: RunSummary; active: boolean 
             <span className="truncate font-medium text-ui">{run.name}</span>
             <Icon name={kind.icon} size={12} className="tone-text" label={kind.label} />
           </span>
-          <span className="flex gap-2 font-mono text-faint text-meta">
+          <span className="flex flex-wrap gap-x-2 font-mono text-faint text-meta">
+            <time dateTime={started.toISOString()}>{formatClock(run.startMs)}</time>
             <span>{formatDuration(run.durationMs)}</span>
             {tokens > 0 && <span>{formatCount(tokens)} tok</span>}
           </span>

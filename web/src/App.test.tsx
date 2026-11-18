@@ -268,6 +268,37 @@ describe("boot modes and states", () => {
     );
   });
 
+  test("runs of the same agent can be told apart by when they started", async () => {
+    // Running one agent again and again is what a session mostly is: same name, similar length.
+    const hour = 3_600_000;
+    const earlier = agentRun({ id: "r1", start: 9 * hour, end: 9 * hour + 2000 });
+    const later = agentRun({
+      id: "r2",
+      trace: "f".repeat(32),
+      start: 9 * hour + 95_000,
+      end: 9 * hour + 97_000,
+    });
+    render(
+      <App
+        plan={{
+          kind: "embedded",
+          events: log(started(earlier), ended(earlier), started(later), ended(later)),
+        }}
+      />,
+    );
+    const list = await screen.findByRole("navigation", { name: /Runs/ });
+    const [newest, oldest] = within(list).getAllByRole("link");
+    const startOf = (link: HTMLElement | undefined) => link?.querySelector("time");
+    expect(startOf(newest)).toHaveAttribute("datetime", "1970-01-01T09:01:35.000Z");
+    expect(startOf(oldest)).toHaveAttribute("datetime", "1970-01-01T09:00:00.000Z");
+    // Shown as a clock time in the viewer's own time zone: only the seconds are the same
+    // everywhere (zones differ by hours, and some by 30 or 45 minutes).
+    expect(startOf(newest)?.textContent).toMatch(/^\d\d:\d\d:35$/);
+    expect(startOf(oldest)?.textContent).toMatch(/^\d\d:\d\d:00$/);
+    expect(newest).toHaveAttribute("title", expect.stringContaining("f".repeat(32)));
+    expect(oldest).toHaveAttribute("title", expect.stringContaining(TRACE));
+  });
+
   test("the gallery lists recordings with shareable links", async () => {
     const index = JSON.parse(fixtureText("index.json")) as unknown;
     stubFetch(() => Response.json(index));
