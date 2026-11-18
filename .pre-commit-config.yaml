@@ -1,0 +1,54 @@
+# Install both hook types with:  uv run pre-commit install --install-hooks
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+
+# Generated files, lock files, captured data and binary assets are left alone.
+exclude: |
+  (?x)^(
+    uv\.lock
+    | schema/pviz\.schema\.json
+    | web/pnpm-lock\.yaml
+    | .*\.pviz\.jsonl
+    | docs/assets/screenshots/.*
+    | tests/fixtures/.*
+  )$
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-json
+        exclude: ^web/(tsconfig.*|biome)\.json$ # JSON with comments
+      - id: check-yaml
+        args: [--unsafe] # mkdocs.yml uses a !!python/name tag
+      - id: check-added-large-files
+        args: [--maxkb=500]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.5
+    hooks:
+      - id: ruff-check
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: biome
+        name: biome (web)
+        description: Lint and format check for the viewer. Needs `pnpm --dir web install` once.
+        entry: pnpm --dir web lint
+        language: system
+        files: ^web/
+        pass_filenames: false
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.5.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: [feat, fix, docs, test, refactor, build, ci, chore]
