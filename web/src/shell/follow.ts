@@ -8,6 +8,7 @@
  *   session's first run. Someone reading a blueprint while runs come and go is left alone.
  */
 import { useEffect, useRef } from "react";
+import { goLive } from "../data/playback";
 import { type RunSummary, runs } from "../data/selectors";
 import { useViewer } from "../data/store";
 import { navigate, type Route } from "./router";
@@ -38,6 +39,28 @@ export function followTarget(
   }
   const waiting = route.name === "agent" || route.name === "graph" || route.name === "home";
   return waiting && before.count === 0 ? newest.traceId : null;
+}
+
+/**
+ * A live viewer outlives the program it watches: after edit, Ctrl+C and run again on the same
+ * port, the open tab reconnects into a new session. The reducer starts the data over; the route
+ * and the clock are state of the old session too. A run of the old session no longer exists, so
+ * the viewer goes home (the new session's latest run, or its first blueprint) and is pinned to
+ * now again. A blueprint route stays: the same program gives its agents the same ids.
+ *
+ * Mount once, in the shell.
+ */
+export function useSessionRestart(route: Route): void {
+  const sessionId = useViewer((state) => state.data.session?.session_id ?? null);
+  const live = useViewer((state) => state.source.kind === "live");
+  const previous = useRef<string | null>(null);
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = sessionId;
+    if (!live || before === null || sessionId === null || before === sessionId) return;
+    useViewer.getState().updatePlayback(goLive);
+    if (route.name === "run") navigate({ name: "home" }, { replace: true });
+  }, [sessionId, live, route]);
 }
 
 /** Mount once, in the shell. */

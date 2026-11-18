@@ -17,10 +17,12 @@ import {
   fixtureText,
   log,
   modelRequest,
+  sessionStarted,
   started,
   TRACE,
 } from "./test/factory";
 import { TooltipProvider } from "./ui/overlays";
+import type { Event } from "./wire";
 
 const embedded = (name: string): BootPlan => ({ kind: "embedded", events: fixture(name) });
 
@@ -225,6 +227,45 @@ describe("boot modes and states", () => {
     await user.click(screen.getByRole("button", { name: "Live" }));
     expect(useViewer.getState().playback.mode).toBe("live");
     expect(window.location.hash).toBe(`#/runs/${second}`);
+  });
+
+  test("a new session behind the same address starts the viewer over", async () => {
+    // Edit, Ctrl+C, run again on the same port: the open tab reconnects into a new session.
+    const user = userEvent.setup();
+    const sources = stubEventSource();
+    render(<App plan={livePlan} />);
+    act(() => sources.at(-1)?.onopen?.());
+
+    const blueprint: [number, Event] = [
+      1,
+      { type: "blueprint.agent", agent: agentBlueprint({ id: "a1", name: "triage" }) },
+    ];
+    const old = agentRun({ id: "r1", start: 10, end: 50 });
+    act(() => useViewer.getState().ingest(log(blueprint, started(old), ended(old))));
+    await waitFor(() => expect(window.location.hash).toBe(`#/runs/${TRACE}`));
+    // The user was looking around in the old session: paused, with a span selected.
+    await user.click(await screen.findByRole("button", { name: "Step back" }));
+    await user.click(screen.getByRole("treeitem", { name: /triage/ }));
+    expect(window.location.hash).toContain("?span=");
+    expect(useViewer.getState().playback.mode).toBe("paused");
+
+    // The new session's run has already ended by the time the tab reconnects.
+    const fresh = "b".repeat(32);
+    const rerun = agentRun({ id: "r9", trace: fresh, start: 1010, end: 1050 });
+    act(() =>
+      useViewer
+        .getState()
+        .ingest(
+          log([1000, sessionStarted("c".repeat(32))], blueprint, started(rerun), ended(rerun)),
+        ),
+    );
+    await waitFor(() => expect(window.location.hash).toBe(`#/runs/${fresh}`));
+    expect(screen.queryByText("Run not found")).toBeNull();
+    expect(useViewer.getState().playback.mode).toBe("live");
+    expect(await screen.findByRole("button", { name: "Live" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   test("the gallery lists recordings with shareable links", async () => {

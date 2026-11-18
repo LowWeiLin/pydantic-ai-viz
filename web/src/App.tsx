@@ -11,7 +11,7 @@ import { RunScreen } from "./screens/RunScreen";
 import { Announcer } from "./shell/announce";
 import { WindowDropTarget } from "./shell/DropZone";
 import { ErrorBoundary } from "./shell/ErrorBoundary";
-import { useFollowLive } from "./shell/follow";
+import { useFollowLive, useSessionRestart } from "./shell/follow";
 import { Gallery } from "./shell/Gallery";
 import { formatRoute, homeRoute, navigate, parseHash, type Route, useRoute } from "./shell/router";
 import { ShortcutsDialog } from "./shell/ShortcutsDialog";
@@ -80,6 +80,7 @@ export function App({ plan }: { plan?: BootPlan }) {
     if (route.name === "home" && homeHash) navigate(parseHash(homeHash), { replace: true });
   }, [route.name, homeHash]);
 
+  useSessionRestart(route);
   useFollowLive(route);
 
   useShortcuts({ toggleTheme, showShortcuts: () => setShortcutsOpen(true) });
