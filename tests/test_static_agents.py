@@ -282,6 +282,49 @@ def test_offline_model_classes_are_recognised_but_not_named(tmp_path: Path) -> N
     ]
 
 
+def test_arguments_from_earlier_pydantic_ai_releases_are_read_too(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from pydantic import BaseModel
+        from pydantic_ai import Agent, CodeExecutionTool, WebSearchTool
+        from pydantic_ai.builtin_tools import SomeLaterTool
+        from pydantic_ai.mcp import MCPServerStdio
+
+        class Box(BaseModel):
+            width: int
+
+        server = MCPServerStdio("uv", args=["run", "server.py"])
+
+        old = Agent(
+            "openai:gpt-4o",
+            result_type=Box,
+            retries=2,
+            result_retries=5,
+            mcp_servers=[server],
+            builtin_tools=[WebSearchTool(), CodeExecutionTool(), SomeLaterTool(), WebSearchTool(), make_tool()],
+        )
+        middle = Agent("openai:gpt-4o", output_type=Box, retries=compute(), output_retries=1, builtin_tools=TOOLS)
+        both = Agent("openai:gpt-4o", output_type=str, result_type=Box, output_retries=compute())
+        """,
+    )
+    old, middle, both = found.agents
+    assert (old.output.type_name, old.output.mode) == ("Box", "auto")
+    assert (old.settings.tool_retries, old.settings.output_retries) == (2, 5)
+    assert [(t.kind, t.label) for t in old.toolsets] == [("mcp", "MCPServerStdio")]
+    # Known classes by the kind of tool they are, an unknown one by its class name, each once.
+    assert old.native_tools == ["web_search", "code_execution", "SomeLaterTool"]
+    assert old.warnings == ["a builtin tool is built by `make_tool()`; its kind is only known when the code runs"]
+
+    assert (middle.settings.tool_retries, middle.settings.output_retries) == (None, 1)
+    assert middle.settings.expressions == {"tool_retries": "compute()"}
+    assert middle.native_tools == []
+    assert middle.warnings == ["the builtin tools are built by `TOOLS`; they are only known when the code runs"]
+
+    assert both.output.type_name == "str"  # the name in use today wins
+    assert both.settings.expressions == {"output_retries": "compute()"}
+
+
 def test_a_long_expression_is_cut_on_the_wire_and_shorter_still_in_the_warning(tmp_path: Path) -> None:
     arguments = ", ".join(f"option_{index}=value_{index}" for index in range(40))
     blueprint = one_agent(tmp_path, f"from pydantic_ai import Agent\nagent = Agent(build_model({arguments}))\n")

@@ -61,6 +61,17 @@ _OUTPUT_MODES: dict[str, str] = {
     "TextOutput": "text",
 }
 _OFFLINE_MODELS: dict[str, str] = {"TestModel": "test", "FunctionModel": "function"}
+_NATIVE_TOOLS: dict[str, str] = {
+    "WebSearchTool": "web_search",
+    "WebFetchTool": "web_fetch",
+    "UrlContextTool": "url_context",
+    "CodeExecutionTool": "code_execution",
+    "ImageGenerationTool": "image_generation",
+    "FileSearchTool": "file_search",
+    "MemoryTool": "memory",
+    "MCPServerTool": "mcp_server",
+}
+"""Classes that ``builtin_tools=[...]`` took in earlier Pydantic AI releases -> the kind of native tool each is."""
 _MAX_LIST_ITEMS = 500
 _MAX_EXPANSION_DEPTH = 6
 
@@ -394,7 +405,7 @@ class _AgentBuilder:
             instructions=self._instructions(),
             toolsets=toolsets,
             tools=tools,
-            native_tools=[],
+            native_tools=self._native_tools(),
             output=self._output(),
             capabilities=self._capabilities(),
             settings=self._settings(),
@@ -504,7 +515,8 @@ class _AgentBuilder:
     # -------------------------------------------------------------- output
 
     def _output(self) -> OutputInfo:
-        node = self.arguments.get("output_type")
+        # ``result_type`` is what ``output_type`` was called in early releases; code written then is read too.
+        node = self.arguments.get("output_type", self.arguments.get("result_type"))
         if node is None:
             return OutputInfo(
                 mode="text",
@@ -668,6 +680,23 @@ class _AgentBuilder:
         return value
 
     def _retries(self, expressions: dict[str, str]) -> tuple[int | None, int | None]:
+        tools, output = self._retry_budgets(expressions)
+        # A budget for the output alone, as earlier releases took it: ``output_retries``, once ``result_retries``.
+        separate = self.arguments.get("output_retries", self.arguments.get("result_retries"))
+        if separate is not None and not (isinstance(separate, ast.Constant) and separate.value is None):
+            try:
+                value = self.literal(separate)
+            except NotLiteral:
+                value = None
+            if isinstance(value, int) and not isinstance(value, bool):
+                output = value
+                expressions.pop("output_retries", None)
+            else:
+                output = None
+                expressions["output_retries"] = self.text(separate)
+        return tools, output
+
+    def _retry_budgets(self, expressions: dict[str, str]) -> tuple[int | None, int | None]:
         node = self.arguments.get("retries")
         if node is None or (isinstance(node, ast.Constant) and node.value is None):
             return None, None
@@ -684,6 +713,29 @@ class _AgentBuilder:
         text = self.text(node)
         expressions["tool_retries"] = expressions["output_retries"] = text
         return None, None
+
+    def _native_tools(self) -> list[str]:
+        """Tools the provider runs, from ``builtin_tools=[WebSearchTool()]`` as earlier releases took them."""
+        node = self.arguments.get("builtin_tools")
+        if node is None or (isinstance(node, ast.Constant) and node.value is None):
+            return []
+        entries = self.extractor.items(node, self.scope, self.line)
+        if entries is None:
+            self.warn(
+                f"the builtin tools are built by `{brief(self.text(node))}`; they are only known when the code runs"
+            )
+            return []
+        found: list[str] = []
+        for entry in entries:
+            name = self._class_name(entry)
+            if name is None:
+                text = entry.module.text(entry.node)
+                self.warn(f"a builtin tool is built by `{brief(text)}`; its kind is only known when the code runs")
+                continue
+            kind = _NATIVE_TOOLS.get(name, name)
+            if kind not in found:
+                found.append(kind)
+        return found
 
     def _model_settings(self, expressions: dict[str, str]) -> dict[str, Any] | None:
         node = self.arguments.get("model_settings")
@@ -730,8 +782,11 @@ class _AgentBuilder:
             entries.append(
                 _ToolsetEntry(kind="agent", label="Agent tools", opaque=False, toolset_id=AGENT_TOOLSET_ID, tools=own)
             )
-        node = self.arguments.get("toolsets")
-        if node is not None and not (isinstance(node, ast.Constant) and node.value is None):
+        # ``mcp_servers=[...]`` is where earlier releases took MCP servers; they are toolsets all the same.
+        for key in ("toolsets", "mcp_servers"):
+            node = self.arguments.get(key)
+            if node is None or (isinstance(node, ast.Constant) and node.value is None):
+                continue
             listed = self.extractor.items(node, self.scope, self.line)
             if listed is None:
                 text = self.text(node)
