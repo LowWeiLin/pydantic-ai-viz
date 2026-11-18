@@ -14,8 +14,8 @@ import {
   Panel,
   ReactFlow,
   ReactFlowProvider,
-  useNodesInitialized,
   useReactFlow,
+  useStore,
 } from "@xyflow/react";
 import { type ReactNode, useEffect, useRef } from "react";
 import "./canvas.css";
@@ -26,7 +26,15 @@ import { edgeTypes } from "./edges";
 import { CanvasPick } from "./nodes";
 import type { CanvasTarget } from "./targets";
 
-const FIT = { padding: 0.08, maxZoom: 1, minZoom: 0.3 } as const;
+/**
+ * Fitting leaves room for what floats over the canvas: the subject switcher and the inspector
+ * toggle on top, the zoom buttons on the left, the legend and the attribution underneath.
+ */
+const FIT = {
+  padding: { top: "56px", right: "24px", bottom: "44px", left: "56px" },
+  maxZoom: 1,
+  minZoom: 0.3,
+} as const;
 
 const reducedMotion = (): boolean =>
   typeof window.matchMedia === "function" &&
@@ -68,21 +76,28 @@ export function CanvasControls() {
   );
 }
 
-/** Fits the view again whenever the layout changes (a new subject, a newly seen tool). */
+/**
+ * Fits the view again whenever the layout changes (a new subject, a newly seen tool) or the
+ * canvas changes size (the inspector opens, closes or is dragged; the window is resized).
+ */
 function FitOnLayout({ layoutKey }: { layoutKey: string }) {
   const flow = useReactFlow();
-  const ready = useNodesInitialized();
-  const fitted = useRef<string | null>(null);
+  const size = useStore((state) => `${state.width}x${state.height}`);
+  const fitted = useRef<{ layout: string; size: string } | null>(null);
   useEffect(() => {
-    if (!ready || fitted.current === layoutKey) return;
-    const first = fitted.current === null;
-    fitted.current = layoutKey;
-    // One frame later, so the nodes of the new layout are in place before measuring.
+    const last = fitted.current;
+    // Before the canvas has a size there is nothing to fit to.
+    if (size === "0x0" || (last?.layout === layoutKey && last.size === size)) return;
+    // Only a new layout glides into place; following a resize has to be immediate.
+    const glide = last !== null && last.layout !== layoutKey && !reducedMotion();
+    // One frame later, so the nodes of the new layout are in place before measuring. The fit
+    // is recorded only once it happens: a render in between cancels the frame and asks again.
     const frame = requestAnimationFrame(() => {
-      void flow.fitView({ ...FIT, duration: first || reducedMotion() ? 0 : 220 });
+      fitted.current = { layout: layoutKey, size };
+      void flow.fitView({ ...FIT, duration: glide ? 220 : 0 });
     });
     return () => cancelAnimationFrame(frame);
-  }, [ready, layoutKey, flow]);
+  }, [layoutKey, size, flow]);
   return null;
 }
 
