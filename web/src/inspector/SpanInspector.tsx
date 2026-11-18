@@ -37,6 +37,7 @@ import {
   StickyTabs,
   spanDuration,
   statusLabel,
+  Tail,
   TextBlock,
   Value,
 } from "./parts";
@@ -153,6 +154,10 @@ export function UsageTable({ rows, caption }: { rows: UsageRow[]; caption: strin
 
 // ---------- per kind ----------
 
+/** How much has been streamed so far; it changes with every delta. */
+const streamLength = (parts: readonly StreamPart[] | null | undefined): number =>
+  (parts ?? []).reduce((length, part) => length + part.text.length, 0);
+
 function agentRunTabs(span: AgentRunSpan, { view, now }: Ctx): TabItem[] {
   const running = span.status === "running";
   const { data } = span;
@@ -187,12 +192,15 @@ function agentRunTabs(span: AgentRunSpan, { view, now }: Ctx): TabItem[] {
               none="No messages were recorded for this run."
             />
           ) : (
-            <>
+            <Tail
+              key={span.span_id}
+              growth={(soFar?.messages?.length ?? 0) + streamLength(soFar?.stream)}
+            >
               {soFar?.messages && (
                 <ConversationView messages={soFar.messages} label="Conversation so far" />
               )}
               {soFar?.stream && <StreamingText parts={soFar.stream} />}
-            </>
+            </Tail>
           )}
         </div>
       ),
@@ -269,7 +277,9 @@ function modelRequestTabs(
             empty="The model returned no content."
           />
         ) : stream ? (
-          <StreamingText parts={stream} />
+          <Tail key={span.span_id} growth={streamLength(stream)}>
+            <StreamingText parts={stream} />
+          </Tail>
         ) : (
           <Missing
             what="The response"

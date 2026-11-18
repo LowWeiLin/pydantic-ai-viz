@@ -321,6 +321,31 @@ describe("useStickToBottom", () => {
     expect(log.scrollTop).toBe(800);
   });
 
+  test("turning the wheel up lets go at once, however close to the bottom that still is", () => {
+    // Text that streams in many times a second would otherwise pull a slow scroll back down
+    // before it had got a row away.
+    const { rerender } = render(<Log lines={10} />);
+    let log = measured(20);
+    rerender(<Log lines={20} />);
+    scrollTo(log, 300); // where a browser puts "the bottom" of 400 px in a 100 px area
+    fireEvent.wheel(log, { deltaY: -5 });
+    scrollTo(log, 295);
+    log = measured(21);
+    rerender(<Log lines={21} />);
+    expect(log.scrollTop).toBe(295);
+  });
+
+  test("a few pixels lost when content settles do not count as scrolling away", () => {
+    const { rerender } = render(<Log lines={10} />);
+    let log = measured(20);
+    rerender(<Log lines={20} />);
+    scrollTo(log, 300);
+    scrollTo(log, 298); // the area shrank by 2 px under us: nobody scrolled
+    log = measured(30);
+    rerender(<Log lines={30} />);
+    expect(log.scrollTop).toBe(600);
+  });
+
   test("does nothing while inactive", () => {
     const { rerender } = render(<Log lines={10} active={false} />);
     const log = measured(20);

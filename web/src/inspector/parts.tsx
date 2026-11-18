@@ -7,6 +7,7 @@ import { Icon, type IconName } from "../ui/Icon";
 import { JsonTree } from "../ui/JsonTree";
 import { type TabItem, Tabs } from "../ui/overlays";
 import { cx, statusMeta, type Tone, toneClass } from "../ui/tone";
+import { useStickToBottom } from "../ui/useStickToBottom";
 import type { Json, Span, SpanError } from "../wire";
 
 /** How long a span has taken, measured to `now` while it is running. */
@@ -104,6 +105,24 @@ export function StickyTabs({
         rerender((n) => n + 1);
       }}
     />
+  );
+}
+
+const tabPanelOf = (element: HTMLElement): HTMLElement | null =>
+  element.closest<HTMLElement>('[role="tabpanel"]');
+
+/**
+ * Content that is still being written: a streaming response, the conversation of a run in
+ * flight. While the clock moves, the tab panel around it stays on the newest text, unless the
+ * reader has scrolled up. Key it by span, so each span starts out following.
+ */
+export function Tail({ growth, children }: { growth: number; children: ReactNode }) {
+  const moving = useViewer((state) => state.playback.mode !== "paused");
+  const ref = useStickToBottom<HTMLDivElement>(moving, growth, tabPanelOf);
+  return (
+    <div ref={ref} className="flex flex-col gap-4">
+      {children}
+    </div>
   );
 }
 

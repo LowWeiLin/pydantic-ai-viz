@@ -150,8 +150,30 @@ test.describe("replay", () => {
     expect(errors).toEqual([]);
   });
 
-  test("the span list follows the newest row until it is scrolled away from", async ({ page }) => {
-    await openRun(page, "sample", TRIAGE);
+  test("the span list follows the newest row until it is scrolled away from", async ({
+    page,
+  }, testInfo) => {
+    // The sample's first run with its first tool call repeated: one new row every quarter of a
+    // second for fifteen seconds, so there are always more rows to come while the test looks.
+    const sample = readRecording(fixturePath("sample"));
+    const first = sample.findIndex((event) => event.type === "span.started");
+    const tool = sampleSpan("get_customer");
+    const root = sample[first];
+    if (root?.type !== "span.started") throw new Error("the sample fixture changed shape");
+    const events = sample.slice(0, first + 1);
+    for (let call = 0; call < 60; call++) {
+      const span = {
+        ...tool,
+        span_id: (call + 1).toString(16).padStart(16, "0"),
+        start_ms: root.span.start_ms + 100 + call * 250,
+        end_ms: root.span.start_ms + 200 + call * 250,
+      };
+      const started = { ...span, end_ms: null, status: "running" as const };
+      events.push({ seq: events.length, ts: span.start_ms, type: "span.started", span: started });
+      events.push({ seq: events.length, ts: span.end_ms, type: "span.ended", span });
+    }
+    const file = writeEmbeddedExport(events, testInfo.outputPath("many-rows.html"));
+    await page.goto(`${file}#/runs/${root.span.trace_id}`);
     const list = page.getByRole("tree").locator("xpath=ancestor::div[2]");
     const position = () =>
       list.evaluate((el) => ({
@@ -166,11 +188,13 @@ test.describe("replay", () => {
     // Scroll up to read the first rows: new spans must not pull the list back down.
     await list.hover();
     await page.mouse.wheel(0, -2000);
-    await expect.poll(async () => (await position()).top).toBe(0);
+    // Well away from the bottom. Not exactly at the top: a row that lands while the wheel is
+    // still turning shifts the end point by its height.
+    await expect.poll(async () => (await position()).fromBottom).toBeGreaterThan(100);
+    const { top } = await position();
     const before = await rows(page).count();
     await expect.poll(() => rows(page).count()).toBeGreaterThan(before);
-    expect((await position()).top).toBe(0);
-    await expect(rows(page).first()).toBeInViewport();
+    expect((await position()).top).toBe(top);
   });
 
   test("scrubbing back hides later spans", async ({ page }) => {
@@ -223,6 +247,59 @@ test.describe("replay", () => {
       "true",
     );
     await expect(inspector).toContainText("get_order");
+  });
+
+  test("a long streaming response stays on its newest text until it is scrolled away from", async ({
+    page,
+  }, testInfo) => {
+    // The sample run, cut off inside its first model request, which then streams 750 lines over
+    // fifteen seconds: far more than the panel holds, and still coming while the test looks.
+    const sample = readRecording(fixturePath("sample"));
+    const start = sample.findIndex(
+      (event) => event.type === "span.started" && event.span.kind === "model_request",
+    );
+    const request = sample[start];
+    if (request?.type !== "span.started") throw new Error("the sample fixture changed shape");
+    const events = sample.slice(0, start + 1);
+    for (let line = 1; line <= 750; line++) {
+      events.push({
+        seq: events.length,
+        ts: request.ts + line * 20,
+        type: "stream.delta",
+        trace_id: request.span.trace_id,
+        span_id: request.span.span_id,
+        part_index: 0,
+        part_kind: "text",
+        tool_name: null,
+        delta: `Line ${line} of a long answer.\n`,
+      });
+    }
+    const file = writeEmbeddedExport(events, testInfo.outputPath("long-stream.html"));
+    await page.goto(`${file}#/runs/${request.span.trace_id}`);
+    await page.getByRole("treeitem", { name: /scripted-support/ }).click();
+
+    const inspector = page.getByRole("complementary", { name: "Span details" });
+    const panel = inspector.getByRole("tabpanel");
+    const position = () =>
+      panel.evaluate((el) => ({
+        top: el.scrollTop,
+        hidden: el.scrollHeight - el.clientHeight,
+        fromBottom: el.scrollHeight - el.scrollTop - el.clientHeight,
+      }));
+    // The text outgrows the panel, and the panel stays on the line being written.
+    await expect.poll(async () => (await position()).hidden).toBeGreaterThan(300);
+    expect((await position()).fromBottom).toBeLessThan(40);
+    await expect(inspector.getByText("streaming")).toBeVisible();
+
+    // Scrolling up to read the beginning lets go: the text keeps growing, the position stays.
+    await panel.hover();
+    await page.mouse.wheel(0, -20_000);
+    // Well away from the bottom. Not exactly at the top: a line that lands while the wheel is
+    // still turning shifts the end point by its height.
+    await expect.poll(async () => (await position()).fromBottom).toBeGreaterThan(300);
+    const { top, hidden } = await position();
+    await expect.poll(async () => (await position()).hidden).toBeGreaterThan(hidden + 100);
+    expect((await position()).top).toBe(top);
   });
 
   test("a graph run: subject switcher and visit counts", async ({ page }) => {
