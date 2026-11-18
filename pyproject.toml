@@ -76,7 +76,18 @@ exclude = ["src/pydantic_ai_viz/_static/.gitignore"]
 artifacts = ["src/pydantic_ai_viz/_static/viewer.html"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/tests", "/scripts", "/schema", "/README.md", "/LICENSE", "/CHANGELOG.md"]
+# The shipped tests read /examples and /web/fixtures, so those go in too: the suite must pass from the sdist.
+include = [
+    "/src",
+    "/tests",
+    "/scripts",
+    "/schema",
+    "/examples",
+    "/web/fixtures",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+]
 artifacts = ["src/pydantic_ai_viz/_static/viewer.html"]
 
 [tool.ruff]
