@@ -175,7 +175,7 @@ describe("what each fixture is for", () => {
     const evidence = envelopes.flatMap((e) =>
       e.type === "blueprint.agent" && e.agent.id === "a1" ? [e.agent.delegates[0]?.evidence] : [],
     );
-    expect(evidence).toEqual(["static", "observed"]);
+    expect(evidence).toEqual(["object", "observed"]);
 
     const nodes = spans.filter((s) => s.kind === "graph_node");
     expect(nodes.map((s) => s.name)).toEqual([

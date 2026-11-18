@@ -32,11 +32,17 @@ export type SessionStarted = {
   /** 32 hex characters, new per session. */
   session_id: string;
   title: string;
+  /** "blueprint": the session holds blueprints only and no run will ever appear in it. */
+  mode: SessionMode;
   include_content: boolean;
   /** Token streaming enabled. */
   stream: boolean;
+  /** Messages about the session as a whole, such as files static analysis had to skip. */
+  notices: string[];
   versions: { pydantic_ai_viz: string; pydantic_ai: string; python: string };
 };
+
+export type SessionMode = "capture" | "blueprint";
 
 /** Upsert by `agent.id`. */
 export type AgentBlueprintEvent = { type: "blueprint.agent"; agent: AgentBlueprint };
@@ -66,6 +72,20 @@ export type StreamDelta = {
 
 // ---------- blueprints ----------
 
+/**
+ * How a fact was obtained: "code" was read from source code without importing or running it,
+ * "object" was read from a live Python object, "observed" was seen happening in a run.
+ */
+export type Provenance = "code" | "object" | "observed";
+
+/** Where something is defined in analysed source code. */
+export type SourceLocation = {
+  /** Path relative to the analysed root, with forward slashes. */
+  file: string;
+  /** 1-based. */
+  line: number;
+};
+
 export type AgentBlueprint = {
   /** Opaque, stable within a session ("a1", "a2", ...). */
   id: string;
@@ -74,7 +94,9 @@ export type AgentBlueprint = {
   /** Never empty: name, else discovered variable name, else "agent-<n>". */
   label: string;
   description: string | null;
-  source: "static" | "observed";
+  source: Provenance;
+  /** Where the agent is constructed; set by static analysis only. */
+  location: SourceLocation | null;
   model: ModelInfo | null;
   /** Qualified type name; null for object/None. */
   deps_type: string | null;
@@ -97,6 +119,8 @@ export type ModelInfo = {
   name: string;
   provider: string | null;
   offline: boolean;
+  /** Source text of the model argument when it is not a string literal; `name` then repeats it. */
+  expression: string | null;
 };
 
 export type OutputInfo = {
@@ -108,6 +132,8 @@ export type OutputInfo = {
   json_schema: Json | null;
   /** e.g. ["final_result"]; may be filled from observed runs. */
   tool_names: string[];
+  /** Where the output type is defined. */
+  location: SourceLocation | null;
 };
 
 export type Capability = { name: string; builtin: boolean };
@@ -118,21 +144,29 @@ export type AgentSettings = {
   tool_retries: number | null;
   output_retries: number | null;
   tool_timeout: number | null;
+  /**
+   * Settings that source code computes at run time: setting name -> source text. The key is a
+   * field of this object, or `model_settings.<key>` for one model setting; the field itself is null.
+   */
+  expressions: { [k: string]: string };
 };
 
 export type Delegate = {
   tool_name: string;
   agent_id: string;
-  evidence: "static" | "observed";
+  evidence: Provenance;
 };
 
 export type Instruction = {
   kind: "instructions" | "system_prompt";
   dynamic: boolean;
-  /** Null for dynamic functions. */
+  /** The literal text; for a dynamic f-string, its template with `{...}` placeholders. */
   text: string | null;
   /** Qualified function name for dynamic ones. */
   function: string | null;
+  /** Source text of a value that is neither a literal, an f-string nor a named function. */
+  expression: string | null;
+  location: SourceLocation | null;
 };
 
 export type Toolset = {
@@ -147,6 +181,9 @@ export type Toolset = {
   wrappers: string[];
   /** True when tools cannot be enumerated statically. */
   opaque: boolean;
+  /** Source text of a toolset that source code builds in a way static analysis cannot read. */
+  expression: string | null;
+  location: SourceLocation | null;
 };
 
 export type Tool = {
@@ -163,7 +200,8 @@ export type Tool = {
   max_retries: number | null;
   /** Qualified function name. */
   function: string | null;
-  origin: "static" | "observed";
+  origin: Provenance;
+  location: SourceLocation | null;
 };
 
 export type GraphBlueprint = {
@@ -171,18 +209,26 @@ export type GraphBlueprint = {
   id: string;
   name: string | null;
   label: string;
+  source: "code" | "object";
+  location: SourceLocation | null;
   state_type: string | null;
   input_type: string | null;
   output_type: string | null;
   nodes: GraphNode[];
   edges: GraphEdge[];
-  /** `graph.render(direction="LR")`. */
+  /** `graph.render(direction="LR")`, or the same diagram drawn from the analysed source. */
   mermaid: string | null;
   warnings: string[];
 };
 
 /** Known kinds: start, end, step, decision, join, broadcast, map. Render unknown kinds as "step". */
-export type GraphNode = { id: string; kind: string; label: string | null; note: string | null };
+export type GraphNode = {
+  id: string;
+  kind: string;
+  label: string | null;
+  note: string | null;
+  location: SourceLocation | null;
+};
 
 export type GraphEdge = { source: string; target: string; label: string | null };
 

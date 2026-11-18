@@ -33,16 +33,26 @@ def observed_blueprint(id: str, name: str, *, description: str | None, model_nam
         label=name or id,
         description=description,
         source="observed",
-        model=None if model_name is None else ModelInfo(id=None, name=model_name, provider=None, offline=False),
+        location=None,
+        model=None
+        if model_name is None
+        else ModelInfo(id=None, name=model_name, provider=None, offline=False, expression=None),
         deps_type=None,
         instructions=[],
         toolsets=[],
         tools=[],
         native_tools=[],
-        output=OutputInfo(mode="unknown", allows_text=None, type_name=None, json_schema=None, tool_names=[]),
+        output=OutputInfo(
+            mode="unknown", allows_text=None, type_name=None, json_schema=None, tool_names=[], location=None
+        ),
         capabilities=[],
         settings=AgentSettings(
-            model_settings=None, end_strategy=None, tool_retries=None, output_retries=None, tool_timeout=None
+            model_settings=None,
+            end_strategy=None,
+            tool_retries=None,
+            output_retries=None,
+            tool_timeout=None,
+            expressions={},
         ),
         delegates=[],
         warnings=[],
@@ -67,6 +77,8 @@ def _toolset_for(toolsets: list[Toolset], toolset_id: str | None) -> Toolset:
         kind="agent" if toolset_id == AGENT_TOOLSET_ID else "other",
         wrappers=[],
         opaque=False,
+        expression=None,
+        location=None,
     )
     toolsets.append(toolset)
     return toolset
@@ -88,6 +100,7 @@ def _observed_tool(raw: Mapping[str, Any], name: str, toolset: str) -> Tool:
         max_retries=None,
         function=None,
         origin="observed",
+        location=None,
     )
 
 
@@ -142,7 +155,11 @@ def merge_request(
 
     if blueprint.source == "observed":
         if not blueprint.instructions and instructions:
-            update["instructions"] = [Instruction(kind="instructions", dynamic=False, text=instructions, function=None)]
+            update["instructions"] = [
+                Instruction(
+                    kind="instructions", dynamic=False, text=instructions, function=None, expression=None, location=None
+                )
+            ]
         model = blueprint.model
         if model is not None and model.provider is None and provider is not None:
             offline = provider in _compat.OFFLINE_PROVIDERS

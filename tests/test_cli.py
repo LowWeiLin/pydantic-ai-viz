@@ -273,7 +273,7 @@ def test_demo_record_and_export_run_once_without_a_server(
     assert events[0]["title"] == "Beta demo"
     assert events[0]["stream"] is True
     assert events[1]["agent"]["name"] == "beta-agent"
-    assert events[1]["agent"]["source"] == "static"
+    assert events[1]["agent"]["source"] == "object"
     assert finished_runs(events) == 1
     assert boot_of(page) == {"mode": "embedded", "events": events}
     # Nothing is left behind.
@@ -453,7 +453,7 @@ def test_view_export_on_a_module_attribute_and_on_a_file(capsys: pytest.CaptureF
     events = boot_of(project / "one.html")["events"]
     assert [e["type"] for e in events] == ["session.started", "blueprint.agent", "blueprint.agent"]
     assert blueprint_labels(events) == ["triage", "helper"]  # the delegate comes along
-    assert events[1]["agent"]["delegates"] == [{"tool_name": "ask_helper", "agent_id": "a2", "evidence": "static"}]
+    assert events[1]["agent"]["delegates"] == [{"tool_name": "ask_helper", "agent_id": "a2", "evidence": "object"}]
     assert events[0]["title"] == "triage"
 
     code, out, _ = run_cli(capsys, "view", "viz_cli_agents.py", "--export", "all.html")
@@ -630,7 +630,7 @@ def test_run_captures_the_script_then_registers_what_it_left_behind(
     # observed blueprint, then the static one taking over the same id once the script ended.
     blueprints = [(e["agent"]["id"], e["agent"]["name"], e["agent"]["source"]) for e in events if "agent" in e]
     assert blueprints[0] == ("a1", "agent", "observed")
-    assert blueprints[-1] == ("a1", "agent", "static")
+    assert blueprints[-1] == ("a1", "agent", "object")
     assert finished_runs(events) == 1
     assert any(e["type"] == "stream.delta" for e in events)
     # Files were written when the script ended, before the wait, with the full log.

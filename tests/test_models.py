@@ -156,7 +156,15 @@ def test_unknown_fields_are_rejected_at_every_level() -> None:
         (0, ("session_id",), "not-hex"),
         (0, ("include_content",), 1),
         (0, ("type",), "session.stopped"),
+        (0, ("mode",), "view"),
+        (0, ("notices",), "one notice"),
         (1, ("agent", "source"), "guessed"),
+        (1, ("agent", "source"), "static"),
+        (1, ("agent", "location"), {"file": "agents.py", "line": 0}),
+        (1, ("agent", "location"), {"file": "agents.py"}),
+        (1, ("agent", "tools", 0, "origin"), "static"),
+        (1, ("agent", "settings", "expressions"), {"tool_retries": 3}),
+        (2, ("graph", "source"), "observed"),
         (1, ("agent", "label"), ""),
         (1, ("agent", "toolsets", 0, "kind"), "magic"),
         (1, ("agent", "tools", 0, "kind"), "builtin"),
@@ -181,6 +189,38 @@ def test_invalid_values_are_rejected(index: int, path: tuple[str | int, ...], va
     target[path[-1]] = value
     with pytest.raises(ValidationError):
         parse_envelope(json.dumps(broken))
+
+
+def test_a_blueprint_read_from_code_carries_locations_and_expressions() -> None:
+    line = _line(1)
+    agent = line["agent"]
+    location = {"file": "shop/agents.py", "line": 42}
+    agent["source"] = "code"
+    agent["location"] = location
+    agent["model"] = {"id": None, "name": "get_model()", "provider": None, "offline": False}
+    agent["model"]["expression"] = "get_model()"
+    agent["instructions"][0]["location"] = location
+    agent["instructions"][1] |= {"function": None, "expression": "PROMPTS[role]", "location": location}
+    agent["toolsets"][0]["location"] = location
+    agent["toolsets"][1] |= {"opaque": True, "expression": "build_toolset(env)"}
+    agent["tools"][0] |= {"origin": "code", "location": location}
+    agent["output"]["location"] = location
+    agent["settings"]["expressions"] = {"tool_retries": "RETRIES", "model_settings.temperature": "TEMP"}
+    agent["delegates"][0]["evidence"] = "code"
+    assert to_wire(parse_envelope(json.dumps(line))) == line
+
+    graph = _line(2)
+    graph["graph"] |= {"source": "code", "location": location}
+    graph["graph"]["nodes"][1]["location"] = location
+    assert to_wire(parse_envelope(json.dumps(graph))) == graph
+
+
+@pytest.mark.parametrize("mode", ["capture", "blueprint"])
+def test_a_session_says_whether_runs_can_appear_in_it(mode: str) -> None:
+    line = _line(0)
+    line["mode"] = mode
+    line["notices"] = ["skipped broken.py: invalid syntax on line 3"]
+    assert to_wire(parse_envelope(json.dumps(line))) == line
 
 
 def test_span_data_must_match_span_kind() -> None:

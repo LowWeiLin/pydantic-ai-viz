@@ -38,7 +38,7 @@ def test_quickstart_serves_its_agent_and_the_run_it_made(tmp_path: Path) -> None
     assert (status, headers["content-type"].split(";")[0]) == (200, "text/html")
     assert b'"mode":"live"' in page
     (blueprint,) = (e["agent"] for e in events if e["type"] == "blueprint.agent")
-    assert (blueprint["name"], blueprint["source"]) == ("greeter", "static")
+    assert (blueprint["name"], blueprint["source"]) == ("greeter", "object")
     assert [tool["name"] for tool in blueprint["tools"]] == ["lookup_name"]
     spans = final_spans(events)
     assert [span["kind"] for span in spans.values()] == ["agent_run", "model_request", "tool_call", "model_request"]

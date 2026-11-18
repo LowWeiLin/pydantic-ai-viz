@@ -14,7 +14,7 @@ import platform
 import threading
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType, TracebackType
@@ -30,7 +30,7 @@ from ._capture import CaptureProcessor
 from ._derive import add_delegate, carry_observed, merge_request, observed_blueprint
 from ._export import write_html, write_jsonl
 from ._introspect import AnyAgent, AnyGraph, agent_closure, introspect_agent, introspect_graph
-from ._models import WIRE_VERSION, AgentBlueprint, GraphBlueprint, to_wire
+from ._models import WIRE_VERSION, AgentBlueprint, GraphBlueprint, SessionMode, to_wire
 from ._normalize import Normalized, WireSpan, clip
 from ._version import __version__
 
@@ -270,6 +270,8 @@ class Session:
     Attributes:
         url: Address of the local viewer, or `None` when there is no server.
         title: Shown in the viewer's top bar and used for export file names.
+        mode: `"capture"` when runs can appear in the session, `"blueprint"` when it
+            only ever holds blueprints.
         include_content: Whether prompts, tool arguments and results are captured.
         stream: Whether token deltas are captured. Always `False` when
             `include_content` is `False`: a token delta is content.
@@ -283,6 +285,8 @@ class Session:
         stream: bool = False,
         instrument: bool = True,
         max_events: int = DEFAULT_MAX_EVENTS,
+        mode: SessionMode = "capture",
+        notices: Sequence[str] = (),
     ) -> None:
         """Open a session. Prefer `record()` or `serve()`, which also register targets.
 
@@ -293,12 +297,20 @@ class Session:
                 Has no effect when `include_content` is false.
             instrument: Call `Agent.instrument_all` with this session's tracer provider.
             max_events: Size of the event log before whole completed runs are dropped.
+            mode: `"capture"` for a session that records runs. `"blueprint"` tells the
+                viewer that no run will ever appear, so it shows structure only; it
+                requires `instrument=False`.
+            notices: Messages about the session as a whole, shown by the viewer.
 
         Raises:
             RuntimeError: If `instrument` is true and another instrumenting session is open.
+            ValueError: If `mode` is `"blueprint"` and `instrument` is true.
         """
+        if mode == "blueprint" and instrument:
+            raise ValueError('a "blueprint" session captures nothing; pass instrument=False')
         self.url: str | None = None
         self.title = title or DEFAULT_TITLE
+        self.mode: SessionMode = mode
         self.include_content = include_content
         # A token delta is response text or tool arguments. With content capture off there is
         # nothing left of it to log, so no listener is attached and no request is forced to stream.
@@ -346,8 +358,10 @@ class Session:
                 "pviz": WIRE_VERSION,
                 "session_id": self.session_id,
                 "title": self.title,
+                "mode": mode,
                 "include_content": include_content,
                 "stream": stream,
+                "notices": list(notices),
                 "versions": {
                     "pydantic_ai_viz": __version__,
                     "pydantic_ai": _compat.pydantic_ai_version(),

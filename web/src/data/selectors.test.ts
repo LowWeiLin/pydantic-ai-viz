@@ -487,7 +487,7 @@ describe("blueprints and canvas models", () => {
       agentBlueprint({
         id,
         delegates: [
-          { tool_name: "next", agent_id: ids[(i + 1) % ids.length] ?? id, evidence: "static" },
+          { tool_name: "next", agent_id: ids[(i + 1) % ids.length] ?? id, evidence: "object" },
         ],
       }),
     );

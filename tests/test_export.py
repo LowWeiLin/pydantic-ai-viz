@@ -326,10 +326,10 @@ def test_export_html_from_a_bare_agent_is_blueprint_only_and_touches_nothing_glo
     for envelope in boot["events"]:
         parse_envelope(json.dumps(envelope))
     assert [event["type"] for event in boot["events"]] == ["session.started", "blueprint.agent", "blueprint.agent"]
-    assert boot["events"][0]["title"] == "main"
+    assert (boot["events"][0]["title"], boot["events"][0]["mode"]) == ("main", "blueprint")
     main, researcher = (event["agent"] for event in boot["events"][1:])
     assert (main["name"], researcher["name"]) == ("main", "researcher")
-    assert main["delegates"] == [{"tool_name": "delegate_research", "agent_id": researcher["id"], "evidence": "static"}]
+    assert main["delegates"] == [{"tool_name": "delegate_research", "agent_id": researcher["id"], "evidence": "object"}]
 
 
 @pytest.mark.usefixtures("placeholder_viewer")

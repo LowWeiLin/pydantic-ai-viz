@@ -240,8 +240,10 @@ def test_session_started_is_seq_zero() -> None:
         "pviz": 1,
         "session_id": session.session_id,
         "title": "My session",
+        "mode": "capture",
         "include_content": False,
         "stream": False,
+        "notices": [],
         "versions": {
             "pydantic_ai_viz": pydantic_ai_viz.__version__,
             "pydantic_ai": _compat.pydantic_ai_version(),
@@ -252,6 +254,22 @@ def test_session_started_is_seq_zero() -> None:
     assert started["versions"]["python"].count(".") == 2
     assert session.url is None
     validate([started])
+
+
+def test_a_blueprint_session_says_so_and_carries_its_notices() -> None:
+    with Session(instrument=False, mode="blueprint", notices=["skipped broken.py: invalid syntax"]) as session:
+        session.register(agent_named("solo"))
+        events = session.events
+    assert (session.mode, events[0]["mode"]) == ("blueprint", "blueprint")
+    assert events[0]["notices"] == ["skipped broken.py: invalid syntax"]
+    assert types_of(events) == ["session.started", "blueprint.agent"]
+    validate(events)
+
+
+def test_a_blueprint_session_cannot_instrument() -> None:
+    with pytest.raises(ValueError, match="instrument=False"):
+        Session(mode="blueprint")
+    assert active_session() is None
 
 
 def test_title_defaults_to_the_first_named_target() -> None:
@@ -270,8 +288,8 @@ def test_register_emits_blueprints_for_the_delegation_closure_once() -> None:
     assert types_of(events) == ["session.started", "blueprint.agent", "blueprint.agent"]
     main, researcher = (envelope["agent"] for envelope in events[1:])
     assert (main["id"], main["name"], researcher["id"], researcher["name"]) == ("a1", "main", "a2", "researcher")
-    assert main["delegates"] == [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "static"}]
-    assert main["source"] == "static"
+    assert main["delegates"] == [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "object"}]
+    assert main["source"] == "object"
 
 
 def test_register_module_uses_variable_names_as_labels() -> None:

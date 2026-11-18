@@ -1,4 +1,7 @@
-"""Static introspection: ``Agent`` -> ``AgentBlueprint``, ``Graph`` -> ``GraphBlueprint``.
+"""Introspection of live objects: ``Agent`` -> ``AgentBlueprint``, ``Graph`` -> ``GraphBlueprint``.
+
+The blueprints made here have provenance ``"object"``. Reading source code without
+importing it is the job of ``_analyze``, whose blueprints have provenance ``"code"``.
 
 Nothing here runs a model, resolves a dynamic prompt, builds a ``RunContext`` or
 enters a toolset, so it is safe for agents built with ``defer_model_check=True``
@@ -198,6 +201,8 @@ class _ToolsetWalk:
             kind=kind,
             wrappers=list(wrappers),
             opaque=opaque,
+            expression=None,
+            location=None,
         )
         self.toolsets.append(entry)
         return entry
@@ -257,7 +262,8 @@ def _tool(
         is_async=is_async,
         max_retries=max_retries,
         function=function,
-        origin="static",
+        origin="object",
+        location=None,
     )
 
 
@@ -342,7 +348,9 @@ def _model_info(agent: AnyAgent) -> ModelInfo | None:
         provider, separator, name = model.partition(":")
         if not separator:
             provider, name = None, model
-        return ModelInfo(id=model, name=name, provider=provider, offline=provider in _compat.OFFLINE_PROVIDERS)
+        return ModelInfo(
+            id=model, name=name, provider=provider, offline=provider in _compat.OFFLINE_PROVIDERS, expression=None
+        )
     name_attr: Any = _safe_getattr(model, "model_name")
     provider_attr: Any = _safe_getattr(model, "system")
     id_attr: Any = _safe_getattr(model, "model_id")
@@ -352,14 +360,17 @@ def _model_info(agent: AnyAgent) -> ModelInfo | None:
         name=name_attr if isinstance(name_attr, str) else type(model).__name__,
         provider=provider,
         offline=provider in _compat.OFFLINE_PROVIDERS,
+        expression=None,
     )
 
 
 def _prompt(kind: Literal["instructions", "system_prompt"], value: Any) -> Instruction:
     if isinstance(value, str):
-        return Instruction(kind=kind, dynamic=False, text=value, function=None)
+        return Instruction(kind=kind, dynamic=False, text=value, function=None, expression=None, location=None)
     # A function, or a template that is rendered against the run's deps.
-    return Instruction(kind=kind, dynamic=True, text=None, function=qualified_name(value))
+    return Instruction(
+        kind=kind, dynamic=True, text=None, function=qualified_name(value), expression=None, location=None
+    )
 
 
 def _instructions(agent: AnyAgent, warnings: list[str]) -> list[Instruction]:
@@ -422,6 +433,7 @@ def _output(agent: AnyAgent, warnings: list[str]) -> OutputInfo:
         type_name=type_name,
         json_schema=json_schema,
         tool_names=tool_names,
+        location=None,
     )
 
 
@@ -466,6 +478,7 @@ def _settings(agent: AnyAgent, warnings: list[str]) -> AgentSettings:
         tool_retries=_int_or_none(_compat.get_private(agent, "_max_tool_retries", None, warnings)),
         output_retries=_int_or_none(_compat.get_private(agent, "_max_output_retries", None, warnings)),
         tool_timeout=float(timeout) if isinstance(timeout, int | float) and not isinstance(timeout, bool) else None,
+        expressions={},
     )
 
 
@@ -493,7 +506,7 @@ def introspect_agent(
     for tool_name, sub_agent in _delegates_of(walk):
         agent_id = delegate_id(sub_agent)
         if agent_id is not None:
-            delegates.append(Delegate(tool_name=tool_name, agent_id=agent_id, evidence="static"))
+            delegates.append(Delegate(tool_name=tool_name, agent_id=agent_id, evidence="object"))
 
     name: Any = agent.name
     description: Any = agent.description
@@ -502,7 +515,8 @@ def introspect_agent(
         name=name if isinstance(name, str) else None,
         label=(name if isinstance(name, str) and name else None) or label or f"agent-{_ordinal(id)}",
         description=None if description is None else str(description),
-        source="static",
+        source="object",
+        location=None,
         model=_model_info(agent),
         deps_type=_optional_type_label(agent.deps_type),
         instructions=_instructions(agent, warnings),
@@ -568,6 +582,7 @@ def walk_graph(graph: AnyGraph) -> tuple[list[GraphNode], list[GraphEdge]]:
                 kind=kind,
                 label=label if isinstance(label, str) else None,
                 note=note if isinstance(note, str) else None,
+                location=None,
             )
         )
     for source, paths in cast("dict[str, list[Any]]", graph.edges_by_source).items():
@@ -589,7 +604,10 @@ def _graph_structure(graph: AnyGraph, warnings: list[str]) -> tuple[list[GraphNo
     else:
         try:
             mermaid: Any = build(graph.nodes, graph.edges_by_source)
-            nodes = [GraphNode(id=str(n.id), kind=str(n.kind), label=n.label, note=n.note) for n in mermaid.nodes]
+            nodes = [
+                GraphNode(id=str(n.id), kind=str(n.kind), label=n.label, note=n.note, location=None)
+                for n in mermaid.nodes
+            ]
             edges = [GraphEdge(source=str(e.start_id), target=str(e.end_id), label=e.label) for e in mermaid.edges]
             return nodes, edges
         except Exception as exc:
@@ -623,6 +641,8 @@ def introspect_graph(graph: AnyGraph, *, id: str, label: str | None = None) -> G
         id=id,
         name=name if isinstance(name, str) else None,
         label=(name if isinstance(name, str) and name else None) or label or f"graph-{_ordinal(id)}",
+        source="object",
+        location=None,
         state_type=_optional_type_label(graph.state_type),
         input_type=_optional_type_label(graph.input_type),
         output_type=_optional_type_label(graph.output_type),

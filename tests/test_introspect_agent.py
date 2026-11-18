@@ -127,23 +127,48 @@ def test_full_agent_blueprint() -> None:
             "name": "main",
             "label": "main",
             "description": "Main demo agent",
-            "source": "static",
-            "model": {"id": "function:scripted-fn", "name": "scripted-fn", "provider": "function", "offline": True},
+            "source": "object",
+            "location": None,
+            "model": {
+                "id": "function:scripted-fn",
+                "name": "scripted-fn",
+                "provider": "function",
+                "offline": True,
+                "expression": None,
+            },
             "deps_type": "test_introspect_agent.Deps",
             "instructions": [
-                {"kind": "instructions", "dynamic": False, "text": "Static instructions.", "function": None},
+                {
+                    "kind": "instructions",
+                    "dynamic": False,
+                    "text": "Static instructions.",
+                    "function": None,
+                    "expression": None,
+                    "location": None,
+                },
                 {
                     "kind": "instructions",
                     "dynamic": True,
                     "text": None,
                     "function": "test_introspect_agent.dyn_instructions",
+                    "expression": None,
+                    "location": None,
                 },
-                {"kind": "system_prompt", "dynamic": False, "text": "Static system prompt.", "function": None},
+                {
+                    "kind": "system_prompt",
+                    "dynamic": False,
+                    "text": "Static system prompt.",
+                    "function": None,
+                    "expression": None,
+                    "location": None,
+                },
                 {
                     "kind": "system_prompt",
                     "dynamic": True,
                     "text": None,
                     "function": "test_introspect_agent.dyn_sysprompt",
+                    "expression": None,
+                    "location": None,
                 },
             ],
             "toolsets": [
@@ -154,6 +179,8 @@ def test_full_agent_blueprint() -> None:
                     "kind": "agent",
                     "wrappers": [],
                     "opaque": False,
+                    "expression": None,
+                    "location": None,
                 },
                 {
                     "id": "ts1",
@@ -162,6 +189,8 @@ def test_full_agent_blueprint() -> None:
                     "kind": "function",
                     "wrappers": [],
                     "opaque": False,
+                    "expression": None,
+                    "location": None,
                 },
             ],
             "tools": [
@@ -181,7 +210,8 @@ def test_full_agent_blueprint() -> None:
                     "is_async": False,
                     "max_retries": None,
                     "function": "test_introspect_agent.get_weather",
-                    "origin": "static",
+                    "origin": "object",
+                    "location": None,
                 },
                 {
                     "name": "flaky",
@@ -199,7 +229,8 @@ def test_full_agent_blueprint() -> None:
                     "is_async": False,
                     "max_retries": 2,
                     "function": "test_introspect_agent.flaky",
-                    "origin": "static",
+                    "origin": "object",
+                    "location": None,
                 },
                 {
                     "name": "delegate_research",
@@ -217,7 +248,8 @@ def test_full_agent_blueprint() -> None:
                     "is_async": True,
                     "max_retries": None,
                     "function": "test_introspect_agent.delegate_research",
-                    "origin": "static",
+                    "origin": "object",
+                    "location": None,
                 },
                 {
                     "name": "add",
@@ -235,7 +267,8 @@ def test_full_agent_blueprint() -> None:
                     "is_async": False,
                     "max_retries": None,
                     "function": "test_introspect_agent.add",
-                    "origin": "static",
+                    "origin": "object",
+                    "location": None,
                 },
             ],
             "native_tools": ["tool_search"],
@@ -254,6 +287,7 @@ def test_full_agent_blueprint() -> None:
                     "type": "object",
                 },
                 "tool_names": ["final_result"],
+                "location": None,
             },
             "capabilities": [
                 {"name": "ToolSearch", "builtin": True},
@@ -265,8 +299,9 @@ def test_full_agent_blueprint() -> None:
                 "tool_retries": 3,
                 "output_retries": 3,
                 "tool_timeout": 30.0,
+                "expressions": {},
             },
-            "delegates": [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "static"}],
+            "delegates": [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "object"}],
             "warnings": [],
         }
     )
@@ -277,21 +312,23 @@ def test_full_agent_blueprint() -> None:
 
 def test_model_instance() -> None:
     assert _agent_blueprint(Agent(TestModel())).model == snapshot(
-        ModelInfo(id="test:test", name="test", provider="test", offline=True)
+        ModelInfo(id="test:test", name="test", provider="test", offline=True, expression=None)
     )
 
 
 def test_model_string_with_deferred_check_is_not_resolved() -> None:
     agent = Agent("openai:gpt-5.2", defer_model_check=True)
     assert _agent_blueprint(agent).model == snapshot(
-        ModelInfo(id="openai:gpt-5.2", name="gpt-5.2", provider="openai", offline=False)
+        ModelInfo(id="openai:gpt-5.2", name="gpt-5.2", provider="openai", offline=False, expression=None)
     )
     assert agent.model == "openai:gpt-5.2"
 
 
 def test_model_string_without_provider_prefix() -> None:
     agent = Agent("test", defer_model_check=True)
-    assert _agent_blueprint(agent).model == snapshot(ModelInfo(id="test", name="test", provider=None, offline=False))
+    assert _agent_blueprint(agent).model == snapshot(
+        ModelInfo(id="test", name="test", provider=None, offline=False, expression=None)
+    )
 
 
 def test_model_none() -> None:
@@ -300,7 +337,7 @@ def test_model_none() -> None:
 
 def test_offline_flag_follows_the_provider() -> None:
     assert _agent_blueprint(Agent("function:x", defer_model_check=True)).model == snapshot(
-        ModelInfo(id="function:x", name="x", provider="function", offline=True)
+        ModelInfo(id="function:x", name="x", provider="function", offline=True, expression=None)
     )
 
 
@@ -321,7 +358,14 @@ def shout(text: str) -> str:
 
 def test_text_output() -> None:
     assert _agent_blueprint(Agent()).output.model_dump() == snapshot(
-        {"mode": "text", "allows_text": True, "type_name": "str", "json_schema": {"type": "string"}, "tool_names": []}
+        {
+            "mode": "text",
+            "allows_text": True,
+            "type_name": "str",
+            "json_schema": {"type": "string"},
+            "tool_names": [],
+            "location": None,
+        }
     )
 
 
@@ -338,6 +382,7 @@ def test_structured_output() -> None:
                 "type": "object",
             },
             "tool_names": ["final_result"],
+            "location": None,
         }
     )
 
@@ -365,6 +410,7 @@ def test_multi_output() -> None:
                 ]
             },
             "tool_names": ["final_result_Left", "final_result_Right"],
+            "location": None,
         }
     )
 
@@ -380,19 +426,42 @@ def test_multi_output() -> None:
                     "allows_text": True,
                     "type_name": "Left | Right",
                     "tool_names": ["final_result_Left", "final_result_Right"],
+                    "location": None,
                 }
             ),
         ),
         (
             ToolOutput(Left, name="give_left"),
-            snapshot({"mode": "tool", "allows_text": False, "type_name": "Left", "tool_names": ["give_left"]}),
+            snapshot(
+                {
+                    "mode": "tool",
+                    "allows_text": False,
+                    "type_name": "Left",
+                    "tool_names": ["give_left"],
+                    "location": None,
+                }
+            ),
         ),
-        (NativeOutput(Left), snapshot({"mode": "native", "allows_text": True, "type_name": "Left", "tool_names": []})),
+        (
+            NativeOutput(Left),
+            snapshot({"mode": "native", "allows_text": True, "type_name": "Left", "tool_names": [], "location": None}),
+        ),
         (
             PromptedOutput([Left, Right]),
-            snapshot({"mode": "prompted", "allows_text": True, "type_name": "Left | Right", "tool_names": []}),
+            snapshot(
+                {
+                    "mode": "prompted",
+                    "allows_text": True,
+                    "type_name": "Left | Right",
+                    "tool_names": [],
+                    "location": None,
+                }
+            ),
         ),
-        (TextOutput(shout), snapshot({"mode": "text", "allows_text": True, "type_name": "shout", "tool_names": []})),
+        (
+            TextOutput(shout),
+            snapshot({"mode": "text", "allows_text": True, "type_name": "shout", "tool_names": [], "location": None}),
+        ),
         (
             [ToolOutput(Left, name="give_left"), Right, shout],
             snapshot(
@@ -401,12 +470,21 @@ def test_multi_output() -> None:
                     "allows_text": False,
                     "type_name": "Left | Right | shout",
                     "tool_names": ["give_left", "final_result_Right", "final_result_shout"],
+                    "location": None,
                 }
             ),
         ),
         (
             list[Left],
-            snapshot({"mode": "auto", "allows_text": True, "type_name": "list[Left]", "tool_names": ["final_result"]}),
+            snapshot(
+                {
+                    "mode": "auto",
+                    "allows_text": True,
+                    "type_name": "list[Left]",
+                    "tool_names": ["final_result"],
+                    "location": None,
+                }
+            ),
         ),
     ],
     ids=["union", "tool", "native", "prompted", "text-function", "mixed", "generic"],
@@ -436,21 +514,53 @@ def test_instruction_order() -> None:
 
     assert [i.model_dump() for i in _agent_blueprint(agent).instructions] == snapshot(
         [
-            {"kind": "instructions", "dynamic": False, "text": "first", "function": None},
-            {"kind": "instructions", "dynamic": False, "text": "second", "function": None},
+            {
+                "kind": "instructions",
+                "dynamic": False,
+                "text": "first",
+                "function": None,
+                "expression": None,
+                "location": None,
+            },
+            {
+                "kind": "instructions",
+                "dynamic": False,
+                "text": "second",
+                "function": None,
+                "expression": None,
+                "location": None,
+            },
             {
                 "kind": "instructions",
                 "dynamic": True,
                 "text": None,
                 "function": "test_introspect_agent.test_instruction_order.<locals>.late",
+                "expression": None,
+                "location": None,
             },
-            {"kind": "system_prompt", "dynamic": False, "text": "sp one", "function": None},
-            {"kind": "system_prompt", "dynamic": False, "text": "sp two", "function": None},
+            {
+                "kind": "system_prompt",
+                "dynamic": False,
+                "text": "sp one",
+                "function": None,
+                "expression": None,
+                "location": None,
+            },
+            {
+                "kind": "system_prompt",
+                "dynamic": False,
+                "text": "sp two",
+                "function": None,
+                "expression": None,
+                "location": None,
+            },
             {
                 "kind": "system_prompt",
                 "dynamic": True,
                 "text": None,
                 "function": "test_introspect_agent.test_instruction_order.<locals>.fresh",
+                "expression": None,
+                "location": None,
             },
         ]
     )
@@ -467,6 +577,7 @@ def test_agent_without_prompts_or_settings() -> None:
             "tool_retries": 1,
             "output_retries": 1,
             "tool_timeout": None,
+            "expressions": {},
         }
     )
     assert result.deps_type is None
@@ -557,6 +668,8 @@ def test_nested_wrapped_and_combined_toolsets() -> None:
                 "kind": "agent",
                 "wrappers": [],
                 "opaque": False,
+                "expression": None,
+                "location": None,
             },
             {
                 "id": "ts1",
@@ -565,6 +678,8 @@ def test_nested_wrapped_and_combined_toolsets() -> None:
                 "kind": "function",
                 "wrappers": ["FilteredToolset", "PrefixedToolset"],
                 "opaque": False,
+                "expression": None,
+                "location": None,
             },
             {
                 "id": "ts2",
@@ -573,6 +688,8 @@ def test_nested_wrapped_and_combined_toolsets() -> None:
                 "kind": "function",
                 "wrappers": ["RenamedToolset"],
                 "opaque": False,
+                "expression": None,
+                "location": None,
             },
             {
                 "id": "ts3",
@@ -581,6 +698,8 @@ def test_nested_wrapped_and_combined_toolsets() -> None:
                 "kind": "other",
                 "wrappers": ["ApprovalRequiredToolset"],
                 "opaque": False,
+                "expression": None,
+                "location": None,
             },
             {
                 "id": "ts4",
@@ -589,8 +708,19 @@ def test_nested_wrapped_and_combined_toolsets() -> None:
                 "kind": "other",
                 "wrappers": [],
                 "opaque": True,
+                "expression": None,
+                "location": None,
             },
-            {"id": "ts5", "toolset_id": None, "label": "FakeMCPToolset", "kind": "mcp", "wrappers": [], "opaque": True},
+            {
+                "id": "ts5",
+                "toolset_id": None,
+                "label": "FakeMCPToolset",
+                "kind": "mcp",
+                "wrappers": [],
+                "opaque": True,
+                "expression": None,
+                "location": None,
+            },
             {
                 "id": "ts6",
                 "toolset_id": None,
@@ -598,6 +728,8 @@ def test_nested_wrapped_and_combined_toolsets() -> None:
                 "kind": "dynamic",
                 "wrappers": [],
                 "opaque": True,
+                "expression": None,
+                "location": None,
             },
         ]
     )
@@ -626,7 +758,8 @@ def test_external_tools_have_no_python_function() -> None:
             "is_async": None,
             "max_retries": None,
             "function": None,
-            "origin": "static",
+            "origin": "object",
+            "location": None,
         }
     )
 
@@ -656,6 +789,8 @@ def test_broken_toolset_becomes_opaque_with_a_warning() -> None:
                 "kind": "other",
                 "wrappers": [],
                 "opaque": True,
+                "expression": None,
+                "location": None,
             },
             {
                 "id": "ts1",
@@ -664,6 +799,8 @@ def test_broken_toolset_becomes_opaque_with_a_warning() -> None:
                 "kind": "function",
                 "wrappers": [],
                 "opaque": False,
+                "expression": None,
+                "location": None,
             },
         ]
     )
@@ -705,7 +842,7 @@ def test_builtin_capabilities_are_flagged() -> None:
 
 def test_delegation_through_a_global() -> None:
     assert _agent_blueprint(main_agent).delegates == snapshot(
-        [Delegate(tool_name="delegate_research", agent_id="a2", evidence="static")]
+        [Delegate(tool_name="delegate_research", agent_id="a2", evidence="object")]
     )
     assert find_delegates(main_agent) == [("delegate_research", researcher)]
 
@@ -739,17 +876,17 @@ def test_delegation_through_a_closure_is_cycle_safe() -> None:
     assert agent_closure(planner) == [planner, writer, critic]
     assert [d.model_dump() for d in _agent_blueprint(planner).delegates] == snapshot(
         [
-            {"tool_name": "write", "agent_id": "a2", "evidence": "static"},
-            {"tool_name": "review", "agent_id": "a3", "evidence": "static"},
+            {"tool_name": "write", "agent_id": "a2", "evidence": "object"},
+            {"tool_name": "review", "agent_id": "a3", "evidence": "object"},
         ]
     )
     # Seen from the critic, the numbering restarts: it is "a1" and the planner "a2".
     assert [d.model_dump() for d in _agent_blueprint(critic).delegates] == snapshot(
-        [{"tool_name": "ask_planner", "agent_id": "a2", "evidence": "static"}]
+        [{"tool_name": "ask_planner", "agent_id": "a2", "evidence": "object"}]
     )
     # A tool that calls its own agent points back at the root.
     assert [d.model_dump() for d in _agent_blueprint(writer).delegates] == snapshot(
-        [{"tool_name": "rewrite", "agent_id": "a1", "evidence": "static"}]
+        [{"tool_name": "rewrite", "agent_id": "a1", "evidence": "object"}]
     )
 
 
@@ -763,7 +900,7 @@ def test_delegation_through_a_renamed_tool_uses_the_visible_name() -> None:
 
     result = _agent_blueprint(Agent(toolsets=[tools.prefixed("team")]))
     assert [d.model_dump() for d in result.delegates] == snapshot(
-        [{"tool_name": "team_ask", "agent_id": "a2", "evidence": "static"}]
+        [{"tool_name": "team_ask", "agent_id": "a2", "evidence": "object"}]
     )
 
 
@@ -775,7 +912,7 @@ def test_session_seam_ids_and_labels_come_from_the_caller() -> None:
     assert result.label == "planner"
     # The critic has no id, so its edge is dropped rather than left dangling.
     assert [d.model_dump() for d in result.delegates] == snapshot(
-        [{"tool_name": "write", "agent_id": "a9", "evidence": "static"}]
+        [{"tool_name": "write", "agent_id": "a9", "evidence": "object"}]
     )
     assert critic.name == "critic"
 
@@ -799,7 +936,7 @@ def test_blueprint_is_pure() -> None:
     first = _agent_blueprint(agent)
     assert agent.name is None, "introspection must not trigger name inference"
     assert _agent_blueprint(agent) == first
-    assert first.source == "static"
+    assert first.source == "object"
 
 
 def test_blueprint_rejects_other_objects() -> None:

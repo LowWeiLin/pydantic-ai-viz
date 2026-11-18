@@ -128,7 +128,7 @@ def test_blueprint_survives_losing_every_private_attribute() -> None:
     assert result.instructions == []
     assert result.native_tools == []
     assert result.output.model_dump(exclude={"json_schema"}) == snapshot(
-        {"mode": "unknown", "allows_text": None, "type_name": "Answer", "tool_names": []}
+        {"mode": "unknown", "allows_text": None, "type_name": "Answer", "tool_names": [], "location": None}
     )
     assert result.settings.model_dump() == snapshot(
         {
@@ -137,6 +137,7 @@ def test_blueprint_survives_losing_every_private_attribute() -> None:
             "tool_retries": None,
             "output_retries": None,
             "tool_timeout": None,
+            "expressions": {},
         }
     )
     # Everything read through public API is still there.

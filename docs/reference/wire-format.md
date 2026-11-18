@@ -37,8 +37,10 @@ type SessionStarted = {
   pviz: 1;
   session_id: string;          // 32 hex characters, new for every session
   title: string;
+  mode: "capture" | "blueprint"; // "blueprint": blueprints only; no run will ever appear
   include_content: boolean;
   stream: boolean;             // token streaming enabled; always false when include_content is false
+  notices: string[];           // messages about the whole session, for the reader to show
   versions: { pydantic_ai_viz: string; pydantic_ai: string; python: string };
 };
 
@@ -63,16 +65,37 @@ type StreamDelta = {
 - A reader must accept a `span.ended` with no earlier `span.started`. This happens after eviction, or when capture was attached in the middle of a run.
 - A **run** is a trace: all spans that share a `trace_id`. Its root is the span with `parent_id: null`, an `agent_run` or a `graph_run`.
 
+A session in `"blueprint"` mode is what `pydantic-ai-viz view` and a blueprint-only export produce. It holds `session.started` and blueprint events and nothing else, so a reader should not wait for runs or offer run controls. `notices` carries what concerns the session and no single blueprint, such as a file that static analysis had to skip.
+
 ## Blueprints { #blueprints }
 
 ```ts
+// How a fact was obtained.
+type Provenance =
+  | "code"       // read from source code by static analysis; nothing was imported or run
+  | "object"     // read from a live Python object (an Agent or a Graph)
+  | "observed";  // seen happening in a run
+
+// Where something is defined in analysed source code. Only static analysis sets it.
+type SourceLocation = {
+  file: string;                // path relative to the analysed root, with forward slashes
+  line: number;                // 1-based
+};
+
 type AgentBlueprint = {
   id: string;                  // opaque, stable within a session: "a1", "a2", ...
   name: string | null;         // agent.name; null until known
   label: string;               // never empty: the name, else the variable name, else "agent-<n>"
   description: string | null;
-  source: "static" | "observed";
-  model: { id: string | null; name: string; provider: string | null; offline: boolean } | null;
+  source: Provenance;
+  location: SourceLocation | null;  // where the agent is constructed
+  model: {
+    id: string | null;
+    name: string;
+    provider: string | null;
+    offline: boolean;
+    expression: string | null; // source text of a model that is not a string literal; name repeats it
+  } | null;
   deps_type: string | null;    // qualified type name; null for object or None
   instructions: Instruction[];
   toolsets: Toolset[];
@@ -84,6 +107,7 @@ type AgentBlueprint = {
     type_name: string | null;  // for example "Resolution", "str", "A | B"
     json_schema: Json | null;
     tool_names: string[];      // for example ["final_result"]; may be filled from observed runs
+    location: SourceLocation | null;  // where the output type is defined
   };
   capabilities: { name: string; builtin: boolean }[];
   settings: {
@@ -92,16 +116,19 @@ type AgentBlueprint = {
     tool_retries: number | null;
     output_retries: number | null;
     tool_timeout: number | null;
+    expressions: { [k: string]: string };  // settings computed at run time: name -> source text
   };
-  delegates: { tool_name: string; agent_id: string; evidence: "static" | "observed" }[];
+  delegates: { tool_name: string; agent_id: string; evidence: Provenance }[];
   warnings: string[];          // human-readable notes about anything that could not be read
 };
 
 type Instruction = {
   kind: "instructions" | "system_prompt";
   dynamic: boolean;
-  text: string | null;         // null for dynamic functions
+  text: string | null;         // the literal text; for a dynamic f-string, its template
   function: string | null;     // qualified function name for dynamic ones
+  expression: string | null;   // source text of any other value computed at run time
+  location: SourceLocation | null;
 };
 
 type Toolset = {
@@ -111,6 +138,8 @@ type Toolset = {
   kind: "agent" | "function" | "mcp" | "dynamic" | "other";
   wrappers: string[];          // class names of wrapper toolsets around it, outermost first
   opaque: boolean;             // true when its tools cannot be listed without running it
+  expression: string | null;   // source text of a toolset that static analysis cannot read
+  location: SourceLocation | null;
 };
 
 type Tool = {
@@ -124,22 +153,43 @@ type Tool = {
   is_async: boolean | null;
   max_retries: number | null;  // null means "inherit the agent's default"
   function: string | null;     // qualified function name
-  origin: "static" | "observed";
+  origin: Provenance;
+  location: SourceLocation | null;
 };
 
 type GraphBlueprint = {
   id: string;                  // "g1", "g2", ...
   name: string | null;
   label: string;
+  source: "code" | "object";
+  location: SourceLocation | null;
   state_type: string | null;
   input_type: string | null;
   output_type: string | null;
-  nodes: { id: string; kind: string; label: string | null; note: string | null }[];
+  nodes: {
+    id: string;
+    kind: string;
+    label: string | null;
+    note: string | null;
+    location: SourceLocation | null;
+  }[];
   edges: { source: string; target: string; label: string | null }[];
-  mermaid: string | null;      // graph.render(direction="LR")
+  mermaid: string | null;      // a Mermaid state diagram of the nodes and edges
   warnings: string[];
 };
 ```
+
+### Provenance, locations and expressions { #provenance }
+
+- **Provenance** says how a fact was obtained. A blueprint's `source`, a tool's `origin` and a delegation's `evidence` all use the same three values. A blueprint made by `pydantic-ai-viz view` is `"code"`; one made from an agent passed to `serve`, `record` or `blueprint` is `"object"`; one synthesised from runs is `"observed"`. A graph is never `"observed"`.
+- **`location`** is set only for provenance `"code"`. It is `null` everywhere else, and also for a `"code"` fact that has no single place in the source.
+- **An expression is source text, never a value.** Static analysis does not run code, so a value that code computes is reported as the text that computes it:
+    - `model.expression` is set when the model is not a string literal, for example `get_model()`. `name` holds the same text and `id` is `null`. `provider` and `offline` are filled in only for Pydantic AI's own `TestModel` and `FunctionModel`.
+    - An `Instruction` with `dynamic: true` has exactly one of `function` (a named function), `text` (the template of an f-string) or `expression` (anything else).
+    - `settings.expressions` maps a setting to its source text: a field name such as `tool_retries`, or `model_settings.<key>` for one model setting. The setting itself is `null` or absent.
+    - A toolset with an `expression` is `opaque`; its `label` is the class name when that can be read, else the same text.
+    - Expression text is cut at 200 characters.
+- **What static analysis does not know is left out, not guessed.** A `"code"` blueprint has `null` for a setting the source does not set (the library default applies), an empty `output.tool_names`, and no built-in capabilities. Each thing that could not be resolved is also listed in `warnings`.
 
 - Known graph node kinds are `"start"`, `"end"`, `"step"`, `"decision"`, `"join"`, `"broadcast"` and `"map"`. A reader draws an unknown kind as a step.
 - `model.offline` is `true` when the provider is `test` or `function`.
@@ -280,7 +330,7 @@ Spans are produced by Pydantic AI as OpenTelemetry spans and converted to the sh
 A recording is a UTF-8 text file with the extension `.pviz.jsonl`. Each line is one envelope as compact JSON. The first line is the `session.started` event. The file is exactly the session's event log, in order.
 
 ```text
-{"seq":0,"ts":1795046400000.0,"type":"session.started","pviz":1,"session_id":"5f0c2a9e6f3b4d0c9a7e1b2c3d4e5f60","title":"Support triage","include_content":true,"stream":true,"versions":{"pydantic_ai_viz":"0.1.0","pydantic_ai":"2.70.0","python":"3.12.9"}}
+{"seq":0,"ts":1795046400000.0,"type":"session.started","pviz":1,"session_id":"5f0c2a9e6f3b4d0c9a7e1b2c3d4e5f60","title":"Support triage","mode":"capture","include_content":true,"stream":true,"notices":[],"versions":{"pydantic_ai_viz":"0.1.0","pydantic_ai":"2.70.0","python":"3.12.9"}}
 {"seq":1,"ts":1795046400001.2,"type":"blueprint.agent","agent":{"id":"a1","name":"triage","label":"triage", ...}}
 {"seq":2,"ts":1795046401000.0,"type":"span.started","span":{"trace_id":"0af7651916cd43dd8448eb211c80319c","span_id":"b7ad6b7169203331","parent_id":null,"kind":"agent_run","name":"triage","start_ms":1795046401000.0,"end_ms":null,"status":"running", ...}}
 ```

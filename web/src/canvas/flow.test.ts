@@ -78,7 +78,7 @@ describe("agent canvas flow", () => {
     const staticOnly = structuredClone(sample);
     const delegate = staticOnly.agents.a1?.delegates[0];
     if (!delegate) throw new Error("expected a delegate");
-    delegate.evidence = "static";
+    delegate.evidence = "object";
     const model = canvasModel(staticOnly, "a1", null);
     if (!model) throw new Error("expected a model");
     const found = edgeData(

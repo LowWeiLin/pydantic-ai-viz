@@ -63,7 +63,8 @@ async def test_unregistered_agent_gets_an_observed_blueprint_with_its_tools() ->
             "label": "main",
             "description": "Main demo agent",
             "source": "observed",
-            "model": {"id": None, "name": "scripted-fn", "provider": "function", "offline": True},
+            "location": None,
+            "model": {"id": None, "name": "scripted-fn", "provider": "function", "offline": True, "expression": None},
             "deps_type": None,
             "instructions": [
                 {
@@ -75,6 +76,8 @@ Static instructions.
 User is ann.\
 """,
                     "function": None,
+                    "expression": None,
+                    "location": None,
                 }
             ],
             "toolsets": [
@@ -85,6 +88,8 @@ User is ann.\
                     "kind": "agent",
                     "wrappers": [],
                     "opaque": False,
+                    "expression": None,
+                    "location": None,
                 },
                 {
                     "id": "ts1",
@@ -93,6 +98,8 @@ User is ann.\
                     "kind": "other",
                     "wrappers": [],
                     "opaque": False,
+                    "expression": None,
+                    "location": None,
                 },
             ],
             "tools": [
@@ -113,6 +120,7 @@ User is ann.\
                     "max_retries": None,
                     "function": None,
                     "origin": "observed",
+                    "location": None,
                 },
                 {
                     "name": "flaky",
@@ -131,6 +139,7 @@ User is ann.\
                     "max_retries": None,
                     "function": None,
                     "origin": "observed",
+                    "location": None,
                 },
                 {
                     "name": "delegate_research",
@@ -149,6 +158,7 @@ User is ann.\
                     "max_retries": None,
                     "function": None,
                     "origin": "observed",
+                    "location": None,
                 },
                 {
                     "name": "add",
@@ -167,6 +177,7 @@ User is ann.\
                     "max_retries": None,
                     "function": None,
                     "origin": "observed",
+                    "location": None,
                 },
             ],
             "native_tools": [],
@@ -176,6 +187,7 @@ User is ann.\
                 "type_name": None,
                 "json_schema": None,
                 "tool_names": ["final_result"],
+                "location": None,
             },
             "capabilities": [],
             "settings": {
@@ -184,6 +196,7 @@ User is ann.\
                 "tool_retries": None,
                 "output_retries": None,
                 "tool_timeout": None,
+                "expressions": {},
             },
             "delegates": [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "observed"}],
             "warnings": [],
@@ -208,11 +221,19 @@ User is ann.\
                 "max_retries": None,
                 "function": None,
                 "origin": "observed",
+                "location": None,
             }
         ]
     )
     assert blueprints["a2"]["output"] == snapshot(
-        {"mode": "text", "allows_text": True, "type_name": None, "json_schema": None, "tool_names": []}
+        {
+            "mode": "text",
+            "allows_text": True,
+            "type_name": None,
+            "json_schema": None,
+            "tool_names": [],
+            "location": None,
+        }
     )
 
 
@@ -239,10 +260,10 @@ async def test_registered_unnamed_agent_gets_its_name_on_first_run_with_the_same
         await nameless.run("hi")  # Pydantic AI infers the name from this variable
         await nameless.run("again")
         after = agent_events(session.events)
-    assert [(a["id"], a["name"], a["label"], a["source"]) for a in before] == [("a1", None, "agent-1", "static")]
+    assert [(a["id"], a["name"], a["label"], a["source"]) for a in before] == [("a1", None, "agent-1", "object")]
     assert [(a["id"], a["name"], a["label"], a["source"]) for a in after] == [
-        ("a1", None, "agent-1", "static"),
-        ("a1", "nameless", "nameless", "static"),
+        ("a1", None, "agent-1", "object"),
+        ("a1", "nameless", "nameless", "object"),
     ]
 
 
@@ -255,8 +276,8 @@ async def test_one_registered_unnamed_agent_gets_the_runs_pydantic_ai_could_not_
         events = session.events
     assert held[0].name is None
     assert [(a["id"], a["name"], a["label"], a["source"]) for a in agent_events(events)] == [
-        ("a1", None, "agent-1", "static"),
-        ("a1", "agent", "agent-1", "static"),
+        ("a1", None, "agent-1", "object"),
+        ("a1", "agent", "agent-1", "object"),
     ]
     runs = [e["span"] for e in events if e["type"] == "span.started" and e["span"]["kind"] == "agent_run"]
     assert [run["agent_name"] for run in runs] == ["agent", "agent"]
@@ -275,7 +296,7 @@ async def test_several_registered_unnamed_agents_cannot_be_matched_and_say_so() 
         {
             "a1": (
                 None,
-                "static",
+                "object",
                 [
                     "runs of this agent cannot be matched to it: several registered agents have no name. "
                     "Pass name= to Agent(...)"
@@ -283,13 +304,13 @@ async def test_several_registered_unnamed_agents_cannot_be_matched_and_say_so() 
             ),
             "a2": (
                 None,
-                "static",
+                "object",
                 [
                     "runs of this agent cannot be matched to it: several registered agents have no name. "
                     "Pass name= to Agent(...)"
                 ],
             ),
-            "a3": ("named", "static", []),
+            "a3": ("named", "object", []),
             "a4": (
                 "agent",
                 "observed",
@@ -305,7 +326,7 @@ async def test_a_run_named_like_no_registered_agent_is_never_bound_to_an_unnamed
         await Agent(TestModel(), name="stranger").run("hi")
         blueprints = latest(session.events)
     assert {id: (a["name"], a["source"]) for id, a in blueprints.items()} == {
-        "a1": (None, "static"),
+        "a1": (None, "object"),
         "a2": ("stranger", "observed"),
     }
 
@@ -346,15 +367,15 @@ async def test_delegation_edge_is_upgraded_to_observed() -> None:
         await team.main.run(PROMPT, deps=Deps())
         await team.main.run(PROMPT, deps=Deps())  # seen again: nothing new to say
         events = session.events
-    assert before["a1"]["delegates"] == [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "static"}]
+    assert before["a1"]["delegates"] == [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "object"}]
     after = latest(events)
     assert after["a1"]["delegates"] == [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "observed"}]
     # Static blueprints already list every tool, so the upgrade is the only re-emit.
     assert [summary(agent) for agent in agent_events(events)] == snapshot(
         [
-            "a1 main static tools=4 delegates=['delegate_research->a2:static']",
-            "a2 researcher static tools=1 delegates=[]",
-            "a1 main static tools=4 delegates=['delegate_research->a2:observed']",
+            "a1 main object tools=4 delegates=['delegate_research->a2:object']",
+            "a2 researcher object tools=1 delegates=[]",
+            "a1 main object tools=4 delegates=['delegate_research->a2:observed']",
         ]
     )
     assert {key: value for key, value in after["a1"].items() if key != "delegates"} == {
@@ -376,18 +397,20 @@ async def test_static_registration_takes_over_the_observed_blueprints_id() -> No
         "a2": ("researcher", "observed"),
     }
     assert {id: (a["name"], a["source"]) for id, a in after.items()} == {
-        "a1": ("main", "static"),
-        "a2": ("researcher", "static"),
+        "a1": ("main", "object"),
+        "a2": ("researcher", "object"),
     }
     # What the earlier run proved is kept, and the static detail is all there.
     assert after["a1"]["delegates"] == [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "observed"}]
     assert after["a1"]["deps_type"] == "scenarios.Deps"
-    assert [tool["origin"] for tool in after["a1"]["tools"]] == ["static"] * 4
+    assert [tool["origin"] for tool in after["a1"]["tools"]] == ["object"] * 4
     assert after["a1"]["instructions"][0] == {
         "kind": "instructions",
         "dynamic": False,
         "text": "Static instructions.",
         "function": None,
+        "expression": None,
+        "location": None,
     }
     assert final == after
 
@@ -414,12 +437,12 @@ async def test_tools_from_an_opaque_toolset_are_added_to_a_static_blueprint() ->
         static = latest(session.events)["a1"]
         await agent.run("hi")
         merged = latest(session.events)["a1"]
-    assert [(tool["name"], tool["origin"]) for tool in static["tools"]] == [("fixed", "static")]
+    assert [(tool["name"], tool["origin"]) for tool in static["tools"]] == [("fixed", "object")]
     assert [(t["id"], t["toolset_id"], t["kind"], t["opaque"]) for t in static["toolsets"]] == snapshot(
         [("ts0", "<agent>", "agent", False), ("ts1", "late", "dynamic", True)]
     )
     assert [(tool["name"], tool["toolset"], tool["origin"]) for tool in merged["tools"]] == snapshot(
-        [("fixed", "ts0", "static"), ("discovered", "ts2", "observed")]
+        [("fixed", "ts0", "object"), ("discovered", "ts2", "observed")]
     )
     assert [(t["id"], t["toolset_id"], t["label"], t["kind"]) for t in merged["toolsets"]] == snapshot(
         [
@@ -446,6 +469,7 @@ async def test_tools_from_an_opaque_toolset_are_added_to_a_static_blueprint() ->
             "max_retries": None,
             "function": None,
             "origin": "observed",
+            "location": None,
         }
     )
 
@@ -525,7 +549,8 @@ def test_observed_blueprint_shape() -> None:
             "label": "helper",
             "description": "Helps",
             "source": "observed",
-            "model": {"id": None, "name": "gpt-x", "provider": None, "offline": False},
+            "location": None,
+            "model": {"id": None, "name": "gpt-x", "provider": None, "offline": False, "expression": None},
             "deps_type": None,
             "instructions": [],
             "toolsets": [],
@@ -537,6 +562,7 @@ def test_observed_blueprint_shape() -> None:
                 "type_name": None,
                 "json_schema": None,
                 "tool_names": [],
+                "location": None,
             },
             "capabilities": [],
             "settings": {
@@ -545,6 +571,7 @@ def test_observed_blueprint_shape() -> None:
                 "tool_retries": None,
                 "output_retries": None,
                 "tool_timeout": None,
+                "expressions": {},
             },
             "delegates": [],
             "warnings": [],
@@ -565,6 +592,8 @@ def test_merge_request_into_an_observed_blueprint() -> None:
                 "kind": "agent",
                 "wrappers": [],
                 "opaque": False,
+                "expression": None,
+                "location": None,
             },
             {
                 "id": "ts1",
@@ -573,6 +602,8 @@ def test_merge_request_into_an_observed_blueprint() -> None:
                 "kind": "other",
                 "wrappers": [],
                 "opaque": False,
+                "expression": None,
+                "location": None,
             },
             {
                 "id": "ts2",
@@ -581,6 +612,8 @@ def test_merge_request_into_an_observed_blueprint() -> None:
                 "kind": "other",
                 "wrappers": [],
                 "opaque": False,
+                "expression": None,
+                "location": None,
             },
         ]
     )
@@ -605,6 +638,7 @@ def test_merge_request_into_an_observed_blueprint() -> None:
             "max_retries": None,
             "function": None,
             "origin": "observed",
+            "location": None,
         }
     )
     assert dumped["output"] == snapshot(
@@ -614,10 +648,26 @@ def test_merge_request_into_an_observed_blueprint() -> None:
             "type_name": None,
             "json_schema": None,
             "tool_names": ["final_result", "final_result_B"],
+            "location": None,
         }
     )
-    assert dumped["instructions"] == [{"kind": "instructions", "dynamic": False, "text": "Be brief.", "function": None}]
-    assert dumped["model"] == {"id": None, "name": "gpt-x", "provider": "function", "offline": True}
+    assert dumped["instructions"] == [
+        {
+            "kind": "instructions",
+            "dynamic": False,
+            "text": "Be brief.",
+            "function": None,
+            "expression": None,
+            "location": None,
+        }
+    ]
+    assert dumped["model"] == {
+        "id": None,
+        "name": "gpt-x",
+        "provider": "function",
+        "offline": True,
+        "expression": None,
+    }
     assert AgentBlueprint.model_validate(dumped) == merged
 
 
@@ -643,7 +693,7 @@ def test_merge_request_never_overrides_what_static_introspection_found() -> None
     assert isinstance(static, AgentBlueprint)
     merged = merge_request(static, _PARAMETERS, instructions="Resolved text.", provider="function")
     by_name = {tool.name: tool for tool in merged.tools}
-    assert (by_name["search"].origin, by_name["search"].description) == ("static", "The real one.")
+    assert (by_name["search"].origin, by_name["search"].description) == ("object", "The real one.")
     assert [tool.name for tool in merged.tools] == ["search", "approve", "odd", "also_odd"]
     assert by_name["approve"].toolset != by_name["search"].toolset
     assert merged.instructions == static.instructions  # static blueprints keep their own instructions
@@ -660,11 +710,11 @@ def test_add_delegate_adds_upgrades_and_then_reports_no_change() -> None:
     assert add_delegate(added, "ask", "a2") is added
     assert base.delegates == []  # inputs are never mutated
 
-    static = base.model_copy(update={"delegates": [Delegate(tool_name="ask", agent_id="a2", evidence="static")]})
+    static = base.model_copy(update={"delegates": [Delegate(tool_name="ask", agent_id="a2", evidence="object")]})
     upgraded = add_delegate(static, "ask", "a2")
     assert upgraded.delegates == [Delegate(tool_name="ask", agent_id="a2", evidence="observed")]
     other = add_delegate(static, "ask", "a3")  # same tool, another agent: a second edge
-    assert [(d.agent_id, d.evidence) for d in other.delegates] == [("a2", "static"), ("a3", "observed")]
+    assert [(d.agent_id, d.evidence) for d in other.delegates] == [("a2", "object"), ("a3", "observed")]
 
 
 def test_carry_observed_keeps_run_evidence_under_a_static_blueprint() -> None:
@@ -681,10 +731,10 @@ def test_carry_observed_keeps_run_evidence_under_a_static_blueprint() -> None:
     assert isinstance(fresh, AgentBlueprint)
     fresh = fresh.model_copy(update={"id": "a7", "output": fresh.output.model_copy(update={"mode": "unknown"})})
     carried = carry_observed(previous, fresh)
-    assert carried.source == "static"
+    assert carried.source == "object"
     assert carried.delegates == [Delegate(tool_name="search", agent_id="a2", evidence="observed")]
     assert [(tool.name, tool.origin) for tool in carried.tools] == [
-        ("search", "static"),
+        ("search", "object"),
         ("approve", "observed"),
         ("odd", "observed"),
         ("also_odd", "observed"),

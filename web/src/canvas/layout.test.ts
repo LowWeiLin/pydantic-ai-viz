@@ -38,7 +38,8 @@ const tool = (name: string, toolset = "ts0"): AgentBlueprint["tools"][number] =>
   is_async: null,
   max_retries: null,
   function: null,
-  origin: "static",
+  origin: "object",
+  location: null,
 });
 
 const toolset = (id: string, opaque = false): AgentBlueprint["toolsets"][number] => ({
@@ -48,6 +49,8 @@ const toolset = (id: string, opaque = false): AgentBlueprint["toolsets"][number]
   kind: opaque ? "dynamic" : "agent",
   wrappers: [],
   opaque,
+  expression: null,
+  location: null,
 });
 
 type Box = { id: string; x: number; y: number; width: number; height: number };
@@ -187,9 +190,9 @@ describe("layoutAgentCanvas", () => {
         ...names.map((name) => ({
           tool_name: `ask_${name}`,
           agent_id: name,
-          evidence: "static" as const,
+          evidence: "object" as const,
         })),
-        { tool_name: "ask_b_again", agent_id: "b", evidence: "static" as const },
+        { tool_name: "ask_b_again", agent_id: "b", evidence: "object" as const },
       ],
     });
     const subs = names.map((id) =>
@@ -256,13 +259,13 @@ describe("layoutAgentCanvas", () => {
       id: "a1",
       toolsets: [toolset("ts0")],
       tools: [tool("ask_b")],
-      delegates: [{ tool_name: "ask_b", agent_id: "a2", evidence: "static" }],
+      delegates: [{ tool_name: "ask_b", agent_id: "a2", evidence: "object" }],
     });
     const b = agentBlueprint({
       id: "a2",
       toolsets: [toolset("ts0")],
       tools: [tool("ask_a")],
-      delegates: [{ tool_name: "ask_a", agent_id: "a1", evidence: "static" }],
+      delegates: [{ tool_name: "ask_a", agent_id: "a1", evidence: "object" }],
     });
     for (const subject of ["a1", "a2"]) {
       const other = subject === "a1" ? "a2" : "a1";

@@ -162,7 +162,7 @@ def blueprint_events(target: Agent[Any, Any] | Graph[Any, Any, Any, Any]) -> lis
     """The log of a session that only ever registered ``target``: blueprints, no runs."""
     from ._session import Session
 
-    with Session(title=getattr(target, "name", None), instrument=False) as session:
+    with Session(title=getattr(target, "name", None), instrument=False, mode="blueprint") as session:
         session.register(target)
         return session.events
 

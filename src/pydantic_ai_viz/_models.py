@@ -36,19 +36,44 @@ class WireModel(BaseModel):
 
 # ---------------------------------------------------------------- blueprints
 
+Provenance: TypeAlias = Literal["code", "object", "observed"]
+"""How a fact was obtained.
+
+* ``"code"``: read from source code by static analysis; nothing was imported or run.
+* ``"object"``: read from a live Python object (an ``Agent`` or a ``Graph``).
+* ``"observed"``: seen happening in a run.
+"""
+
+SessionMode: TypeAlias = Literal["capture", "blueprint"]
+"""``"capture"``: runs can appear in this session. ``"blueprint"``: it holds blueprints only, for ever."""
+
+
+class SourceLocation(WireModel):
+    """Where something is defined in analysed source code."""
+
+    file: str
+    """Path relative to the analysed root, with forward slashes."""
+    line: int = Field(ge=1)
+
 
 class ModelInfo(WireModel):
     id: str | None
     name: str
     provider: str | None
     offline: bool
+    expression: str | None
+    """Source text of the model argument when it is not a string literal; ``name`` then repeats it."""
 
 
 class Instruction(WireModel):
     kind: Literal["instructions", "system_prompt"]
     dynamic: bool
     text: str | None
+    """The literal text; for a dynamic f-string, its template with ``{...}`` placeholders."""
     function: str | None
+    expression: str | None
+    """Source text of a value that is neither a literal, an f-string nor a named function."""
+    location: SourceLocation | None
 
 
 class Toolset(WireModel):
@@ -58,6 +83,9 @@ class Toolset(WireModel):
     kind: Literal["agent", "function", "mcp", "dynamic", "other"]
     wrappers: list[str]
     opaque: bool
+    expression: str | None
+    """Source text of a toolset that source code builds in a way static analysis cannot read."""
+    location: SourceLocation | None
 
 
 class Tool(WireModel):
@@ -71,7 +99,8 @@ class Tool(WireModel):
     is_async: bool | None
     max_retries: int | None
     function: str | None
-    origin: Literal["static", "observed"]
+    origin: Provenance
+    location: SourceLocation | None
 
 
 class OutputInfo(WireModel):
@@ -80,6 +109,8 @@ class OutputInfo(WireModel):
     type_name: str | None
     json_schema: JsonValue
     tool_names: list[str]
+    location: SourceLocation | None
+    """Where the output type is defined."""
 
 
 class CapabilityInfo(WireModel):
@@ -93,22 +124,29 @@ class AgentSettings(WireModel):
     tool_retries: int | None
     output_retries: int | None
     tool_timeout: float | None
+    expressions: dict[str, str]
+    """Settings that source code computes at run time: setting name -> source text.
+
+    The key is a field of this model, or ``model_settings.<key>`` for one model setting.
+    The field itself is ``None`` (or the key is absent from ``model_settings``).
+    """
 
 
 class Delegate(WireModel):
     tool_name: str
     agent_id: str
-    evidence: Literal["static", "observed"]
+    evidence: Provenance
 
 
 class AgentBlueprint(WireModel):
-    """Static or observed structure of one agent."""
+    """Structure of one agent, read from code, from a live object, or from its runs."""
 
     id: str
     name: str | None
     label: str = Field(min_length=1)
     description: str | None
-    source: Literal["static", "observed"]
+    source: Provenance
+    location: SourceLocation | None
     model: ModelInfo | None
     deps_type: str | None
     instructions: list[Instruction]
@@ -127,6 +165,7 @@ class GraphNode(WireModel):
     kind: str
     label: str | None
     note: str | None
+    location: SourceLocation | None
 
 
 class GraphEdge(WireModel):
@@ -136,11 +175,13 @@ class GraphEdge(WireModel):
 
 
 class GraphBlueprint(WireModel):
-    """Static structure of one pydantic-graph ``Graph``."""
+    """Structure of one pydantic-graph ``Graph``, read from code or from a live object."""
 
     id: str
     name: str | None
     label: str = Field(min_length=1)
+    source: Literal["code", "object"]
+    location: SourceLocation | None
     state_type: str | None
     input_type: str | None
     output_type: str | None
@@ -320,8 +361,11 @@ class SessionStarted(EnvelopeBase):
     pviz: Literal[1]
     session_id: SessionId
     title: str
+    mode: SessionMode
     include_content: bool
     stream: bool
+    notices: list[str]
+    """Messages about the session as a whole, such as files static analysis had to skip."""
     versions: Versions
 
 

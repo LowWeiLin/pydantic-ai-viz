@@ -16,7 +16,7 @@ A blueprint with no runs is an architecture diagram. A run with no blueprint is 
 
 ### Static: read from the object
 
-When you pass an agent to `serve`, `record`, `view` or `blueprint`, it is introspected. Nothing is executed. The result has `source: "static"` and is as complete as introspection allows: every tool with its schemas, static instructions, the names of dynamic instruction functions, output type and schema, retry limits, capabilities.
+When you pass an agent to `serve`, `record`, `view` or `blueprint`, it is introspected. Nothing is executed. The result has `source: "object"` and is as complete as introspection allows: every tool with its schemas, static instructions, the names of dynamic instruction functions, output type and schema, retry limits, capabilities.
 
 ### Observed: pieced together from runs
 
@@ -43,7 +43,7 @@ An edge from a tool to another agent says "this tool runs that agent". Because t
 
 | Evidence | Drawn as | How it was found | How far to trust it |
 |---|---|---|---|
-| `static` | Dashed | The tool function's code refers to an `Agent` object: a module-level variable or one from an enclosing scope | A good guess. The reference might be on a branch that never runs. |
+| `object` | Dashed | The tool function's code refers to an `Agent` object: a module-level variable or one from an enclosing scope | A good guess. The reference might be on a branch that never runs. |
 | `observed` | Solid | During a run, an agent run started inside that tool call | A fact about at least one run. |
 
 A dashed edge turns solid the first time the delegation actually happens. An edge that static analysis missed, because the agent is reached through `ctx.deps`, an attribute or a helper function, simply appears, solid, when it first happens.

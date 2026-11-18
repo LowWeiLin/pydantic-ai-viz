@@ -2,7 +2,7 @@
   "$defs": {
     "AgentBlueprint": {
       "additionalProperties": false,
-      "description": "Static or observed structure of one agent.",
+      "description": "Structure of one agent, read from code, from a live object, or from its runs.",
       "properties": {
         "capabilities": {
           "items": {
@@ -56,6 +56,16 @@
           "title": "Label",
           "type": "string"
         },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceLocation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "model": {
           "anyOf": [
             {
@@ -92,7 +102,8 @@
         },
         "source": {
           "enum": [
-            "static",
+            "code",
+            "object",
             "observed"
           ],
           "title": "Source",
@@ -126,6 +137,7 @@
         "label",
         "description",
         "source",
+        "location",
         "model",
         "deps_type",
         "instructions",
@@ -379,6 +391,13 @@
           ],
           "title": "End Strategy"
         },
+        "expressions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Expressions",
+          "type": "object"
+        },
         "model_settings": {
           "anyOf": [
             {
@@ -432,7 +451,8 @@
         "end_strategy",
         "tool_retries",
         "output_retries",
-        "tool_timeout"
+        "tool_timeout",
+        "expressions"
       ],
       "title": "AgentSettings",
       "type": "object"
@@ -465,7 +485,8 @@
         },
         "evidence": {
           "enum": [
-            "static",
+            "code",
+            "object",
             "observed"
           ],
           "title": "Evidence",
@@ -486,7 +507,7 @@
     },
     "GraphBlueprint": {
       "additionalProperties": false,
-      "description": "Static structure of one pydantic-graph ``Graph``.",
+      "description": "Structure of one pydantic-graph ``Graph``, read from code or from a live object.",
       "properties": {
         "edges": {
           "items": {
@@ -514,6 +535,16 @@
           "minLength": 1,
           "title": "Label",
           "type": "string"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceLocation"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "mermaid": {
           "anyOf": [
@@ -555,6 +586,14 @@
           ],
           "title": "Output Type"
         },
+        "source": {
+          "enum": [
+            "code",
+            "object"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
         "state_type": {
           "anyOf": [
             {
@@ -578,6 +617,8 @@
         "id",
         "name",
         "label",
+        "source",
+        "location",
         "state_type",
         "input_type",
         "output_type",
@@ -672,6 +713,16 @@
           ],
           "title": "Label"
         },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceLocation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "note": {
           "anyOf": [
             {
@@ -688,7 +739,8 @@
         "id",
         "kind",
         "label",
-        "note"
+        "note",
+        "location"
       ],
       "title": "GraphNode",
       "type": "object"
@@ -988,6 +1040,17 @@
           "title": "Dynamic",
           "type": "boolean"
         },
+        "expression": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expression"
+        },
         "function": {
           "anyOf": [
             {
@@ -1007,6 +1070,16 @@
           "title": "Kind",
           "type": "string"
         },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceLocation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "text": {
           "anyOf": [
             {
@@ -1023,7 +1096,9 @@
         "kind",
         "dynamic",
         "text",
-        "function"
+        "function",
+        "expression",
+        "location"
       ],
       "title": "Instruction",
       "type": "object"
@@ -1076,6 +1151,17 @@
     "ModelInfo": {
       "additionalProperties": false,
       "properties": {
+        "expression": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expression"
+        },
         "id": {
           "anyOf": [
             {
@@ -1111,7 +1197,8 @@
         "id",
         "name",
         "provider",
-        "offline"
+        "offline",
+        "expression"
       ],
       "title": "ModelInfo",
       "type": "object"
@@ -1490,6 +1577,16 @@
         "json_schema": {
           "$ref": "#/$defs/JsonValue"
         },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceLocation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "mode": {
           "title": "Mode",
           "type": "string"
@@ -1518,7 +1615,8 @@
         "allows_text",
         "type_name",
         "json_schema",
-        "tool_names"
+        "tool_names",
+        "location"
       ],
       "title": "OutputInfo",
       "type": "object"
@@ -1553,6 +1651,21 @@
         "include_content": {
           "title": "Include Content",
           "type": "boolean"
+        },
+        "mode": {
+          "enum": [
+            "capture",
+            "blueprint"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "notices": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Notices",
+          "type": "array"
         },
         "pviz": {
           "const": 1,
@@ -1597,11 +1710,34 @@
         "pviz",
         "session_id",
         "title",
+        "mode",
         "include_content",
         "stream",
+        "notices",
         "versions"
       ],
       "title": "SessionStarted",
+      "type": "object"
+    },
+    "SourceLocation": {
+      "additionalProperties": false,
+      "description": "Where something is defined in analysed source code.",
+      "properties": {
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "line": {
+          "minimum": 1,
+          "title": "Line",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "file",
+        "line"
+      ],
+      "title": "SourceLocation",
       "type": "object"
     },
     "SpanEnded": {
@@ -1913,6 +2049,16 @@
           "title": "Kind",
           "type": "string"
         },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceLocation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "max_retries": {
           "anyOf": [
             {
@@ -1930,7 +2076,8 @@
         },
         "origin": {
           "enum": [
-            "static",
+            "code",
+            "object",
             "observed"
           ],
           "title": "Origin",
@@ -1969,7 +2116,8 @@
         "is_async",
         "max_retries",
         "function",
-        "origin"
+        "origin",
+        "location"
       ],
       "title": "Tool",
       "type": "object"
@@ -2213,6 +2361,17 @@
     "Toolset": {
       "additionalProperties": false,
       "properties": {
+        "expression": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expression"
+        },
         "id": {
           "title": "Id",
           "type": "string"
@@ -2231,6 +2390,16 @@
         "label": {
           "title": "Label",
           "type": "string"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceLocation"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "opaque": {
           "title": "Opaque",
@@ -2261,7 +2430,9 @@
         "label",
         "kind",
         "wrappers",
-        "opaque"
+        "opaque",
+        "expression",
+        "location"
       ],
       "title": "Toolset",
       "type": "object"

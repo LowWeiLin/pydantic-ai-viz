@@ -14,6 +14,7 @@ import type {
   GraphEdge,
   GraphNode,
   Message,
+  Provenance,
   Span,
   SpanKind,
   SpanStatus,
@@ -466,7 +467,7 @@ export type CanvasDelegation = {
    * `pending`: a run shows this delegation, but later than the replay position. The blueprint
    * in a recording is the final one, so without this the edge would be solid from the start.
    */
-  evidence: "static" | "observed" | "pending";
+  evidence: Provenance | "pending";
   /** True while the delegated run is in flight. */
   active: boolean;
 };
@@ -573,6 +574,8 @@ export function canvasModel(
           kind: "other",
           wrappers: [],
           opaque: false,
+          expression: null,
+          location: null,
         };
         group = { toolset, tools: [] };
         groups.set(tool.toolset, group);

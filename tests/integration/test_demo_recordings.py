@@ -92,7 +92,7 @@ def test_a_demo_recording_is_a_complete_valid_session_log(recorded: dict[str, tu
     spans = final_spans(events)
     assert root_of(spans)["status"] == "ok"
     # Introspection understood every agent and graph of the demo: nothing degraded.
-    assert all(e["agent"]["warnings"] == [] and e["agent"]["source"] == "static" for e in events if "agent" in e)
+    assert all(e["agent"]["warnings"] == [] and e["agent"]["source"] == "object" for e in events if "agent" in e)
     assert all(e["graph"]["warnings"] == [] for e in events if "graph" in e)
     # No span fell through the normaliser as an unknown kind.
     assert "other" not in {span["kind"] for span in spans.values()}
@@ -170,7 +170,7 @@ def test_support_shows_parallel_tools_a_retry_a_delegation_and_structured_output
         e["agent"]["delegates"] for e in events if e["type"] == "blueprint.agent" and e["agent"]["name"] == "triage"
     ]
     refunds_id = last_blueprints(events)["refunds"]["id"]
-    assert edges[0] == [{"tool_name": "escalate_refund", "agent_id": refunds_id, "evidence": "static"}]
+    assert edges[0] == [{"tool_name": "escalate_refund", "agent_id": refunds_id, "evidence": "object"}]
     assert edges[-1] == [{"tool_name": "escalate_refund", "agent_id": refunds_id, "evidence": "observed"}]
     (escalate,) = (tool for tool in tools if tool["name"] == "escalate_refund")
     (refunds,) = children(spans, escalate, "agent_run")

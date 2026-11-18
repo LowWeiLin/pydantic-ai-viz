@@ -46,8 +46,10 @@ class Recording {
       pviz: 1,
       session_id: this.hex(32),
       title,
+      mode: "capture",
       include_content: content,
       stream,
+      notices: [],
       versions: VERSIONS,
     };
   }
@@ -333,7 +335,8 @@ const tool = (name, toolset, description, parameters, extra = {}) => ({
   is_async: true,
   max_retries: null,
   function: null,
-  origin: "static",
+  origin: "object",
+  location: null,
   ...extra,
 });
 
@@ -351,33 +354,47 @@ const BUILTIN_CAPABILITIES = [
   { name: "PendingMessageDrainCapability", builtin: true },
 ];
 
-const agent = (fields) => ({
-  description: null,
-  source: "static",
-  deps_type: null,
-  instructions: [],
-  toolsets: [],
-  tools: [],
-  native_tools: [],
-  output: {
-    mode: "text",
-    allows_text: true,
-    type_name: "str",
-    json_schema: { type: "string" },
-    tool_names: [],
-  },
-  capabilities: BUILTIN_CAPABILITIES,
-  settings: {
-    model_settings: null,
-    end_strategy: "early",
-    tool_retries: 1,
-    output_retries: 1,
-    tool_timeout: null,
-  },
-  delegates: [],
-  warnings: [],
-  ...fields,
+/** Adds the fields that only static analysis fills in, so the blueprints below list what matters. */
+const unlocated = (item) => ({ ...item, expression: null, location: null });
+
+const complete = (blueprint) => ({
+  ...blueprint,
+  model: blueprint.model && { ...blueprint.model, expression: null },
+  instructions: blueprint.instructions.map(unlocated),
+  toolsets: blueprint.toolsets.map(unlocated),
+  output: { ...blueprint.output, location: null },
+  settings: { ...blueprint.settings, expressions: {} },
 });
+
+const agent = (fields) =>
+  complete({
+    description: null,
+    source: "object",
+    location: null,
+    deps_type: null,
+    instructions: [],
+    toolsets: [],
+    tools: [],
+    native_tools: [],
+    output: {
+      mode: "text",
+      allows_text: true,
+      type_name: "str",
+      json_schema: { type: "string" },
+      tool_names: [],
+    },
+    capabilities: BUILTIN_CAPABILITIES,
+    settings: {
+      model_settings: null,
+      end_strategy: "early",
+      tool_retries: 1,
+      output_retries: 1,
+      tool_timeout: null,
+    },
+    delegates: [],
+    warnings: [],
+    ...fields,
+  });
 
 const offlineModel = (name) => ({
   id: `function:${name}`,
@@ -608,16 +625,18 @@ function sample() {
     id: "g1",
     name: "pipeline",
     label: "pipeline",
+    source: "object",
+    location: null,
     state_type: `${pipelineMod}.Draft`,
     input_type: "str",
     output_type: "str",
     nodes: [
-      { id: "__start__", kind: "start", label: null, note: null },
-      { id: "write", kind: "step", label: "Write draft", note: null },
-      { id: "review", kind: "step", label: "Review", note: null },
-      { id: "decision", kind: "decision", label: null, note: "approved?" },
-      { id: "publish", kind: "step", label: "Publish", note: null },
-      { id: "__end__", kind: "end", label: null, note: null },
+      { id: "__start__", kind: "start", label: null, note: null, location: null },
+      { id: "write", kind: "step", label: "Write draft", note: null, location: null },
+      { id: "review", kind: "step", label: "Review", note: null, location: null },
+      { id: "decision", kind: "decision", label: null, note: "approved?", location: null },
+      { id: "publish", kind: "step", label: "Publish", note: null, location: null },
+      { id: "__end__", kind: "end", label: null, note: null, location: null },
     ],
     edges: [
       { source: "__start__", target: "write", label: null },
@@ -633,7 +652,7 @@ function sample() {
     warnings: [],
   };
 
-  rec.emit(1.2, { type: "blueprint.agent", agent: triage("static") });
+  rec.emit(1.2, { type: "blueprint.agent", agent: triage("object") });
   rec.emit(1.6, { type: "blueprint.agent", agent: refunds });
   rec.emit(2.1, { type: "blueprint.graph", graph: pipeline });
   rec.emit(2.5, { type: "blueprint.agent", agent: writer });

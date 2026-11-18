@@ -29,7 +29,7 @@ export function buildGraphFlow(
   const entries = new Map<string, GraphCanvasNode>(model.nodes.map((n) => [n.node.id, n]));
   for (const extra of model.unlisted) {
     entries.set(extra.nodeId, {
-      node: { id: extra.nodeId, kind: "step", label: null, note: null },
+      node: { id: extra.nodeId, kind: "step", label: null, note: null, location: null },
       activity: extra.activity,
       passes: 0,
     });
@@ -50,7 +50,7 @@ export function buildGraphFlow(
     height: node.height,
     data: {
       entry: entries.get(node.nodeId) ?? {
-        node: { id: node.nodeId, kind: node.kind, label: null, note: null },
+        node: { id: node.nodeId, kind: node.kind, label: null, note: null, location: null },
         activity: idleActivity,
         passes: 0,
       },
