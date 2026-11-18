@@ -1,0 +1,806 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import pytest
+from inline_snapshot import snapshot
+from pydantic import BaseModel
+from pydantic_ai import Agent, NativeOutput, PromptedOutput, RunContext, TextOutput, ToolOutput
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ExternalToolset, FunctionToolset, ToolsetTool
+
+import pydantic_ai_viz
+from pydantic_ai_viz import AgentBlueprint, blueprint
+from pydantic_ai_viz._introspect import agent_closure, find_delegates, introspect_agent
+from pydantic_ai_viz._models import Delegate, ModelInfo
+
+MODULE = __name__
+
+
+def _agent_blueprint(agent: Agent[Any, Any]) -> AgentBlueprint:
+    result = blueprint(agent)
+    assert isinstance(result, AgentBlueprint)
+    # The dump must satisfy the closed wire model (every field present, nothing extra).
+    assert AgentBlueprint.model_validate(result.model_dump(mode="json")) == result
+    return result
+
+
+# ------------------------------------------------------------ the full agent
+
+
+@dataclass
+class Deps:
+    user: str = "ann"
+
+
+class Answer(BaseModel):
+    """Final structured answer."""
+
+    city: str
+    temp_c: float
+
+
+def _scripted(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart("unused")])
+
+
+researcher = Agent(
+    TestModel(custom_output_text="research notes"),
+    name="researcher",
+    description="Looks things up",
+    instructions="You research.",
+)
+
+
+@researcher.tool_plain
+def lookup(topic: str) -> str:
+    """Look up a topic."""
+    return f"facts about {topic}"
+
+
+extra = FunctionToolset[Deps](id="extra_ts")
+
+
+@extra.tool_plain
+def add(a: int, b: int) -> int:
+    """Add two ints."""
+    return a + b
+
+
+main_agent = Agent(
+    FunctionModel(_scripted, model_name="scripted-fn"),
+    name="main",
+    description="Main demo agent",
+    deps_type=Deps,
+    output_type=Answer,
+    instructions="Static instructions.",
+    system_prompt="Static system prompt.",
+    toolsets=[extra],
+    retries=3,
+    tool_timeout=30,
+    model_settings={"temperature": 0.2},
+)
+
+
+@main_agent.instructions
+def dyn_instructions(ctx: RunContext[Deps]) -> str:
+    return f"User is {ctx.deps.user}."
+
+
+@main_agent.system_prompt
+def dyn_sysprompt(ctx: RunContext[Deps]) -> str:
+    return f"sys for {ctx.deps.user}"
+
+
+@main_agent.tool
+def get_weather(ctx: RunContext[Deps], city: str) -> dict[str, Any]:
+    """Get the weather.
+
+    Args:
+        city: The city name.
+    """
+    return {"city": city, "temp_c": 21.5}
+
+
+@main_agent.tool_plain(retries=2)
+def flaky(x: int) -> str:
+    """Fails the first time."""
+    return "ok"
+
+
+@main_agent.tool
+async def delegate_research(ctx: RunContext[Deps], topic: str) -> str:
+    """Delegate to the researcher agent."""
+    result = await researcher.run(f"research {topic}", usage=ctx.usage)
+    return result.output
+
+
+def test_full_agent_blueprint() -> None:
+    assert _agent_blueprint(main_agent).model_dump(mode="json") == snapshot(
+        {
+            "id": "a1",
+            "name": "main",
+            "label": "main",
+            "description": "Main demo agent",
+            "source": "static",
+            "model": {"id": "function:scripted-fn", "name": "scripted-fn", "provider": "function", "offline": True},
+            "deps_type": "test_introspect_agent.Deps",
+            "instructions": [
+                {"kind": "instructions", "dynamic": False, "text": "Static instructions.", "function": None},
+                {
+                    "kind": "instructions",
+                    "dynamic": True,
+                    "text": None,
+                    "function": "test_introspect_agent.dyn_instructions",
+                },
+                {"kind": "system_prompt", "dynamic": False, "text": "Static system prompt.", "function": None},
+                {
+                    "kind": "system_prompt",
+                    "dynamic": True,
+                    "text": None,
+                    "function": "test_introspect_agent.dyn_sysprompt",
+                },
+            ],
+            "toolsets": [
+                {
+                    "id": "ts0",
+                    "toolset_id": "<agent>",
+                    "label": "Agent tools",
+                    "kind": "agent",
+                    "wrappers": [],
+                    "opaque": False,
+                },
+                {
+                    "id": "ts1",
+                    "toolset_id": "extra_ts",
+                    "label": "FunctionToolset 'extra_ts'",
+                    "kind": "function",
+                    "wrappers": [],
+                    "opaque": False,
+                },
+            ],
+            "tools": [
+                {
+                    "name": "get_weather",
+                    "toolset": "ts0",
+                    "description": "Get the weather.",
+                    "parameters_schema": {
+                        "additionalProperties": False,
+                        "properties": {"city": {"description": "The city name.", "type": "string"}},
+                        "required": ["city"],
+                        "type": "object",
+                    },
+                    "return_schema": {"additionalProperties": True, "type": "object"},
+                    "kind": "function",
+                    "takes_ctx": True,
+                    "is_async": False,
+                    "max_retries": None,
+                    "function": "test_introspect_agent.get_weather",
+                    "origin": "static",
+                },
+                {
+                    "name": "flaky",
+                    "toolset": "ts0",
+                    "description": "Fails the first time.",
+                    "parameters_schema": {
+                        "additionalProperties": False,
+                        "properties": {"x": {"type": "integer"}},
+                        "required": ["x"],
+                        "type": "object",
+                    },
+                    "return_schema": {"type": "string"},
+                    "kind": "function",
+                    "takes_ctx": False,
+                    "is_async": False,
+                    "max_retries": 2,
+                    "function": "test_introspect_agent.flaky",
+                    "origin": "static",
+                },
+                {
+                    "name": "delegate_research",
+                    "toolset": "ts0",
+                    "description": "Delegate to the researcher agent.",
+                    "parameters_schema": {
+                        "additionalProperties": False,
+                        "properties": {"topic": {"type": "string"}},
+                        "required": ["topic"],
+                        "type": "object",
+                    },
+                    "return_schema": {"type": "string"},
+                    "kind": "function",
+                    "takes_ctx": True,
+                    "is_async": True,
+                    "max_retries": None,
+                    "function": "test_introspect_agent.delegate_research",
+                    "origin": "static",
+                },
+                {
+                    "name": "add",
+                    "toolset": "ts1",
+                    "description": "Add two ints.",
+                    "parameters_schema": {
+                        "additionalProperties": False,
+                        "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
+                        "required": ["a", "b"],
+                        "type": "object",
+                    },
+                    "return_schema": {"type": "integer"},
+                    "kind": "function",
+                    "takes_ctx": False,
+                    "is_async": False,
+                    "max_retries": None,
+                    "function": "test_introspect_agent.add",
+                    "origin": "static",
+                },
+            ],
+            "native_tools": ["tool_search"],
+            "output": {
+                "mode": "auto",
+                "allows_text": True,
+                "type_name": "Answer",
+                "json_schema": {
+                    "description": "Final structured answer.",
+                    "properties": {
+                        "city": {"title": "City", "type": "string"},
+                        "temp_c": {"title": "Temp C", "type": "number"},
+                    },
+                    "required": ["city", "temp_c"],
+                    "title": "Answer",
+                    "type": "object",
+                },
+                "tool_names": ["final_result"],
+            },
+            "capabilities": [
+                {"name": "ToolSearch", "builtin": True},
+                {"name": "PendingMessageDrainCapability", "builtin": True},
+            ],
+            "settings": {
+                "model_settings": {"temperature": 0.2},
+                "end_strategy": "graceful",
+                "tool_retries": 3,
+                "output_retries": 3,
+                "tool_timeout": 30.0,
+            },
+            "delegates": [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "static"}],
+            "warnings": [],
+        }
+    )
+
+
+# -------------------------------------------------------------------- models
+
+
+def test_model_instance() -> None:
+    assert _agent_blueprint(Agent(TestModel())).model == snapshot(
+        ModelInfo(id="test:test", name="test", provider="test", offline=True)
+    )
+
+
+def test_model_string_with_deferred_check_is_not_resolved() -> None:
+    agent = Agent("openai:gpt-5.2", defer_model_check=True)
+    assert _agent_blueprint(agent).model == snapshot(
+        ModelInfo(id="openai:gpt-5.2", name="gpt-5.2", provider="openai", offline=False)
+    )
+    assert agent.model == "openai:gpt-5.2"
+
+
+def test_model_string_without_provider_prefix() -> None:
+    agent = Agent("test", defer_model_check=True)
+    assert _agent_blueprint(agent).model == snapshot(ModelInfo(id="test", name="test", provider=None, offline=False))
+
+
+def test_model_none() -> None:
+    assert _agent_blueprint(Agent()).model is None
+
+
+def test_offline_flag_follows_the_provider() -> None:
+    assert _agent_blueprint(Agent("function:x", defer_model_check=True)).model == snapshot(
+        ModelInfo(id="function:x", name="x", provider="function", offline=True)
+    )
+
+
+# -------------------------------------------------------------------- output
+
+
+class Left(BaseModel):
+    x: int
+
+
+class Right(BaseModel):
+    y: str
+
+
+def shout(text: str) -> str:
+    return text.upper()
+
+
+def test_text_output() -> None:
+    assert _agent_blueprint(Agent()).output.model_dump() == snapshot(
+        {"mode": "text", "allows_text": True, "type_name": "str", "json_schema": {"type": "string"}, "tool_names": []}
+    )
+
+
+def test_structured_output() -> None:
+    assert _agent_blueprint(Agent(output_type=Left)).output.model_dump() == snapshot(
+        {
+            "mode": "auto",
+            "allows_text": True,
+            "type_name": "Left",
+            "json_schema": {
+                "properties": {"x": {"title": "X", "type": "integer"}},
+                "required": ["x"],
+                "title": "Left",
+                "type": "object",
+            },
+            "tool_names": ["final_result"],
+        }
+    )
+
+
+def test_multi_output() -> None:
+    assert _agent_blueprint(Agent(output_type=[Left, Right])).output.model_dump() == snapshot(
+        {
+            "mode": "auto",
+            "allows_text": True,
+            "type_name": "Left | Right",
+            "json_schema": {
+                "anyOf": [
+                    {
+                        "properties": {"x": {"title": "X", "type": "integer"}},
+                        "required": ["x"],
+                        "title": "Left",
+                        "type": "object",
+                    },
+                    {
+                        "properties": {"y": {"title": "Y", "type": "string"}},
+                        "required": ["y"],
+                        "title": "Right",
+                        "type": "object",
+                    },
+                ]
+            },
+            "tool_names": ["final_result_Left", "final_result_Right"],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("output_type", "expected"),
+    [
+        (
+            Left | Right,
+            snapshot(
+                {
+                    "mode": "auto",
+                    "allows_text": True,
+                    "type_name": "Left | Right",
+                    "tool_names": ["final_result_Left", "final_result_Right"],
+                }
+            ),
+        ),
+        (
+            ToolOutput(Left, name="give_left"),
+            snapshot({"mode": "tool", "allows_text": False, "type_name": "Left", "tool_names": ["give_left"]}),
+        ),
+        (NativeOutput(Left), snapshot({"mode": "native", "allows_text": True, "type_name": "Left", "tool_names": []})),
+        (
+            PromptedOutput([Left, Right]),
+            snapshot({"mode": "prompted", "allows_text": True, "type_name": "Left | Right", "tool_names": []}),
+        ),
+        (TextOutput(shout), snapshot({"mode": "text", "allows_text": True, "type_name": "shout", "tool_names": []})),
+        (
+            [ToolOutput(Left, name="give_left"), Right, shout],
+            snapshot(
+                {
+                    "mode": "tool",
+                    "allows_text": False,
+                    "type_name": "Left | Right | shout",
+                    "tool_names": ["give_left", "final_result_Right", "final_result_shout"],
+                }
+            ),
+        ),
+        (
+            list[Left],
+            snapshot({"mode": "auto", "allows_text": True, "type_name": "list[Left]", "tool_names": ["final_result"]}),
+        ),
+    ],
+    ids=["union", "tool", "native", "prompted", "text-function", "mixed", "generic"],
+)
+def test_output_modes(output_type: Any, expected: dict[str, Any]) -> None:
+    output = _agent_blueprint(Agent(output_type=output_type)).output
+    assert output.json_schema is not None
+    assert output.model_dump(exclude={"json_schema"}) == expected
+
+
+# ------------------------------------------------- instructions and settings
+
+
+def test_instruction_order() -> None:
+    calls: list[str] = []
+    agent = Agent(instructions=["first", "second"], system_prompt=("sp one", "sp two"))
+
+    @agent.instructions
+    def late() -> str:
+        calls.append("instructions")
+        return "late"
+
+    @agent.system_prompt(dynamic=True)
+    async def fresh() -> str:
+        calls.append("system_prompt")
+        return "fresh"
+
+    assert [i.model_dump() for i in _agent_blueprint(agent).instructions] == snapshot(
+        [
+            {"kind": "instructions", "dynamic": False, "text": "first", "function": None},
+            {"kind": "instructions", "dynamic": False, "text": "second", "function": None},
+            {
+                "kind": "instructions",
+                "dynamic": True,
+                "text": None,
+                "function": "test_introspect_agent.test_instruction_order.<locals>.late",
+            },
+            {"kind": "system_prompt", "dynamic": False, "text": "sp one", "function": None},
+            {"kind": "system_prompt", "dynamic": False, "text": "sp two", "function": None},
+            {
+                "kind": "system_prompt",
+                "dynamic": True,
+                "text": None,
+                "function": "test_introspect_agent.test_instruction_order.<locals>.fresh",
+            },
+        ]
+    )
+    assert calls == []
+
+
+def test_agent_without_prompts_or_settings() -> None:
+    result = _agent_blueprint(Agent())
+    assert result.instructions == []
+    assert result.settings.model_dump() == snapshot(
+        {
+            "model_settings": None,
+            "end_strategy": "graceful",
+            "tool_retries": 1,
+            "output_retries": 1,
+            "tool_timeout": None,
+        }
+    )
+    assert result.deps_type is None
+    assert result.description is None
+
+
+def test_deps_type_is_qualified() -> None:
+    assert _agent_blueprint(Agent(deps_type=Deps)).deps_type == f"{MODULE}.Deps"
+    assert _agent_blueprint(Agent(deps_type=int)).deps_type == "int"
+    assert _agent_blueprint(Agent(deps_type=type(None))).deps_type is None
+
+
+# ------------------------------------------------------------------ toolsets
+
+kb = FunctionToolset[Any](id="kb")
+
+
+@kb.tool_plain
+def search(query: str) -> str:
+    """Search the knowledge base."""
+    return query
+
+
+maths = FunctionToolset[Any]()
+
+
+@maths.tool_plain
+async def plus(a: int, b: int) -> int:
+    return a + b
+
+
+frontend = ExternalToolset[Any](
+    [ToolDefinition(name="click", description="Click an element.", parameters_json_schema={"type": "object"})],
+    id="frontend",
+)
+
+
+class CustomToolset(AbstractToolset[Any]):
+    """A toolset whose tools exist only at run time."""
+
+    @property
+    def id(self) -> str | None:
+        return None
+
+    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+        raise AssertionError("introspection must not enumerate tools")
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+    ) -> Any:
+        raise AssertionError("introspection must not call tools")
+
+
+class FakeMCPToolset(CustomToolset):
+    """Stands in for ``pydantic_ai.mcp.MCPToolset``, which needs the ``mcp`` extra."""
+
+
+def per_run_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+    raise AssertionError("introspection must not resolve dynamic toolsets")
+
+
+def _toolset_agent() -> Agent[None, str]:
+    agent = Agent(
+        toolsets=[
+            CombinedToolset([kb.prefixed("kb").filtered(lambda ctx, tool_def: True), maths.renamed({"sum": "plus"})]),
+            frontend.approval_required(),
+            CustomToolset(),
+            FakeMCPToolset(),
+            per_run_toolset,
+        ]
+    )
+
+    @agent.tool_plain
+    def ping() -> str:
+        return "pong"
+
+    return agent
+
+
+def test_nested_wrapped_and_combined_toolsets() -> None:
+    result = _agent_blueprint(_toolset_agent())
+    assert [t.model_dump() for t in result.toolsets] == snapshot(
+        [
+            {
+                "id": "ts0",
+                "toolset_id": "<agent>",
+                "label": "Agent tools",
+                "kind": "agent",
+                "wrappers": [],
+                "opaque": False,
+            },
+            {
+                "id": "ts1",
+                "toolset_id": "kb",
+                "label": "FunctionToolset 'kb'",
+                "kind": "function",
+                "wrappers": ["FilteredToolset", "PrefixedToolset"],
+                "opaque": False,
+            },
+            {
+                "id": "ts2",
+                "toolset_id": None,
+                "label": "FunctionToolset",
+                "kind": "function",
+                "wrappers": ["RenamedToolset"],
+                "opaque": False,
+            },
+            {
+                "id": "ts3",
+                "toolset_id": "frontend",
+                "label": "ExternalToolset 'frontend'",
+                "kind": "other",
+                "wrappers": ["ApprovalRequiredToolset"],
+                "opaque": False,
+            },
+            {
+                "id": "ts4",
+                "toolset_id": None,
+                "label": "CustomToolset",
+                "kind": "other",
+                "wrappers": [],
+                "opaque": True,
+            },
+            {"id": "ts5", "toolset_id": None, "label": "FakeMCPToolset", "kind": "mcp", "wrappers": [], "opaque": True},
+            {
+                "id": "ts6",
+                "toolset_id": None,
+                "label": "DynamicToolset",
+                "kind": "dynamic",
+                "wrappers": [],
+                "opaque": True,
+            },
+        ]
+    )
+    assert [(t.name, t.toolset, t.kind, t.function) for t in result.tools] == snapshot(
+        [
+            ("ping", "ts0", "function", "test_introspect_agent._toolset_agent.<locals>.ping"),
+            ("kb_search", "ts1", "function", "test_introspect_agent.search"),
+            ("sum", "ts2", "function", "test_introspect_agent.plus"),
+            ("click", "ts3", "external", None),
+        ]
+    )
+    assert result.warnings == []
+
+
+def test_external_tools_have_no_python_function() -> None:
+    click = next(t for t in _agent_blueprint(_toolset_agent()).tools if t.name == "click")
+    assert click.model_dump() == snapshot(
+        {
+            "name": "click",
+            "toolset": "ts3",
+            "description": "Click an element.",
+            "parameters_schema": {"type": "object"},
+            "return_schema": None,
+            "kind": "external",
+            "takes_ctx": None,
+            "is_async": None,
+            "max_retries": None,
+            "function": None,
+            "origin": "static",
+        }
+    )
+
+
+def test_empty_agent_toolset_is_left_out() -> None:
+    result = _agent_blueprint(Agent(toolsets=[kb]))
+    assert [(t.id, t.kind) for t in result.toolsets] == [("ts0", "function")]
+
+
+def test_broken_toolset_becomes_opaque_with_a_warning() -> None:
+    class Exploding(FunctionToolset[Any]):
+        @property
+        def tools(self) -> dict[str, Any]:  # pyright: ignore[reportIncompatibleVariableOverride]
+            raise RuntimeError("boom")
+
+        @tools.setter
+        def tools(self, value: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleVariableOverride]
+            pass
+
+    result = _agent_blueprint(Agent(toolsets=[Exploding(id="bad"), kb]))
+    assert [t.model_dump() for t in result.toolsets] == snapshot(
+        [
+            {
+                "id": "ts0",
+                "toolset_id": "bad",
+                "label": "Exploding 'bad'",
+                "kind": "other",
+                "wrappers": [],
+                "opaque": True,
+            },
+            {
+                "id": "ts1",
+                "toolset_id": "kb",
+                "label": "FunctionToolset 'kb'",
+                "kind": "function",
+                "wrappers": [],
+                "opaque": False,
+            },
+        ]
+    )
+    assert result.warnings == snapshot(["toolset Exploding could not be inspected (RuntimeError: boom)"])
+    assert [t.name for t in result.tools] == ["search"]
+
+
+def test_tools_from_methods_and_builtins() -> None:
+    class Service:
+        async def fetch(self, key: str) -> str:
+            return key
+
+    result = _agent_blueprint(Agent(tools=[Service().fetch, len]))
+    assert [(t.name, t.is_async, t.function) for t in result.tools] == snapshot(
+        [
+            ("fetch", True, "test_introspect_agent.test_tools_from_methods_and_builtins.<locals>.Service.fetch"),
+            ("len", False, "len"),
+        ]
+    )
+
+
+# -------------------------------------------------------------- capabilities
+
+
+def test_builtin_capabilities_are_flagged() -> None:
+    result = _agent_blueprint(Agent(capabilities=[Hooks()]))
+    assert [c.model_dump() for c in result.capabilities] == snapshot(
+        [
+            {"name": "ToolSearch", "builtin": True},
+            {"name": "PendingMessageDrainCapability", "builtin": True},
+            {"name": "Hooks", "builtin": False},
+        ]
+    )
+    assert result.native_tools == snapshot(["tool_search"])
+
+
+# ---------------------------------------------------------------- delegation
+
+
+def test_delegation_through_a_global() -> None:
+    assert _agent_blueprint(main_agent).delegates == snapshot(
+        [Delegate(tool_name="delegate_research", agent_id="a2", evidence="static")]
+    )
+    assert find_delegates(main_agent) == [("delegate_research", researcher)]
+
+
+def _closure_agents() -> tuple[Agent[None, str], Agent[None, str], Agent[None, str]]:
+    writer = Agent(name="writer")
+    critic = Agent(name="critic")
+    planner = Agent(name="planner")
+
+    @planner.tool_plain
+    async def write(topic: str) -> str:
+        return (await writer.run(topic)).output
+
+    @planner.tool_plain
+    async def review(draft: str) -> str:
+        return (await critic.run(draft)).output
+
+    @critic.tool_plain
+    async def ask_planner(question: str) -> str:
+        return (await planner.run(question)).output
+
+    @writer.tool_plain
+    async def rewrite(draft: str) -> str:
+        return (await writer.run(draft)).output
+
+    return planner, writer, critic
+
+
+def test_delegation_through_a_closure_is_cycle_safe() -> None:
+    planner, writer, critic = _closure_agents()
+    assert agent_closure(planner) == [planner, writer, critic]
+    assert [d.model_dump() for d in _agent_blueprint(planner).delegates] == snapshot(
+        [
+            {"tool_name": "write", "agent_id": "a2", "evidence": "static"},
+            {"tool_name": "review", "agent_id": "a3", "evidence": "static"},
+        ]
+    )
+    # Seen from the critic, the numbering restarts: it is "a1" and the planner "a2".
+    assert [d.model_dump() for d in _agent_blueprint(critic).delegates] == snapshot(
+        [{"tool_name": "ask_planner", "agent_id": "a2", "evidence": "static"}]
+    )
+    # A tool that calls its own agent points back at the root.
+    assert [d.model_dump() for d in _agent_blueprint(writer).delegates] == snapshot(
+        [{"tool_name": "rewrite", "agent_id": "a1", "evidence": "static"}]
+    )
+
+
+def test_delegation_through_a_renamed_tool_uses_the_visible_name() -> None:
+    helper = Agent(name="helper")
+    tools = FunctionToolset[Any]()
+
+    @tools.tool_plain
+    async def ask(question: str) -> str:
+        return (await helper.run(question)).output
+
+    result = _agent_blueprint(Agent(toolsets=[tools.prefixed("team")]))
+    assert [d.model_dump() for d in result.delegates] == snapshot(
+        [{"tool_name": "team_ask", "agent_id": "a2", "evidence": "static"}]
+    )
+
+
+def test_session_seam_ids_and_labels_come_from_the_caller() -> None:
+    planner, writer, critic = _closure_agents()
+    ids = {id(writer): "a9"}
+    result = introspect_agent(planner, id="a7", label="my_planner", delegate_id=lambda agent: ids.get(id(agent)))
+    assert result.id == "a7"
+    assert result.label == "planner"
+    # The critic has no id, so its edge is dropped rather than left dangling.
+    assert [d.model_dump() for d in result.delegates] == snapshot(
+        [{"tool_name": "write", "agent_id": "a9", "evidence": "static"}]
+    )
+    assert critic.name == "critic"
+
+
+# --------------------------------------------------------------------- label
+
+
+def test_label_falls_back_to_the_caller_label_then_to_the_ordinal() -> None:
+    unnamed = Agent()
+    assert _agent_blueprint(unnamed).label == "agent-1"
+    assert introspect_agent(unnamed, id="a12", delegate_id=lambda agent: None).label == "agent-12"
+    assert introspect_agent(unnamed, id="a12", label="triage", delegate_id=lambda agent: None).label == "triage"
+    assert _agent_blueprint(unnamed).name is None
+
+
+# -------------------------------------------------------------------- purity
+
+
+def test_blueprint_is_pure() -> None:
+    agent = Agent()
+    first = _agent_blueprint(agent)
+    assert agent.name is None, "introspection must not trigger name inference"
+    assert _agent_blueprint(agent) == first
+    assert first.source == "static"
+
+
+def test_public_exports() -> None:
+    assert {"blueprint", "AgentBlueprint", "GraphBlueprint", "__version__"} <= set(pydantic_ai_viz.__all__)
