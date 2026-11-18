@@ -91,7 +91,7 @@ Read more in the [documentation](https://lowweilin.github.io/pydantic-ai-viz/):
 | | Supported |
 |---|---|
 | Python | 3.11, 3.12, 3.13, 3.14 |
-| Pydantic AI | `pydantic-ai-slim>=2.70,<3` |
+| Pydantic AI | `pydantic-ai-slim>=2.60,<3` |
 | OpenTelemetry SDK | `opentelemetry-sdk>=1.30` |
 | OS | Linux, macOS, Windows |
 

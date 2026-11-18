@@ -5,7 +5,7 @@ A **run** is one top-level agent run (or graph run) and everything that happens 
 You do not wrap your agent or change how you call it. You start a session; from then on every agent run in the process is captured.
 
 <figure class="screenshot" markdown="span">
-  ![A run in progress: the timeline shows three tool calls running in parallel under the agent run](../assets/screenshots/run-timeline.png)
+  ![A run in progress in the research demo: three search tool calls run in parallel, each with a sub-agent run nested under it in the timeline](../assets/screenshots/run-timeline.png)
 </figure>
 
 ## Start a session
@@ -99,13 +99,14 @@ The run's token total in the sidebar is the sum over its model requests, includi
 
 ## Read a run
 
-Select a row in the timeline (or press ++j++ and ++k++) to inspect it:
+Select a row in the timeline (or press ++j++ and ++k++) to inspect it. A click on a canvas node selects the latest span of that tool, model or agent. With nothing selected, the inspector shows the run itself.
 
 | Selection | Inspector tabs |
 |---|---|
 | Agent run | Conversation, Output, Usage, Raw |
 | Model request | Response, Input messages, Instructions, Usage, Raw |
-| Tool call | Arguments, Result, Error/Retry, Raw |
+| Tool call | Arguments, Result, Error / Retry, Raw |
+| Graph run, graph node | Inputs, Output, Raw |
 
 **Raw** shows the OpenTelemetry attributes of the span that were not turned into something more readable, which is useful when you want to know exactly what Pydantic AI recorded.
 
@@ -117,7 +118,7 @@ When a run involves several agents, the switcher above the canvas chooses whose 
 
 ## Go back in time
 
-The playback bar under the timeline scrubs through a run. Dragging it back shows the canvas, the timeline and the inspector exactly as they were at that moment, including half-streamed text. While you are watching the past, new events still arrive; press ++l++ or the **Live** button to jump back to now.
+The ruler along the top of the timeline is the scrubber, and the playback bar above it has play, step and speed controls. Dragging the ruler back shows the canvas, the timeline and the inspector exactly as they were at that moment, including half-streamed text. A recording plays from the start when you open it. In a live session, new events still arrive while you are watching the past; press ++l++ or the **Live** button to jump back to now.
 
 | Key | Action |
 |---|---|

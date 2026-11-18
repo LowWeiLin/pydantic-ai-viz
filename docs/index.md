@@ -12,8 +12,8 @@ See what your [Pydantic AI](https://ai.pydantic.dev/) agents **are** (the bluepr
     pydantic-ai-viz is a community project. It is not affiliated with or endorsed by Pydantic.
 
 <figure class="screenshot" markdown="span">
-  [![An agent run: the blueprint canvas with a tool call in progress, the span timeline and the inspector](assets/screenshots/hero-light.png#only-light)![An agent run: the blueprint canvas with a tool call in progress, the span timeline and the inspector](assets/screenshots/hero-dark.png#only-dark)](https://lowweilin.github.io/pydantic-ai-viz/demo/)
-  <figcaption>The support demo, mid-run. Click the image to open the live demo.</figcaption>
+  [![A finished agent run: the blueprint canvas with every tool marked done, the span timeline, and the inspector open on a retried tool call](assets/screenshots/hero-light.png#only-light)![A finished agent run: the blueprint canvas with every tool marked done, the span timeline, and the inspector open on a retried tool call](assets/screenshots/hero-dark.png#only-dark)](https://lowweilin.github.io/pydantic-ai-viz/demo/)
+  <figcaption>The support demo after its run, with the retried tool call selected. Click the image to open the live demo.</figcaption>
 </figure>
 
 ## Three commands
@@ -85,4 +85,4 @@ Recordings and exports
 
 ## Requirements
 
-Python 3.11 or newer and Pydantic AI 2.70 or newer (`pydantic-ai-slim>=2.70,<3`). See [Compatibility](reference/compatibility.md) for exactly what was tested.
+Python 3.11 or newer and Pydantic AI 2.60 or newer (`pydantic-ai-slim>=2.60,<3`). See [Compatibility](reference/compatibility.md) for exactly what was tested.

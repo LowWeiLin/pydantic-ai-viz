@@ -54,6 +54,8 @@ The listener is attached to the agents the session knows about: the ones you pas
 
 An agent the session only learns about from its runs is captured as usual (its spans are process-wide), but without token streaming. Pass it as a target if you want its tokens.
 
+`pydantic-ai-viz run --stream` cannot be handed the script's agents in advance, so it attaches the listener to every agent the script creates, at the moment it is created. Agents that already exist before the script starts (in a module imported earlier, for example) are not covered.
+
 ## Turning it off again
 
 Two things to know:
@@ -65,4 +67,4 @@ In a test suite, keep `stream=True` to the tests that are about streaming, and u
 
 ## Streaming and content capture
 
-Token streaming carries response text by nature. If you turn content capture off with `include_content=False`, leave `stream` off too. See [Privacy](privacy.md).
+A token is content. With `include_content=False` (or `--no-content`), `stream` has no effect: no listener is attached, model requests are not switched to streaming, no token event is recorded, and `session.stream` is `False`. See [Privacy](privacy.md).

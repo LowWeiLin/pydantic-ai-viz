@@ -3,7 +3,7 @@
 pydantic-ai-viz draws [`pydantic-graph`](https://ai.pydantic.dev/graph/) graphs built with `GraphBuilder`: the blueprint without running anything, and the active node during a run.
 
 <figure class="screenshot" markdown="span">
-  ![A graph run: the review node is active, the write node shows two visits, and a decision diamond leads to publish](../assets/screenshots/graph.png)
+  ![A finished graph run: the write and review steps show two visits each, a decision diamond leads to publish, and the loop back to write is drawn underneath](../assets/screenshots/graph.png)
 </figure>
 
 ## Draw a graph
@@ -67,6 +67,8 @@ async def run_pipeline(brief: str) -> str:
 ```
 
 The graph is registered with the session the first time it runs, so passing it to `serve` is optional. Passing it just makes the blueprint visible before the first run.
+
+Give the graph a name (`GraphBuilder(name="pipeline", ...)`). An unnamed graph is labelled with its variable name when it was found in a module or file, and `graph-1`, `graph-2`, ... otherwise; `run_graph` does not let `pydantic-graph` guess a name from the calling code.
 
 ## Limit: parallel steps
 

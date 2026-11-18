@@ -46,7 +46,7 @@ Keep in mind:
 
 - **It is decided at capture time.** The content is never recorded, so it cannot leak later. For the same reason, a recording made with content cannot be redacted afterwards. Capture the run again.
 - **Blueprints are not redacted.** Static instructions, system prompts, tool descriptions and schemas are part of the blueprint and are still shown. They describe your code, not your data, but check them before sharing.
-- **Leave `stream` off.** [Token streaming](token-streaming.md) carries response text by nature.
+- **Token streaming is off.** A token is content, so `stream=True` (or `--stream`) has no effect when content capture is off. See [Token streaming](token-streaming.md#streaming-and-content-capture).
 - **With `instrument=False` your own settings apply.** If you instrument Pydantic AI yourself or through Logfire, the `include_content` of that configuration decides what the spans contain. See [Use with Logfire](logfire.md).
 
 ## The local server
@@ -60,7 +60,7 @@ Keep in mind:
 
 !!! danger "Binding another host"
 
-    `serve(host="0.0.0.0")` makes the session, with all its prompts and tool results, readable by anyone who can reach the machine, without a password, and turns the `Host` check off. A warning is printed when you do this. To look at a session on a remote machine, prefer an SSH tunnel to its loopback port:
+    `serve(host="0.0.0.0")` makes the session, with all its prompts and tool results, readable by anyone who can reach the machine, without a password, and turns the `Host` check off. Python issues a `UserWarning` when you do this. To look at a session on a remote machine, prefer an SSH tunnel to its loopback port:
 
     ```bash
     ssh -L 8765:127.0.0.1:8765 you@remote-host

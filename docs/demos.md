@@ -33,7 +33,7 @@ What to watch for:
 
 1. **Streaming.** The first response arrives word by word, followed by the arguments of three tool calls.
 2. **Parallel tool calls.** `get_order`, `recent_tickets` and `search_kb` start together and appear as overlapping siblings in the timeline.
-3. **A retry.** The model asked for order `1042`; the tool wants `A-1042` and raises `ModelRetry`. The `get_order` node turns amber, the model corrects itself, and the second attempt succeeds. Open the first attempt's **Error/Retry** tab to see the message the model was given.
+3. **A retry.** The model asked for order `1042`; the tool wants `A-1042` and raises `ModelRetry`. The `get_order` node turns amber, the model corrects itself, and the second attempt succeeds. Open the first attempt's **Error / Retry** tab to see the message the model was given.
 4. **Delegation.** `escalate_refund` runs the `refunds` agent. Before the run, the edge between them is dashed, because it was only read from the code. When the delegation happens it turns solid. The `refunds` run is nested under the tool call in the timeline.
 5. **Structured output.** The run ends with a `Resolution`. The output node lights up; select it to see the schema, or select the agent run to see the value.
 6. **Token totals.** `refunds` is called with `usage=ctx.usage`. The run total still counts every token once.

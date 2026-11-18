@@ -52,11 +52,11 @@ with pviz.serve(agent, open_browser=True) as session:
 | Parameter | Meaning |
 |---|---|
 | `*targets` | Agents, graphs and modules to draw before any run. Capture covers every agent in the process whether or not it is listed. |
-| `host` | Address to bind. A non-loopback address prints a warning and exposes the session to the network without authentication. |
+| `host` | Address to bind. A non-loopback address issues a `UserWarning` and exposes the session to the network without authentication. |
 | `port` | Port to bind. If it is busy, a free port is used instead. `0` always picks a free port. The real address is `session.url`. |
 | `open_browser` | Open the viewer in the default browser. |
 | `include_content` | Capture prompts, instructions, tool arguments, tool results and outputs. `False` captures structure, timing and token counts only. Applies when `instrument=True`. |
-| `stream` | Capture tokens as they arrive. This switches the agents' model requests to streaming; see [Token streaming](../guides/token-streaming.md). |
+| `stream` | Capture tokens as they arrive. This switches the agents' model requests to streaming; see [Token streaming](../guides/token-streaming.md). Has no effect with `include_content=False`, because tokens are content. |
 | `instrument` | `True`: call `Agent.instrument_all(...)` with a private tracer provider. `False`: touch nothing global; you add `session.span_processor` to your own provider. See [Use with Logfire](../guides/logfire.md). |
 | `title` | Session title, shown in the viewer and used for download file names. |
 | `max_events` | Upper bound on the in-memory event log. Past it, the oldest finished runs are dropped whole. |
@@ -86,7 +86,7 @@ with pviz.record(agent) as session:
     session.save("run.pviz.jsonl")
 ```
 
-The parameters mean the same as for `serve`, and the same one-active-session rule applies.
+The parameters mean the same as for `serve`, and the same rule applies: one instrumenting session at a time. Sessions opened with `instrument=False` are not limited.
 
 Guide: [Export and share](../guides/export-and-share.md).
 
@@ -165,11 +165,16 @@ The object returned by [`serve`](#serve) and [`record`](#record). It owns the ev
 class Session:
     url: str | None
     title: str
+    session_id: str
+    include_content: bool
+    stream: bool
 
     @property
     def events(self) -> list[dict[str, Any]]: ...
     @property
     def span_processor(self) -> SpanProcessor: ...
+    @property
+    def closed(self) -> bool: ...
 
     def register(self, *targets: Target) -> None: ...
     def save(self, path: str | os.PathLike[str]) -> Path: ...
@@ -182,13 +187,16 @@ class Session:
 |---|---|
 | `url` | Address of the viewer, for example `"http://127.0.0.1:8765"`. `None` for a session from `record`. |
 | `title` | The session title. |
-| `events` | A snapshot of the event log: a new list of JSON-ready dictionaries, one per event, in order. The shapes are in the [wire format](wire-format.md). |
+| `session_id` | 32 hexadecimal characters, new for every session. It is the `session_id` of the `session.started` event. |
+| `include_content`, `stream` | What the session captures. `stream` is `False` whenever `include_content` is `False`. |
+| `events` | A snapshot of the event log: a new list of JSON-ready dictionaries, one per event, in order. Still readable after `close()`. Treat the dictionaries as read-only. The shapes are in the [wire format](wire-format.md). |
 | `span_processor` | An OpenTelemetry `SpanProcessor` that feeds this session. Only needed with `instrument=False`: add it to your own tracer provider. |
 | `register(*targets)` | Draw more agents, graphs or modules. An agent's delegates, as far as its code shows, are registered with it. A module contributes its top-level agents and graphs, labelled by variable name when they have no `name`. Registering an object twice does nothing. |
 | `save(path)` | Write the event log as a `.pviz.jsonl` recording. Returns the path. |
 | `export_html(path)` | Write the event log as a single-file HTML export. Returns the path. |
-| `wait()` | Block until ++ctrl+c++. Use it to keep a script alive while you look at the viewer. |
-| `close()` | Stop the server and end the session. Safe to call more than once. If the session turned instrumentation on, it turns it off again. |
+| `wait()` | Block until ++ctrl+c++, or until the session is closed from another thread. Use it to keep a script alive while you look at the viewer. |
+| `close()` | Stop the server and end the session. Safe to call more than once. If the session installed its instrumentation setting, the setting that was there before is put back (off, if there was none). |
+| `closed` | `True` once `close()` has run. |
 
 ## AgentBlueprint { #agentblueprint }
 

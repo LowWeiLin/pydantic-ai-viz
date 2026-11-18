@@ -84,6 +84,24 @@ uv run python scripts/build_demo_site.py --out site/demo
 uv run pytest tests/integration -q
 ```
 
+`tests/integration` runs real processes: the command line, the examples and the demo server. Two of its tests need the built viewer, and one of those also needs node and a Playwright Chromium, because it opens the live demo in a browser. Without them these tests are skipped. Set `PVIZ_REQUIRE_BROWSER_TESTS=1` to turn a skip into a failure, as the CI end-to-end job does.
+
+To run the viewer's Playwright specs over the real demo recordings as well as the fixtures, point them at the demo site:
+
+```bash
+PVIZ_RECORDINGS_DIR="$PWD/site/demo/recordings" PVIZ_SCREENSHOTS_DIR="$PWD/web/test-results/screenshots" pnpm --dir web e2e
+```
+
+### Older Pydantic AI versions
+
+The lock file pins the newest Pydantic AI the project was tested with; the declared floor is older. To run the suite against another release without touching the lock file:
+
+```bash
+uv run --with "pydantic-ai-slim==2.60.0" pytest -q
+```
+
+If you raise or lower the floor in `pyproject.toml`, run the suite against the new floor this way and update the table in `docs/reference/compatibility.md` with what you ran. Never declare a floor that was not run.
+
 ### Docs
 
 ```bash

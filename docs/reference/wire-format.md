@@ -38,7 +38,7 @@ type SessionStarted = {
   session_id: string;          // 32 hex characters, new for every session
   title: string;
   include_content: boolean;
-  stream: boolean;             // token streaming enabled
+  stream: boolean;             // token streaming enabled; always false when include_content is false
   versions: { pydantic_ai_viz: string; pydantic_ai: string; python: string };
 };
 

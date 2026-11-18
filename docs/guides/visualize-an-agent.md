@@ -77,7 +77,7 @@ Output node
 
 Delegation edges
 
-:   An edge from a tool to another agent's card means "this tool runs that agent".
+:   An edge from a tool to another agent's card means "this tool runs that agent". The other agent is drawn in its own row underneath, one step to the right, with its own tools and output.
 
     - A **dashed** edge was found by reading the tool function's code. It is a good guess.
     - A **solid** edge was seen happening in a run. It is a fact.

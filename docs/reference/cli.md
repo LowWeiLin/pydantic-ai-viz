@@ -107,7 +107,7 @@ If the script raises, the traceback is printed and the server keeps running, so 
 | `SCRIPT` | Path to a Python file. |
 | `ARGS...` | Passed to the script unchanged. |
 | `--stream` | Capture tokens as they arrive. This switches model requests to streaming; see [Token streaming](../guides/token-streaming.md). |
-| `--no-content` | Capture structure, timing and token counts, but no prompts, arguments or results. See [Privacy](../guides/privacy.md). |
+| `--no-content` | Capture structure, timing and token counts, but no prompts, arguments or results. Turns `--stream` off as well, because tokens are content. See [Privacy](../guides/privacy.md). |
 | `--record OUT.pviz.jsonl` | Write a recording when the script ends. |
 | `--export OUT.html` | Write a single-file HTML export when the script ends. |
 | `--port N` | Port for the server. Default `8765`. If it is busy, a free port is used. |

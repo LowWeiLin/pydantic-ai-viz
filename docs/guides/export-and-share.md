@@ -90,13 +90,13 @@ recordings/refund-flow.pviz.jsonl
       "id": "refund-flow",
       "title": "Refund flow",
       "description": "Triage hands a damaged order to the refunds agent.",
-      "src": "recordings/refund-flow.pviz.jsonl"
+      "src": "refund-flow.pviz.jsonl"
     }
   ]
 }
 ```
 
-The page then shows a card per recording. `index.html?src=recordings/refund-flow.pviz.jsonl` opens one directly; `src` must be on the same origin as the page. The [hosted demo](../demos.md) is built exactly this way.
+The page then shows a card per recording. In the index, `src` is relative to the `recordings/` directory. `index.html?src=recordings/refund-flow.pviz.jsonl` opens one directly; that address is relative to the page and must be on the same origin. The [hosted demo](../demos.md) is built exactly this way.
 
 ## Before you share
 
@@ -106,7 +106,7 @@ The page then shows a card per recording. `index.html?src=recordings/refund-flow
 
 ## Using recordings in tests
 
-A recording is line-delimited JSON, and `session.events` gives you the same events as Python dictionaries without touching the disk:
+A recording is line-delimited JSON, and `session.events` gives you the same events as Python dictionaries without touching the disk. The log stays readable after the session is closed:
 
 ```python
 import pydantic_ai_viz as pviz
