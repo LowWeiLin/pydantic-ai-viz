@@ -874,7 +874,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.30" },
-    { name = "pydantic-ai-slim", specifier = ">=2.70,<3" },
+    { name = "pydantic-ai-slim", specifier = ">=2.60,<3" },
 ]
 
 [package.metadata.requires-dev]
