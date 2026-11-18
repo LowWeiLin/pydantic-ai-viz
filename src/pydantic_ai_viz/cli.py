@@ -194,6 +194,7 @@ def _run(args: argparse.Namespace) -> int:
         # The script's agents are not known until it has run, so with --stream the token
         # listener goes on each agent as the script creates it.
         listening = attach_on_creation() if session.stream else contextlib.nullcontext()
+        interrupted = False
         try:
             with script_environment(script, [str(script), *args.args]), listening:
                 namespace = runpy.run_path(str(script), run_name="__main__")
@@ -203,10 +204,16 @@ def _run(args: argparse.Namespace) -> int:
         except Exception as exc:
             _say(_script_traceback(exc, script), sys.stderr)
             _say(f"{script.name} raised {type(exc).__name__}; still serving what was captured.", sys.stderr)
+        except KeyboardInterrupt:
+            # Ctrl+C is the only way to end a script that loops, and what it did until then is
+            # still wanted. The outputs are written, but there is no wait: one Ctrl+C ends the command.
+            interrupted = True
+            _say(f"{script.name} interrupted.", sys.stderr)
         # Full blueprints for whatever the script left behind; the runs themselves were captured live.
         session.register(namespace_module(script.stem, namespace))
         _write_outputs(session, args)
-        session.wait()
+        if not interrupted:
+            session.wait()
     return EXIT_OK
 
 

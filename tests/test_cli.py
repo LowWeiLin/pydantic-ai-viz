@@ -696,13 +696,32 @@ def test_run_on_a_script_that_exits_keeps_serving(
     assert ("exited" in err) == bool(note)
 
 
-def test_run_interrupted_stops_with_exit_1(
-    capsys: pytest.CaptureFixture[str], script: Callable[[str], Path], serving: Callable[[Watch], list[Session]]
+def test_run_interrupted_still_writes_the_outputs_then_stops(
+    capsys: pytest.CaptureFixture[str],
+    script: Callable[[str], Path],
+    serving: Callable[[Watch], list[Session]],
+    tmp_path: Path,
 ) -> None:
+    # Ctrl+C is the only way to end a script that loops (a chat loop, a worker), so it must not
+    # cost the recording. One Ctrl+C still ends the command: there is no wait afterwards.
     served = serving(lambda session: None)
-    code, _, err = run_cli(capsys, "run", "--no-open", "--port", "0", str(script("raise KeyboardInterrupt")))
-    assert code == 1
-    assert err == "pydantic-ai-viz: error: interrupted\n"
+    code, out, err = run_cli(
+        capsys,
+        "run",
+        "--no-open",
+        "--port",
+        "0",
+        "--record",
+        "out.pviz.jsonl",
+        "--export",
+        "out.html",
+        str(script("raise KeyboardInterrupt")),
+    )
+    assert code == 0
+    assert err == "my_script.py interrupted.\n"
+    assert out.splitlines()[1:] == ["Wrote recording out.pviz.jsonl", "Wrote HTML export out.html"]
+    assert finished_runs(read_jsonl(tmp_path / "out.pviz.jsonl")) == 1
+    assert (tmp_path / "out.html").is_file()
     assert served == []
     assert active_session() is None
 
