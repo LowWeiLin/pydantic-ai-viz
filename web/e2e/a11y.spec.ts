@@ -6,8 +6,11 @@ import { AxeBuilder } from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import {
   BARE,
+  blueprintOnly,
   canvasNode,
+  dropConnection,
   FX,
+  manyBlueprints,
   openRun,
   PIPELINE,
   pauseAtBoundary,
@@ -152,6 +155,80 @@ const SCREENS: { name: string; open: (page: Page) => Promise<void> }[] = [
     },
   },
   {
+    name: "blueprint-only view, served: an agent read from source",
+    open: async (page) => {
+      await page.goto("/view/");
+      await page.waitForURL(/#\/agents\/a1/);
+      await expect(page.getByRole("region", { name: "About this view" })).toBeVisible();
+      await expect(canvasNode(page, "Agent reporter")).toBeVisible();
+    },
+  },
+  {
+    name: "blueprint-only view: expressions, warnings and the provenance key",
+    open: async (page) => {
+      await page.goto(blueprintOnly("#/agents/a2"));
+      await page.getByRole("button", { name: /^From source/ }).click();
+      await expect(page.getByRole("dialog", { name: "How a blueprint is known" })).toBeVisible();
+    },
+  },
+  {
+    name: "blueprint-only view: a tool whose type could not be followed",
+    open: async (page) => {
+      await page.goto(blueprintOnly("#/agents/a4"));
+      await canvasNode(page, "Tool lookup_source").click();
+      await expect(page.getByRole("table", { name: "Parameters of lookup_source" })).toBeVisible();
+    },
+  },
+  {
+    name: "blueprint-only view: a graph, with the session notices open",
+    open: async (page) => {
+      await page.goto(blueprintOnly("#/graphs/g1"));
+      await page.getByRole("button", { name: "1 notice" }).click();
+      await expect(page.getByRole("dialog", { name: "Session notices" })).toBeVisible();
+    },
+  },
+  {
+    name: "blueprint-only view: the server behind it has stopped",
+    open: async (page) => {
+      await page.goto("/view/");
+      await page.waitForURL(/#\/agents\/a1/);
+      await dropConnection(page);
+      await expect(page.getByText("The server behind this page has stopped.")).toBeVisible();
+    },
+  },
+  {
+    name: "a long blueprint list, filtered",
+    open: async (page) => {
+      await page.goto(manyBlueprints());
+      await page.getByRole("searchbox", { name: "Filter blueprints" }).fill("billing");
+      await expect(page.getByRole("navigation", { name: /Blueprints/ })).toContainText("6 of 36");
+    },
+  },
+  {
+    name: "a long blueprint list, nothing matches",
+    open: async (page) => {
+      await page.goto(manyBlueprints());
+      await page.getByRole("searchbox", { name: "Filter blueprints" }).fill("zzz");
+      await expect(page.getByText('No blueprint matches "zzz".')).toBeVisible();
+    },
+  },
+  {
+    name: "live session, waiting for a run",
+    open: async (page) => {
+      await page.goto("/live-hold-5/");
+      await expect(page.getByText("Waiting for a run")).toBeVisible();
+    },
+  },
+  {
+    name: "live session, connection lost",
+    open: async (page) => {
+      await page.goto("/live-hold-56/");
+      await page.waitForURL(/#\/runs\//);
+      await dropConnection(page);
+      await expect(page.getByText("Reconnecting...")).toBeVisible();
+    },
+  },
+  {
     name: "live session, run in progress",
     open: async (page) => {
       await page.goto("/live-hold-56/");
@@ -177,6 +254,23 @@ for (const scheme of ["light", "dark"] as const) {
 
 test.describe("narrow window", () => {
   test.use({ viewport: { width: 1024, height: 720 } });
+  test("at 1024 px a blueprint-only view has no serious violation and no sideways scroll", async ({
+    page,
+  }) => {
+    await page.goto(blueprintOnly("#/agents/a1"));
+    // Under 1024 px the inspector is a drawer, closed until asked for.
+    await page.setViewportSize({ width: 1000, height: 720 });
+    await page.reload();
+    await page.getByRole("button", { name: "Show blueprint details" }).click();
+    await expect(page.getByRole("region", { name: "Agent blueprint" })).toBeVisible();
+    await page.waitForTimeout(300);
+    await expectAccessible(page);
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    );
+    expect(overflow).toBe(false);
+  });
+
   test("at 1024 px the run view has no serious violation and no sideways scroll", async ({
     page,
   }) => {

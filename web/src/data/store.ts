@@ -148,17 +148,3 @@ export const useViewer = create<ViewerState>()((set) => ({
 export function resetViewer(): void {
   useViewer.setState(initialValues);
 }
-
-/** "Live", "Recording" or "Export": the mode chip in the top bar. Null before anything loads. */
-export function modeLabel(source: Source): "Live" | "Recording" | "Export" | null {
-  switch (source.kind) {
-    case "live":
-      return "Live";
-    case "recording":
-      return "Recording";
-    case "embedded":
-      return "Export";
-    default:
-      return null;
-  }
-}

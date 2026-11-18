@@ -153,22 +153,31 @@ describe("boot modes and states", () => {
 
     const source = sources.at(-1);
     act(() => source?.onopen?.());
-    expect(
-      await screen.findByRole("heading", { name: "Connected. Nothing to show yet." }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Nothing to show yet" })).toBeInTheDocument();
+    // "Live" is the one place that says the page is connected; an empty session has no lists.
     expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.queryByText(/Connected/)).toBeNull();
+    expect(screen.queryByRole("complementary", { name: "Blueprints and runs" })).toBeNull();
     expect(screen.getByRole("button", { name: "Run again" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
 
-    // Blueprints arrive: the blueprint shows, with a "waiting" strip above it.
+    // Blueprints arrive: the blueprint shows, with a "waiting" strip above it. The empty run
+    // list does not say the same thing a second time.
     const blueprintOnly = fixture("sample.pviz.jsonl").slice(0, 3);
     act(() => useViewer.getState().ingest(blueprintOnly));
     await waitFor(() => expect(window.location.hash).toBe("#/agents/a1"));
     expect(screen.getByText("Waiting for a run")).toBeInTheDocument();
+    const runList = screen.getByRole("navigation", { name: /Runs/ });
+    expect(runList).toHaveTextContent(/^Runs0$/);
 
+    // The connection drops: the banner says so, and nothing claims to be live meanwhile.
     act(() => source?.onerror?.());
     expect(screen.getByText("Reconnecting...")).toBeInTheDocument();
+    expect(screen.queryByText("Live")).toBeNull();
     expect(screen.getByRole("heading", { level: 2, name: "triage" })).toBeInTheDocument();
+    act(() => source?.onopen?.());
+    expect(screen.queryByText("Reconnecting...")).toBeNull();
+    expect(screen.getByText("Live")).toBeInTheDocument();
   });
 
   test("a live session opens a run as it starts, shows it live, and follows the next one", async () => {
@@ -778,5 +787,194 @@ describe("shell behaviour", () => {
       </ErrorBoundary>,
     );
     expect(screen.getByText("recovered")).toBeInTheDocument();
+  });
+});
+
+describe("a blueprint-only session (pydantic-ai-viz view)", () => {
+  const NEWSROOM = "blueprint/newsroom.pviz.jsonl";
+  const viewPlan: BootPlan = { ...livePlan, rerunUrl: null };
+  /** The top bar. The screen and the inspector have headers of their own. */
+  const topBar = (): HTMLElement => {
+    const bar = screen.getByRole("link", { name: "pydantic-ai-viz home" }).closest("header");
+    if (!bar) throw new Error("expected the top bar");
+    return bar;
+  };
+  /** The words a session with runs uses. None of them is true of a blueprint-only view. */
+  const LIVE_WORDS = [
+    /\bLive\b/,
+    /Connect(ed|ing)/,
+    /Waiting for a run/,
+    /No runs/,
+    /Reconnecting/,
+  ];
+
+  test("served: it says what it is, why it has no runs, and never claims to be live", async () => {
+    const user = userEvent.setup();
+    const sources = stubEventSource();
+    render(<App plan={viewPlan} />);
+    act(() => sources.at(-1)?.onopen?.());
+    act(() => useViewer.getState().ingest(fixture(NEWSROOM)));
+    await waitFor(() => expect(window.location.hash).toBe("#/agents/a1"));
+
+    const bar = topBar();
+    expect(within(bar).getByRole("heading", { level: 1, name: "newsroom" })).toBeInTheDocument();
+    expect(within(bar).getByText("Blueprint")).toBeInTheDocument();
+    for (const words of LIVE_WORDS) expect(screen.queryByText(words)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+
+    // Where the runs would be, the sidebar explains the view instead.
+    const sidebar = screen.getByRole("complementary", { name: "Blueprints" });
+    expect(within(sidebar).queryByRole("navigation", { name: /Runs/ })).toBeNull();
+    const about = within(sidebar).getByRole("region", { name: "About this view" });
+    expect(about).toHaveTextContent("Read from source code");
+    expect(about).toHaveTextContent(
+      "The code was parsed and never run, so there are no runs here.",
+    );
+    expect(about).toHaveTextContent("To see a run, call pydantic_ai_viz.serve(agent)");
+
+    // What static analysis had to skip is one click away, in every mode.
+    await user.click(within(bar).getByRole("button", { name: "1 notice" }));
+    expect(screen.getByRole("dialog", { name: "Session notices" })).toHaveTextContent(
+      "newsroom/legacy.py was skipped",
+    );
+    await user.keyboard("{Escape}");
+
+    // An export of blueprints holds no captured content, and the menu does not warn of any.
+    await user.click(screen.getByRole("button", { name: "Export" }));
+    const menu = screen.getByRole("dialog", { name: "Export" });
+    expect(within(menu).getByRole("link", { name: "Blueprints (.pviz.jsonl)" })).toHaveAttribute(
+      "href",
+      "api/v1/export.jsonl",
+    );
+    expect(menu).toHaveTextContent("There is no run data in them.");
+    expect(menu).not.toHaveTextContent(/prompts/);
+    await user.keyboard("{Escape}");
+
+    // Ctrl+C on `view`: nothing is lost, so nothing is "reconnecting".
+    act(() => sources.at(-1)?.onerror?.());
+    expect(screen.getByText("The server behind this page has stopped.")).toBeInTheDocument();
+    for (const words of LIVE_WORDS) expect(screen.queryByText(words)).toBeNull();
+    expect(within(bar).getByText("Blueprint")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Agent editor" })).toBeInTheDocument();
+  });
+
+  test("exported: the same view from a file, with nothing to export", () => {
+    window.location.hash = "#/graphs/g1";
+    render(<App plan={embedded(NEWSROOM)} />);
+    const bar = topBar();
+    expect(within(bar).getByText("Blueprint")).toBeInTheDocument();
+    // It is an export, but "Blueprint" is the one thing the chip has to say.
+    expect(within(bar).queryByText("Export")).toBeNull();
+    for (const words of LIVE_WORDS) expect(screen.queryByText(words)).toBeNull();
+    expect(screen.getByRole("region", { name: "About this view" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "publishing" })).toBeInTheDocument();
+  });
+
+  test("imported objects (view --import) are not said to be read from source", () => {
+    const events = fixture("sample.pviz.jsonl")
+      .slice(0, 3)
+      .map((event) => (event.type === "session.started" ? { ...event, mode: "blueprint" } : event));
+    render(<App plan={{ kind: "embedded", events }} />);
+    const about = screen.getByRole("region", { name: "About this view" });
+    expect(about).toHaveTextContent("Read from live objects");
+    expect(about).toHaveTextContent("The code was imported");
+    expect(about).not.toHaveTextContent(/parsed/);
+  });
+
+  test("a session with runs keeps its run list, and says so when it is empty", () => {
+    const events = fixture("sample.pviz.jsonl").slice(0, 3);
+    render(<App plan={{ kind: "embedded", events }} />);
+    expect(screen.queryByRole("region", { name: "About this view" })).toBeNull();
+    expect(screen.getByRole("navigation", { name: /Runs/ })).toHaveTextContent(
+      "No runs in this export.",
+    );
+    expect(screen.queryByText("Waiting for a run")).toBeNull();
+  });
+
+  test("the sidebar groups blueprints by the file they are defined in", () => {
+    render(<App plan={embedded(NEWSROOM)} />);
+    const list = screen.getByRole("navigation", { name: /Blueprints/ });
+    expect(
+      within(list)
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.getAttribute("title")),
+    ).toEqual([
+      "newsroom/desk.py",
+      "newsroom/reporters.py",
+      "newsroom/checks.py",
+      "newsroom/pipeline.py",
+    ]);
+    expect(
+      within(list)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual([
+      "editorWarnings: 2",
+      "reporterWarnings: 3",
+      "stringer",
+      "fact_checkerWarnings: 1",
+      "publishing",
+    ]);
+    // Five blueprints can be read at a glance: no filter.
+    expect(within(list).queryByRole("searchbox")).toBeNull();
+  });
+
+  test("a long list can be filtered by name or file", async () => {
+    const user = userEvent.setup();
+    const teams = ["billing", "support", "search", "growth"];
+    const blueprints = Array.from({ length: 36 }, (_, i): [number, Event] => {
+      const team = teams[i % teams.length] ?? "";
+      return [
+        1,
+        {
+          type: "blueprint.agent",
+          agent: agentBlueprint({
+            id: `a${i + 1}`,
+            name: `${team}_agent_${i + 1}`,
+            source: "code",
+            location: { file: `app/${team}/agents_${i % 8}.py`, line: 10 + i },
+          }),
+        },
+      ];
+    });
+    const events = log([0, { ...sessionStarted(), mode: "blueprint" }], ...blueprints);
+    render(<App plan={{ kind: "embedded", events }} />);
+    const list = screen.getByRole("navigation", { name: /Blueprints/ });
+    expect(within(list).getAllByRole("link")).toHaveLength(36);
+    expect(within(list).getAllByRole("heading", { level: 3 })).toHaveLength(8);
+    expect(list).toHaveTextContent(/^Blueprints36/);
+
+    const filter = within(list).getByRole("searchbox", { name: "Filter blueprints" });
+    await user.type(filter, "Billing");
+    expect(list).toHaveTextContent(/^Blueprints9 of 36/);
+    expect(within(list).getAllByRole("link")).toHaveLength(9);
+    expect(within(list).getAllByRole("heading", { level: 3 })).toHaveLength(2);
+
+    // A file name narrows it further; a link still leads to its blueprint.
+    await user.clear(filter);
+    await user.type(filter, "agents_4.py");
+    const links = within(list).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual([
+      "billing_agent_5",
+      "billing_agent_13",
+      "billing_agent_21",
+      "billing_agent_29",
+    ]);
+    await user.click(links[1] as HTMLElement);
+    await waitFor(() => expect(window.location.hash).toBe("#/agents/a13"));
+    expect(screen.getByRole("heading", { level: 2, name: "billing_agent_13" })).toBeInTheDocument();
+    expect(filter).toHaveValue("agents_4.py");
+
+    await user.clear(filter);
+    await user.type(filter, "nothing-like-this");
+    expect(within(list).queryAllByRole("link")).toHaveLength(0);
+    expect(within(list).getByRole("status")).toHaveTextContent(
+      'No blueprint matches "nothing-like-this".',
+    );
+    // Escape empties the box, and typing in it never triggers a shortcut (t toggles the theme).
+    await user.keyboard("{Escape}");
+    expect(filter).toHaveValue("");
+    expect(within(list).getAllByRole("link")).toHaveLength(36);
+    expect(document.documentElement).not.toHaveAttribute("data-theme");
   });
 });

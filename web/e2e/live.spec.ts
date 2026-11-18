@@ -42,8 +42,9 @@ test.describe("live demo server", () => {
     // Nothing has run yet: the demo waits for its first viewer, and that is this page.
     expect(finishedRuns(await exported(page))).toBe(0);
     await page.goto(base);
-    await expect(page.getByText("Live", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+    // "Live" is the one indicator of the connection; there is no second one beside it.
+    await expect(page.locator('[data-mode="live"]')).toHaveText("Live");
+    await expect(page.getByText("Connected", { exact: true })).toHaveCount(0);
     await page.waitForURL(/#\/runs\//);
     const first = page.url();
     await expect(canvasNode(page, /^Output of triage: Resolution.*, ready$/)).toBeVisible({

@@ -6,9 +6,12 @@ import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
 import {
   BARE,
+  blueprintOnly,
   canvasNode,
+  dropConnection,
   FX,
   fixturePath,
+  manyBlueprints,
   openRun,
   PIPELINE,
   pauseAtBoundary,
@@ -773,10 +776,12 @@ test.describe("live", () => {
   }) => {
     const errors = trackErrors(page);
     await page.goto("/live/");
-    await expect(page.getByText("Live", { exact: true }).first()).toBeVisible();
+    // "Live" says the page is connected. Nothing else repeats it.
+    await expect(page.locator('[data-mode="live"]')).toHaveText("Live");
     await page.waitForURL(/#\/runs\//);
     const first = page.url();
-    await expect(page.getByText("Connected", { exact: true })).toBeVisible();
+    await expect(page.getByText("Connected", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Waiting for a run")).toHaveCount(0);
     await expect(page.locator("main").getByText("Running", { exact: true }).first()).toBeVisible();
     // While it runs the server refuses a second run and the viewer says why.
     await page.getByRole("button", { name: "Run again" }).click();
@@ -852,13 +857,191 @@ test.describe("live", () => {
     await page.goto("/live-hold-56/");
     await page.waitForURL(/#\/runs\//);
     await expect(rows(page)).toHaveCount(HELD_SPANS);
+    await expect(page.locator('[data-mode="live"]')).toBeVisible();
     // Stop the server side of this session: the stream ends and reconnecting is refused.
-    const key = await page.evaluate(() => {
-      const boot = JSON.parse(document.getElementById("pviz-boot")?.textContent ?? "{}");
-      return new URL(boot.events_url, "http://localhost").searchParams.get("s");
-    });
-    expect((await page.request.post(`/live-hold-56/api/v1/drop?s=${key}`)).ok()).toBe(true);
+    await dropConnection(page);
     await expect(page.getByText("Reconnecting...")).toBeVisible({ timeout: 15_000 });
     await expect(rows(page)).toHaveCount(HELD_SPANS);
+    // The banner is the one place that says it; nothing still claims to be live.
+    await expect(page.locator("[data-mode]")).toHaveCount(0);
+  });
+
+  test("a live session with no run yet waits in one place", async ({ page }) => {
+    await page.goto("/live-hold-5/");
+    await expect(page.getByText("Waiting for a run")).toBeVisible();
+    await expect(page.locator('[data-mode="live"]')).toHaveText("Live");
+    // The empty run list does not say it a second time.
+    await expect(page.getByRole("navigation", { name: /^Runs/ })).toHaveText("Runs0");
+    await expect(page.getByText(/No runs/)).toHaveCount(0);
+  });
+});
+
+test.describe("blueprint-only view", () => {
+  /** Words that are true of a session with runs and of nothing else. */
+  const liveWords =
+    /\bLive\b|Connected|Connecting|Waiting for a run|No runs|Reconnecting|Run again/;
+
+  test("served by `view`: it says what it is and never claims to be live", async ({ page }) => {
+    const errors = trackErrors(page);
+    await page.goto("/view/");
+    await page.waitForURL(/#\/agents\/a1/);
+    await expect(page.locator("[data-mode]")).toHaveText("Blueprint");
+    await expect(page.locator("header h1")).toHaveText("newsroom");
+    const sidebar = page.getByRole("complementary", { name: "Blueprints" });
+    await expect(sidebar.getByRole("navigation", { name: /^Runs/ })).toHaveCount(0);
+    const about = sidebar.getByRole("region", { name: "About this view" });
+    await expect(about).toContainText("Read from source code");
+    await expect(about).toContainText("The code was parsed and never run");
+    await expect(page.locator("#root")).not.toContainText(liveWords, { useInnerText: true });
+
+    // The notices of the analysis are a click away.
+    await page.getByRole("button", { name: "1 notice" }).click();
+    await expect(page.getByRole("dialog", { name: "Session notices" })).toContainText(
+      "newsroom/legacy.py was skipped",
+    );
+    await page.keyboard.press("Escape");
+
+    // Ctrl+C on the command: the page loses nothing, and says only that.
+    await dropConnection(page);
+    await expect(page.getByText("The server behind this page has stopped.")).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.locator("[data-mode]")).toHaveText("Blueprint");
+    await expect(page.locator("#root")).not.toContainText(liveWords, { useInnerText: true });
+    await canvasNode(page, "Tool publish").click();
+    await expect(page.getByRole("table", { name: "Parameters of publish" })).toBeVisible();
+    // The browser reports the refused reconnects itself; the page must add nothing to that.
+    expect(errors.filter((line) => !/503|ERR_|EventSource/.test(line))).toEqual([]);
+  });
+
+  test("exported with `view --export`: the same view from one file, offline", async ({
+    page,
+  }, testInfo) => {
+    const errors = trackErrors(page);
+    const url = writeEmbeddedExport(
+      readRecording(fixturePath("blueprint/newsroom")),
+      testInfo.outputPath("blueprint.html"),
+    );
+    const requests = trackRequests(page);
+    await page.goto(url);
+    await page.waitForURL(/#\/agents\/a1/);
+    await expect(page.locator("[data-mode]")).toHaveText("Blueprint");
+    await expect(page.getByRole("region", { name: "About this view" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Export" })).toHaveCount(0);
+    await expect(page.locator("#root")).not.toContainText(liveWords, { useInnerText: true });
+    await page.waitForLoadState("networkidle");
+    expect(requests).toEqual([url]);
+    expect(errors).toEqual([]);
+  });
+
+  test("what the source says, and what it leaves to run time", async ({ page, context }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.goto(blueprintOnly("#/agents/a2"));
+    const inspector = page.getByRole("complementary", { name: "Blueprint details" });
+
+    // The model is an expression: set as code on the canvas and in the panel, and said to be.
+    const card = page.locator(".react-flow__node-agent", { hasText: "reporter" }).first();
+    await expect(card).toContainText("get_model()");
+    await expect(card).toContainText("at run time");
+    await expect(inspector.getByText("Decided at run time").first()).toBeVisible();
+
+    // Where it is defined can be copied, as a go-to-file box takes it.
+    await inspector.getByRole("button", { name: "Copy newsroom/reporters.py:31" }).click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+      "newsroom/reporters.py:31",
+    );
+
+    // How it is known: one chip, with the key to all three ways behind it.
+    await inspector.getByRole("button", { name: /^From source/ }).click();
+    const key = page.getByRole("dialog", { name: "How a blueprint is known" });
+    await expect(key.getByRole("term")).toHaveText([
+      /^From source/,
+      "From a live object",
+      "Observed in runs",
+    ]);
+    await page.keyboard.press("Escape");
+
+    // Warnings are counted above the canvas and listed in the panel, in no alarming colour.
+    await expect(page.locator("main").getByText("3 warnings")).toBeVisible();
+    const warnings = inspector.locator('[data-section="warnings"]');
+    await expect(warnings.getByRole("listitem")).toHaveCount(3);
+    const colours = await warnings.evaluate((section) => {
+      const style = getComputedStyle(document.documentElement);
+      const alarming = [style.getPropertyValue("--error"), style.getPropertyValue("--retry")];
+      const probe = document.createElement("span");
+      document.body.append(probe);
+      const resolved = alarming.map((value) => {
+        probe.style.color = value;
+        return getComputedStyle(probe).color;
+      });
+      probe.remove();
+      const used = [...section.querySelectorAll("*")].map((el) => getComputedStyle(el).color);
+      return { resolved, used };
+    });
+    for (const colour of colours.resolved) expect(colours.used).not.toContain(colour);
+  });
+
+  test("a delegation that crosses files says where it lands", async ({ page }) => {
+    await page.goto(blueprintOnly("#/agents/a1"));
+    const labels = page.locator(".react-flow__edgelabel-renderer span");
+    await expect(labels).toHaveText(["in code · reporters.py", "in code · checks.py", "in code"]);
+    // Only the line style that is on this canvas is in the key.
+    await expect(page.getByText("delegation found in code")).toBeVisible();
+    await expect(page.getByText("delegation seen in a run")).toHaveCount(0);
+    // The delegate's own panel is one click away, and names its file.
+    await canvasNode(page, "Tool check_facts").click();
+    const inspector = page.getByRole("complementary", { name: "Blueprint details" });
+    await expect(inspector.getByText("checks.py:19")).toBeVisible();
+    await inspector.getByRole("link", { name: "fact_checker" }).click();
+    await expect(page).toHaveURL(/#\/agents\/a4$/);
+  });
+
+  test("a long list of blueprints is grouped by file and can be filtered", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 720 });
+    await page.goto(manyBlueprints());
+    const list = page.getByRole("navigation", { name: /^Blueprints/ });
+    await expect(list.getByRole("link")).toHaveCount(36);
+    await expect(list.getByRole("heading", { level: 3 })).toHaveCount(12);
+
+    // The list scrolls inside the sidebar; the page never does, and the note under it stays.
+    const scroller = list.locator("ul").first();
+    expect(await scroller.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(720);
+    await expect(page.getByRole("region", { name: "About this view" })).toBeInViewport();
+    // A file's name stays at the top of the list while its agents scroll under it.
+    await scroller.evaluate((el) => el.scrollBy(0, 60));
+    const firstFile = list.getByRole("heading", { level: 3 }).first();
+    const [listBox, fileBox] = [await scroller.boundingBox(), await firstFile.boundingBox()];
+    expect(fileBox?.y).toBeCloseTo(listBox?.y ?? Number.NaN, 0);
+
+    const filter = list.getByRole("searchbox", { name: "Filter blueprints" });
+    await filter.fill("risk");
+    await expect(list.getByRole("link")).toHaveCount(6);
+    await expect(list).toContainText("6 of 36");
+    await filter.fill("workers.py");
+    await expect(list.getByRole("link")).toHaveCount(18);
+    await filter.fill("risk_router");
+    await list.getByRole("link", { name: "risk_router" }).click();
+    await expect(page.locator("main h2")).toHaveText("risk_router");
+    await expect(list.getByRole("link", { name: "risk_router" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    // Typing in the box never triggers a shortcut ("t" would switch the theme).
+    await filter.fill("");
+    await filter.pressSequentially("writer");
+    expect(await theme(page)).toBe("system");
+    await expect(list.getByRole("link")).toHaveCount(6);
+    await filter.press("Escape");
+    await expect(list.getByRole("link")).toHaveCount(36);
+  });
+
+  test("a file can be dropped on a blueprint-only view, and replaces it", async ({ page }) => {
+    await page.goto(blueprintOnly());
+    await page.waitForURL(/#\/agents\/a1/);
+    await dropFile(page, "sample.pviz.jsonl", readFileSync(fixturePath("sample"), "utf8"));
+    await expect(page.locator("[data-mode]")).toHaveText("Recording");
+    await expect(page.getByRole("region", { name: "About this view" })).toHaveCount(0);
+    await expect(runLink(page, "triage")).toBeVisible();
   });
 });

@@ -1,12 +1,13 @@
 import { useState } from "react";
-import type { Connection } from "../data/liveSource";
-import { modeLabel, type Source, useViewer } from "../data/store";
+import { type Source, useViewer } from "../data/store";
 import { Chip } from "../ui/Badge";
 import { Button, ButtonLink, IconButton } from "../ui/Button";
 import { Icon, type IconName } from "../ui/Icon";
 import { Popover, Tooltip } from "../ui/overlays";
-import { cx, type Tone, toneClass } from "../ui/tone";
+import { cx, type Tone } from "../ui/tone";
+import { plural } from "./format";
 import { formatRoute, type Route } from "./router";
+import { type ModeChip as ModeChipKind, useShellStatus } from "./status";
 import { toggleTheme, useTheme } from "./theme";
 
 /** The mark: two nodes joined by a run. Also the favicon. */
@@ -27,45 +28,76 @@ export function Logo() {
   );
 }
 
-const MODES: Record<string, { tone: Tone; icon: IconName; hint: string }> = {
-  Live: { tone: "accent", icon: "live", hint: "Connected to a running pydantic-ai-viz session." },
-  Recording: { tone: "neutral", icon: "file", hint: "Replaying a saved .pviz.jsonl recording." },
-  Export: { tone: "neutral", icon: "file", hint: "A self-contained export. It works offline." },
+/** One or two words for what kind of session this is; the hint is the tooltip. */
+const MODES: Record<ModeChipKind, { label: string; tone: Tone; icon: IconName; hint: string }> = {
+  connecting: {
+    label: "Connecting",
+    tone: "neutral",
+    icon: "running",
+    hint: "Reaching the pydantic-ai-viz session behind this page.",
+  },
+  live: {
+    label: "Live",
+    tone: "accent",
+    icon: "live",
+    hint: "Connected to a running program. Its runs appear here as they happen.",
+  },
+  blueprint: {
+    label: "Blueprint",
+    tone: "neutral",
+    icon: "blueprint",
+    hint: "This view holds blueprints only: what the agents are, not what they did. Nothing in it runs.",
+  },
+  recording: {
+    label: "Recording",
+    tone: "neutral",
+    icon: "file",
+    hint: "Replaying a saved .pviz.jsonl recording.",
+  },
+  export: {
+    label: "Export",
+    tone: "neutral",
+    icon: "file",
+    hint: "A self-contained export. It works offline.",
+  },
 };
 
-export function ModeChip({ source }: { source: Source }) {
-  const label = modeLabel(source);
-  if (!label) return null;
-  const mode = MODES[label];
-  if (!mode) return null;
+export function ModeChip({ chip }: { chip: ModeChipKind | null }) {
+  if (!chip) return null;
+  const mode = MODES[chip];
   return (
     <Tooltip content={mode.hint}>
-      <span className="inline-flex">
-        <Chip tone={mode.tone} icon={mode.icon}>
-          {label}
+      <span className="inline-flex" data-mode={chip}>
+        <Chip tone={mode.tone} icon={mode.icon} pulse={chip === "connecting"}>
+          {mode.label}
         </Chip>
       </span>
     </Tooltip>
   );
 }
 
-const CONNECTION: Record<Connection, { text: string; tone: Tone }> = {
-  connecting: { text: "Connecting", tone: "neutral" },
-  open: { text: "Connected", tone: "ok" },
-  reconnecting: { text: "Reconnecting", tone: "retry" },
-};
-
-export function ConnectionStatus({ connection }: { connection: Connection | null }) {
-  if (!connection) return null;
-  const { text, tone } = CONNECTION[connection];
+/** Messages about the session as a whole, e.g. files that static analysis had to skip. */
+export function Notices({ notices }: { notices: readonly string[] }) {
+  if (notices.length === 0) return null;
+  const label = plural(notices.length, "notice");
   return (
-    <span className={cx(toneClass[tone], "inline-flex items-center gap-1.5 text-meta text-muted")}>
-      <span
-        aria-hidden="true"
-        className={cx("size-1.5 rounded-full bg-(--tone)", connection !== "open" && "pulse-ring")}
-      />
-      {text}
-    </span>
+    <Popover
+      label="Session notices"
+      align="start"
+      trigger={
+        <Button size="sm" variant="ghost" icon="info" className="border-line">
+          {label}
+        </Button>
+      }
+    >
+      <ul className="m-0 flex max-h-72 list-none flex-col gap-2 overflow-y-auto p-0 text-ui">
+        {notices.map((notice, i) => (
+          <li key={i} className="break-words text-fg">
+            {notice}
+          </li>
+        ))}
+      </ul>
+    </Popover>
   );
 }
 
@@ -101,7 +133,14 @@ export function RunAgain({ url }: { url: string }) {
   );
 }
 
-export function ExportMenu({ source }: { source: Extract<Source, { kind: "live" }> }) {
+export function ExportMenu({
+  source,
+  blueprintOnly,
+}: {
+  source: Extract<Source, { kind: "live" }>;
+  /** A blueprint-only session has no captured content to warn about. */
+  blueprintOnly: boolean;
+}) {
   if (!source.exportHtmlUrl && !source.exportJsonlUrl) return null;
   return (
     <Popover label="Export" trigger={<Button icon="download">Export</Button>}>
@@ -113,16 +152,26 @@ export function ExportMenu({ source }: { source: Extract<Source, { kind: "live" 
         )}
         {source.exportJsonlUrl && (
           <ButtonLink href={source.exportJsonlUrl} download icon="span" className="justify-start">
-            Recording (.pviz.jsonl)
+            {blueprintOnly ? "Blueprints (.pviz.jsonl)" : "Recording (.pviz.jsonl)"}
           </ButtonLink>
         )}
-        <p className="tone-retry m-0 flex gap-1.5 text-data text-muted">
-          <Icon name="warning" size={14} className="tone-text mt-px" />
-          <span>
-            Exports contain everything captured: prompts, tool arguments and tool results. Check
-            before you share one.
-          </span>
-        </p>
+        {blueprintOnly ? (
+          <p className="m-0 flex gap-1.5 text-data text-muted">
+            <Icon name="info" size={14} className="mt-px text-faint" />
+            <span>
+              Exports hold what the blueprints show: instructions, tool names and schemas. There is
+              no run data in them.
+            </span>
+          </p>
+        ) : (
+          <p className="tone-retry m-0 flex gap-1.5 text-data text-muted">
+            <Icon name="warning" size={14} className="tone-text mt-px" />
+            <span>
+              Exports contain everything captured: prompts, tool arguments and tool results. Check
+              before you share one.
+            </span>
+          </p>
+        )}
       </div>
     </Popover>
   );
@@ -144,10 +193,9 @@ export function ThemeToggle() {
 
 export function TopBar({ route, onShowShortcuts }: { route: Route; onShowShortcuts: () => void }) {
   const source = useViewer((state) => state.source);
-  const connection = useViewer((state) => state.connection);
   const title = useViewer((state) => state.data.session?.title ?? null);
   const hasGallery = useViewer((state) => state.gallery !== null);
-  const offContent = useViewer((state) => state.data.session?.include_content === false);
+  const status = useShellStatus();
 
   return (
     <header className="flex h-11 shrink-0 items-center gap-3 border-line border-b bg-surface px-3">
@@ -169,19 +217,21 @@ export function TopBar({ route, onShowShortcuts }: { route: Route; onShowShortcu
           </h1>
         </>
       )}
-      <ModeChip source={source} />
-      {offContent && (
+      <ModeChip chip={status.chip} />
+      {status.contentOff && (
         <Tooltip content="This session was captured with include_content=False. Structure and timing are shown; prompts, arguments and results are not.">
           <span className="inline-flex">
             <Chip icon="eyeOff">Content off</Chip>
           </span>
         </Tooltip>
       )}
-      <ConnectionStatus connection={connection} />
+      <Notices notices={status.notices} />
 
       <div className="ml-auto flex items-center gap-1.5">
         {source.kind === "live" && source.rerunUrl && <RunAgain url={source.rerunUrl} />}
-        {source.kind === "live" && <ExportMenu source={source} />}
+        {source.kind === "live" && (
+          <ExportMenu source={source} blueprintOnly={status.about !== null} />
+        )}
         {hasGallery && (
           <ButtonLink
             href={formatRoute({ name: "gallery" })}

@@ -6,6 +6,7 @@ import { EmptyState, Skeleton, Snippet } from "../ui/EmptyState";
 import { Icon } from "../ui/Icon";
 import { DropZone } from "./DropZone";
 import { formatRoute } from "./router";
+import { useShellStatus } from "./status";
 
 const SERVE_SNIPPET = `import pydantic_ai_viz as pviz
 
@@ -28,10 +29,30 @@ export function ConnectingSkeleton() {
   );
 }
 
-/** A non-blocking strip: the connection dropped, what is on screen stays. */
-export function ReconnectingBanner() {
-  const lost = useViewer((state) => state.connection === "reconnecting");
-  if (!lost) return null;
+/**
+ * A non-blocking strip under the top bar: the server behind the page stopped answering. What
+ * is on screen stays. A live session keeps trying; a blueprint-only view has lost nothing.
+ */
+export function ConnectionBanner() {
+  const { banner } = useShellStatus();
+  if (banner === null) return null;
+  if (banner === "server-stopped") {
+    return (
+      <div
+        role="status"
+        className="flex shrink-0 animate-fade-in items-center gap-2 border-line border-b bg-surface-2 px-3 py-1.5 text-ui"
+      >
+        <Icon name="info" size={14} className="text-faint" />
+        <span>
+          <strong className="font-semibold">The server behind this page has stopped.</strong>{" "}
+          <span className="text-muted">
+            The blueprints stay on screen. Exporting needs the server: run the command again to
+            bring it back.
+          </span>
+        </span>
+      </div>
+    );
+  }
   return (
     <div
       role="status"
@@ -51,9 +72,22 @@ export function ReconnectingBanner() {
 /** No blueprints and no runs: say exactly how to get some. */
 export function Welcome() {
   const live = useViewer((state) => state.source.kind === "live");
+  const { about } = useShellStatus();
+  if (about) {
+    // `view` refuses to start without a blueprint, so this is a hand-made or cut-down file.
+    return (
+      <EmptyState icon="blueprint" title="No blueprints in this view">
+        <p className="m-0">
+          This is a blueprint-only view, and it holds no agent or graph. Point{" "}
+          <code>pydantic-ai-viz view</code> at the file that builds your agent.
+        </p>
+        <Snippet code="pydantic-ai-viz view path/to/agent.py" label="Copy view command" />
+      </EmptyState>
+    );
+  }
   if (live) {
     return (
-      <EmptyState icon="live" tone="accent" title="Connected. Nothing to show yet.">
+      <EmptyState icon="live" tone="accent" title="Nothing to show yet">
         <p className="m-0">
           This session has no agents registered and no runs so far. Pass your agent to{" "}
           <code>serve()</code>, or just run it: runs are captured as soon as they start.
@@ -78,12 +112,10 @@ export function Welcome() {
   );
 }
 
-/** Live, blueprints but no runs: shown above the blueprint. */
+/** A live session with blueprints and no run so far: shown above the blueprint. */
 export function WaitingForRun() {
-  const waiting = useViewer(
-    (state) => state.source.kind === "live" && state.data.traceOrder.length === 0,
-  );
-  if (!waiting) return null;
+  const { strip } = useShellStatus();
+  if (strip !== "waiting-for-run") return null;
   return (
     <div
       role="status"

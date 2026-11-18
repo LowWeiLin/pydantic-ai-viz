@@ -54,6 +54,61 @@ export const sampleSpan = (name: string): Span => {
 export const recording = (name: string, hash = "#/"): string =>
   `${FX}?src=recordings/${name}.pviz.jsonl${hash}`;
 
+/** The blueprint-only fixture (what `pydantic-ai-viz view` writes), loaded as a file. */
+export const blueprintOnly = (hash = "#/"): string =>
+  `${FX}?src=recordings/blueprint/newsroom.pviz.jsonl${hash}`;
+
+/**
+ * A blueprint-only session as a scan of a larger project gives it: 36 agents in 12 files,
+ * six teams with an `agents.py` and a `workers.py` each. Returns the address that loads it.
+ */
+export function manyBlueprints(): string {
+  const [session, first] = readRecording(
+    path.join(fixturesDir, "blueprint", "newsroom.pviz.jsonl"),
+  );
+  if (session?.type !== "session.started" || first?.type !== "blueprint.agent") {
+    throw new Error("the newsroom fixture changed shape");
+  }
+  const teams = ["billing", "support", "search", "growth", "platform", "risk"];
+  const roles = ["triage", "planner", "writer", "reviewer", "router", "summarizer"];
+  const events: Envelope[] = [{ ...session, title: "acme-agents", notices: [] }];
+  for (const team of teams) {
+    for (const [r, role] of roles.entries()) {
+      const seq = events.length;
+      events.push({
+        seq,
+        ts: session.ts,
+        type: "blueprint.agent",
+        agent: {
+          ...first.agent,
+          id: `a${seq}`,
+          name: `${team}_${role}`,
+          label: `${team}_${role}`,
+          location: { file: `acme/${team}/${r < 3 ? "agents" : "workers"}.py`, line: 12 + r * 30 },
+          delegates: [],
+        },
+      });
+    }
+  }
+  const file = path.join(webDir, "test-results", "fixtures", "many-blueprints.html");
+  return writeEmbeddedExport(events, file);
+}
+
+/** What a stopped server looks like to the page: its event stream ends and cannot be reopened. */
+export async function dropConnection(page: Page): Promise<void> {
+  // The mock keeps one session per page load; its key is in the address of the event stream.
+  const key = await page.evaluate(() => {
+    const boot = JSON.parse(document.getElementById("pviz-boot")?.textContent ?? "{}") as {
+      events_url?: string;
+    };
+    return new URL(boot.events_url ?? "", window.location.href).searchParams.get("s");
+  });
+  const response = await page.request.post(
+    new URL(`api/v1/drop?s=${key}`, page.url().split("#")[0]).href,
+  );
+  expect(response.ok()).toBe(true);
+}
+
 export const rows = (page: Page): Locator => page.getByRole("treeitem");
 export const slider = (page: Page): Locator =>
   page.getByRole("slider", { name: "Replay position" });

@@ -19,11 +19,12 @@ import { Sidebar, SidebarSkeleton } from "./shell/Sidebar";
 import { useShortcuts } from "./shell/shortcuts";
 import {
   ConnectingSkeleton,
+  ConnectionBanner,
   LoadFailed,
   NotFound,
-  ReconnectingBanner,
   Welcome,
 } from "./shell/states";
+import { useShellStatus } from "./shell/status";
 import { TopBar } from "./shell/TopBar";
 import { toggleTheme } from "./shell/theme";
 import { TooltipProvider } from "./ui/overlays";
@@ -85,19 +86,7 @@ export function App({ plan }: { plan?: BootPlan }) {
 
   useShortcuts({ toggleTheme, showShortcuts: () => setShortcutsOpen(true) });
 
-  const phase = useViewer((state) => state.phase);
-  const live = useViewer((state) => state.source.kind === "live");
-  const hasData = useViewer(
-    (state) =>
-      state.data.agentOrder.length + state.data.graphOrder.length + state.data.traceOrder.length >
-      0,
-  );
-  const sidebar =
-    phase === "loading" && live ? (
-      <SidebarSkeleton />
-    ) : hasData || live ? (
-      <Sidebar route={route} />
-    ) : null;
+  const status = useShellStatus();
 
   return (
     <TooltipProvider>
@@ -111,9 +100,10 @@ export function App({ plan }: { plan?: BootPlan }) {
           Skip to content
         </button>
         <TopBar route={route} onShowShortcuts={() => setShortcutsOpen(true)} />
-        <ReconnectingBanner />
+        <ConnectionBanner />
         <div className="flex min-h-0 flex-1">
-          {phase !== "failed" && sidebar}
+          {status.sidebar === "skeleton" && <SidebarSkeleton />}
+          {status.sidebar === "lists" && <Sidebar route={route} />}
           <div id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
             <ErrorBoundary resetKey={formatRoute(route)}>
               <Screen route={route} />
