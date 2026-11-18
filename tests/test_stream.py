@@ -213,3 +213,41 @@ def test_deltas_for_a_run_without_an_open_request_are_dropped() -> None:
     with record(stream=True) as session:
         session._stream_delta("no-such-run", Delta(0, "text", None, "lost"))  # pyright: ignore[reportPrivateUsage]
         assert deltas_of(session.events) == []
+
+
+async def test_attach_on_creation_listens_to_agents_made_inside_the_block_only() -> None:
+    """What `pydantic-ai-viz run --stream` relies on: the first run of an unregistered agent streams."""
+    original = Agent.__init__
+    with record(stream=True) as session:
+        before = Agent(TestModel(), name="before")
+        with _stream.attach_on_creation():
+            assert Agent.__init__ is not original
+            inside = Agent(TestModel(), name="inside")
+        assert Agent.__init__ is original
+        after = Agent(TestModel(), name="after")
+        for agent in (before, inside, after):
+            await agent.run("Hello")
+        events = session.events
+    requests = {
+        e["span"]["span_id"]: e["span"]["agent_name"]
+        for e in events
+        if e["type"] == "span.started" and e["span"]["kind"] == "model_request"
+    }
+    assert sorted(requests.values()) == ["after", "before", "inside"]
+    assert {requests[e["span_id"]] for e in events if e["type"] == "stream.delta"} == {"inside"}
+
+
+def test_attach_on_creation_restores_the_constructor_after_an_error_and_never_breaks_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = Agent.__init__
+
+    def broken(agent: Agent[Any, Any]) -> None:
+        raise RuntimeError("listener could not be attached")
+
+    monkeypatch.setattr(_stream, "attach", broken)
+    with pytest.raises(ZeroDivisionError), _stream.attach_on_creation():  # noqa: PT012
+        agent = Agent(TestModel(), name="still-built")
+        assert agent.name == "still-built"
+        raise ZeroDivisionError
+    assert Agent.__init__ is original

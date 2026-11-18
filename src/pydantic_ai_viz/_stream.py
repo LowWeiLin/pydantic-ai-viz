@@ -12,10 +12,12 @@ requests to streaming, and a model that cannot stream then fails.
 
 from __future__ import annotations
 
+import contextlib
+import functools
 import json
 import threading
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from typing import Any, Literal, NamedTuple, TypeAlias
 
 from pydantic_ai import Agent, RunContext
@@ -59,6 +61,31 @@ def attach(agent: Agent[Any, Any]) -> None:
             return
         _attached[id(agent)] = agent
     agent.on_event(_on_event)
+
+
+@contextlib.contextmanager
+def attach_on_creation() -> Generator[None]:
+    """Inside the block, put the listener on every agent as it is constructed.
+
+    For ``pydantic-ai-viz run --stream``: the script's agents can only be registered
+    once the script has ended, and a listener attached after a run has started does
+    not see that run. Wrapping ``Agent.__init__`` is the one point that comes before
+    any run of an agent we have not been handed. It is confined to the block.
+    """
+    original = Agent.__init__
+
+    @functools.wraps(original)
+    def init(self: Agent[Any, Any], *args: Any, **kwargs: Any) -> None:
+        original(self, *args, **kwargs)
+        # The agent must come out of its constructor whatever happens to the listener.
+        with contextlib.suppress(Exception):
+            attach(self)
+
+    setattr(Agent, "__init__", init)  # noqa: B010 - assignment to a method is a type error
+    try:
+        yield
+    finally:
+        setattr(Agent, "__init__", original)  # noqa: B010
 
 
 def add_sink(sink: DeltaSink) -> None:
