@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!--pviz:csp-->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="pydantic-ai-viz viewer: blueprints, live runs and replays of Pydantic AI agents. Unofficial, not affiliated with Pydantic." />
+    <title>pydantic-ai-viz</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b47e0'/%3E%3Cpath d='M10 10.5h5.5a4 4 0 0 1 4 4v3a4 4 0 0 0 4 4' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='9.5' cy='10.5' r='3' fill='%23fff'/%3E%3Ccircle cx='23' cy='21.5' r='3' fill='%23fff'/%3E%3C/svg%3E" />
+    <script>
+      // Apply a stored theme before first paint. Storage can throw on file:// and in private windows.
+      try {
+        const stored = localStorage.getItem("pviz.theme");
+        if (stored === "light" || stored === "dark") {
+          document.documentElement.setAttribute("data-theme", stored);
+        }
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script id="pviz-boot" type="application/json">"__PVIZ_BOOT__"</script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

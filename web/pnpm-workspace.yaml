@@ -1,0 +1,4 @@
+# Packages allowed to run install scripts, so `pnpm install` never prompts.
+allowBuilds:
+  esbuild: true
+  "@biomejs/biome": true
