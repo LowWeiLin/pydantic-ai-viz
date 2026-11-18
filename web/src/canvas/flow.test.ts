@@ -6,7 +6,7 @@ import type { Span } from "../wire";
 import { buildAgentFlow } from "./AgentCanvas";
 import { arcPath, type FlowEdgeData, lanePath } from "./edges";
 import { buildGraphFlow } from "./GraphCanvas";
-import { activityPhrase, graphNodeState } from "./nodes";
+import { activityPhrase, graphNodeState, modelIsComputed } from "./nodes";
 import { agentModelSignature, graphModelSignature } from "./signature";
 import {
   agentNodeId,
@@ -48,6 +48,43 @@ const edgeData = (edges: { id: string; data?: FlowEdgeData }[], id: string): Flo
   if (!data) throw new Error(`no edge ${id}`);
   return data;
 };
+
+describe("a blueprint read from source", () => {
+  const newsroom = fixtureState("blueprint/newsroom.pviz.jsonl");
+  const flowOf = (subject: string) => {
+    const model = canvasModel(newsroom, subject, null);
+    if (!model) throw new Error("expected a model");
+    return { model, ...buildAgentFlow(model, false, []) };
+  };
+  const delegationLabels = (edges: { type?: string; data?: FlowEdgeData }[]) =>
+    edges.filter((edge) => edge.type === "delegation").map((edge) => edge.data?.label);
+
+  test("a delegation that crosses files says which file it lands in", () => {
+    // editor (desk.py) -> reporter (reporters.py) and fact_checker (checks.py);
+    // reporter -> stringer, both in reporters.py.
+    expect(delegationLabels(flowOf("a1").edges)).toEqual([
+      "in code · reporters.py",
+      "in code · checks.py",
+      "in code",
+    ]);
+    expect(delegationLabels(flowOf("a2").edges)).toEqual(["in code"]);
+  });
+
+  test("without source locations there is no file to name", () => {
+    expect(delegationLabels(agentFlow(null).edges)).toEqual(["in a run"]);
+  });
+
+  test("a model that is only an expression is told apart from a model name", () => {
+    const models = Object.fromEntries(
+      newsroom.agentOrder.map((id) => [id, newsroom.agents[id]?.model ?? null]),
+    );
+    expect(models.a2 && modelIsComputed(models.a2)).toBe(true);
+    // A model class built with a literal name is known by that name.
+    expect(models.a3?.expression).not.toBeNull();
+    expect(models.a3 && modelIsComputed(models.a3)).toBe(false);
+    expect(models.a1 && modelIsComputed(models.a1)).toBe(false);
+  });
+});
 
 describe("agent canvas flow", () => {
   test("the blueprint alone: every node, idle edges, tool rows inside their toolset", () => {

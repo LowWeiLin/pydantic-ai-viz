@@ -111,6 +111,27 @@ const paths = {
     </>
   ),
   reload: <path d="M13 8a5 5 0 1 1-1.6-3.7M13.2 2.3v2.8h-2.8" />,
+  search: (
+    <>
+      <circle cx="7" cy="7" r="4.2" />
+      <path d="M10.2 10.2l3.3 3.3" />
+    </>
+  ),
+  // where a blueprint fact comes from
+  blueprint: (
+    <>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <path d="M4.8 6h2.6v2.6H4.8zM7.4 7.3h3.8v2.9" />
+    </>
+  ),
+  code: <path d="M5.2 4.6L1.8 8l3.4 3.4M10.8 4.6L14.2 8l-3.4 3.4M9.2 3.2l-2.4 9.6" />,
+  object: <path d="M8 1.8l5.5 3v6.4L8 14.2l-5.5-3V4.8zM2.5 4.8L8 7.8l5.5-3M8 7.8v6.4" />,
+  eye: (
+    <>
+      <path d="M1.5 8c.9-2.6 3.5-4.5 6.5-4.5s5.6 1.9 6.5 4.5c-.9 2.6-3.5 4.5-6.5 4.5S2.4 10.6 1.5 8z" />
+      <circle cx="8" cy="8" r="2" />
+    </>
+  ),
   // canvas and playback
   plus: <path d="M8 3.5v9M3.5 8h9" />,
   minus: <path d="M3.5 8h9" />,

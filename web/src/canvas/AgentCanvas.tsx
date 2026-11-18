@@ -6,7 +6,7 @@
  */
 import type { Edge, Node } from "@xyflow/react";
 import { type ReactNode, useMemo } from "react";
-import type { CanvasAgent, CanvasModel } from "../data/selectors";
+import { type CanvasAgent, type CanvasModel, fileName } from "../data/selectors";
 import { CanvasFrame } from "./CanvasFrame";
 import { type EdgeState, edgeMarker, type FlowEdgeData } from "./edges";
 import { agentLayoutKey, type LayoutNode, layoutAgentCanvas, SEEN_GROUP } from "./layout";
@@ -146,6 +146,10 @@ export function buildAgentFlow(
           : delegation?.evidence === "pending"
             ? "not yet"
             : "in code";
+      // A delegation that crosses files says where it lands.
+      const from = agent.blueprint.location?.file;
+      const to = agents.get(edge.toAgentId ?? "")?.blueprint.location?.file;
+      if (to !== undefined && to !== from) label += ` · ${fileName(to)}`;
       if (overlay && delegation?.active) {
         state = "active";
         tone = "var(--accent)";
@@ -209,6 +213,10 @@ export function AgentCanvas({
   );
 
   const subject = model.agents.find((agent) => agent.blueprint.id === model.subjectId);
+  // A blueprint's key explains only the line styles that are on it. A run can turn a dashed
+  // line solid at any moment, so there the key always has both.
+  const seen = overlay || model.delegations.some((d) => d.evidence === "observed");
+  const written = overlay || model.delegations.some((d) => d.evidence !== "observed");
   return (
     <CanvasFrame
       label={`${overlay ? "Run on the blueprint" : "Blueprint"} of ${subject?.blueprint.label ?? "agent"}`}
@@ -222,8 +230,8 @@ export function AgentCanvas({
       bottomRight={
         model.delegations.length > 0 ? (
           <Legend>
-            <LegendLine dashed>delegation found in code</LegendLine>
-            <LegendLine dashed={false}>delegation seen in a run</LegendLine>
+            {written && <LegendLine dashed>delegation found in code</LegendLine>}
+            {seen && <LegendLine dashed={false}>delegation seen in a run</LegendLine>}
           </Legend>
         ) : undefined
       }

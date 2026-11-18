@@ -11,7 +11,7 @@ import { Badge, Chip, StatusDot } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { cx, statusMeta, toneClass } from "../ui/tone";
-import type { Toolset } from "../wire";
+import type { ModelInfo, Toolset } from "../wire";
 import { DELEGATION_INLET, graphNodeLabel, nodeKind } from "./layout";
 import type { CanvasTarget } from "./targets";
 
@@ -124,19 +124,36 @@ export type AgentNodeData = {
   overlay: boolean;
 };
 
+/** True when the model is known only as the source text that produces it at run time. */
+export const modelIsComputed = (model: ModelInfo): boolean =>
+  model.expression !== null && model.name === model.expression;
+
 export function AgentNode({ data }: NodeProps<Node<AgentNodeData, "agent">>) {
   const pick = useContext(CanvasPick);
   const { agent, overlay } = data;
   const bp = agent.blueprint;
   const requesting = agent.model.state === "running";
   const toolCount = bp.tools.length;
+  const computed = bp.model !== null && modelIsComputed(bp.model);
   const modelChip = bp.model ? (
-    <Chip tone="model" icon="model" mono pulse={requesting}>
+    // An expression is not a model name: it is set as code, with a dashed edge.
+    <Chip
+      tone="model"
+      icon={computed ? "code" : "model"}
+      mono
+      pulse={requesting}
+      // min-w-0: a long name gives way to what follows it in the row instead of pushing it
+      // out of the card.
+      className={cx("min-w-0", computed && "border-dashed")}
+    >
       {bp.model.name}
     </Chip>
   ) : (
     <Chip icon="model">No model set</Chip>
   );
+  const modelWords = bp.model
+    ? `Model ${bp.model.name}${computed ? ", decided at run time," : ""} of ${bp.label}`
+    : "";
   return (
     <div
       className={cx(
@@ -168,13 +185,6 @@ export function AgentNode({ data }: NodeProps<Node<AgentNodeData, "agent">>) {
           {overlay && agent.run.state !== "idle" && (
             <StatusDot status={agent.run.state} showLabel className="shrink-0" />
           )}
-          {bp.warnings.length > 0 && (
-            <Badge tone="retry" className="shrink-0">
-              <Icon name="warning" size={10} />
-              <span className="sr-only">Warnings: </span>
-              <span className="ml-0.5">{bp.warnings.length}</span>
-            </Badge>
-          )}
         </div>
         {bp.description && (
           <p className="m-0 line-clamp-2 h-[35px] text-data text-muted">{bp.description}</p>
@@ -183,7 +193,7 @@ export function AgentNode({ data }: NodeProps<Node<AgentNodeData, "agent">>) {
           {overlay && bp.model ? (
             <button
               type="button"
-              aria-label={`Model ${bp.model.name} of ${bp.label}${activityPhrase(agent.model, true)}`}
+              aria-label={`${modelWords}${activityPhrase(agent.model, true)}`}
               onClick={() => pick({ kind: "model", agentId: bp.id })}
               style={CLICKABLE}
               className={cx(
@@ -196,6 +206,7 @@ export function AgentNode({ data }: NodeProps<Node<AgentNodeData, "agent">>) {
           ) : (
             modelChip
           )}
+          {computed && <span className="shrink-0 text-faint text-meta">at run time</span>}
           {bp.model?.offline && <Chip className="shrink-0">offline</Chip>}
           {bp.source === "observed" && (
             <Chip tone="accent" className="shrink-0">
