@@ -12,18 +12,20 @@ import { formatRoute, type Route } from "./router";
 function Section({
   title,
   count,
+  className,
   children,
 }: {
   title: string;
   count: number;
+  className: string;
   children: ReactNode;
 }) {
   const id = `sidebar-${title.toLowerCase()}`;
   return (
-    <nav aria-labelledby={id} className="flex min-h-0 flex-col">
+    <nav aria-labelledby={id} className={cx("flex min-h-0 flex-col", className)}>
       <h2
         id={id}
-        className="m-0 flex items-center justify-between px-3 pt-3 pb-1.5 font-semibold text-faint text-meta uppercase tracking-[0.06em]"
+        className="m-0 flex shrink-0 items-center justify-between px-3 pt-3 pb-1.5 font-semibold text-faint text-meta uppercase tracking-[0.06em]"
       >
         {title}
         <span className="font-normal tracking-normal">{formatCount(count)}</span>
@@ -81,11 +83,13 @@ export function BlueprintList({ route }: { route: Route }) {
   const data = useViewer((state) => state.data);
   const count = data.agentOrder.length + data.graphOrder.length;
   return (
-    <Section title="Blueprints" count={count}>
+    // Never squeezed by a long run list: it keeps its own height, up to a share of the sidebar,
+    // and scrolls past that.
+    <Section title="Blueprints" count={count} className="max-h-[45%] shrink-0">
       {count === 0 ? (
         <p className="m-0 px-3 pb-2 text-faint text-ui">None yet.</p>
       ) : (
-        <ul className="m-0 list-none p-0">
+        <ul className="m-0 min-h-0 list-none overflow-y-auto p-0">
           {data.agentOrder.map((id) => {
             const agent = data.agents[id];
             if (!agent) return null;
@@ -174,7 +178,7 @@ export function RunList({ route }: { route: Route }) {
   const data = useViewer((state) => state.data);
   const list = useMemo(() => runs(data), [data]);
   return (
-    <Section title="Runs" count={list.length}>
+    <Section title="Runs" count={list.length} className="flex-1">
       {list.length === 0 ? (
         <p className="m-0 px-3 pb-2 text-faint text-ui">No runs yet.</p>
       ) : (
@@ -199,7 +203,7 @@ export function Sidebar({ route }: { route: Route }) {
       className="flex w-60 shrink-0 flex-col border-line border-r bg-surface max-xl:w-52 max-md:w-48"
     >
       <BlueprintList route={route} />
-      <div className="mx-3 mt-2 border-line border-t" />
+      <div className="mx-3 mt-2 shrink-0 border-line border-t" />
       <RunList route={route} />
     </aside>
   );
