@@ -9,14 +9,16 @@ from __future__ import annotations
 
 import bisect
 import contextlib
+import os
 import platform
 import threading
 import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from types import ModuleType, TracebackType
-from typing import Any, Self, TypeAlias, cast
+from typing import Any, Protocol, Self, TypeAlias, cast
 
 from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
@@ -26,6 +28,7 @@ from pydantic_graph import Graph
 from . import _compat, _stream
 from ._capture import CaptureProcessor
 from ._derive import add_delegate, carry_observed, merge_request, observed_blueprint
+from ._export import write_html, write_jsonl
 from ._introspect import AnyAgent, AnyGraph, agent_closure, introspect_agent, introspect_graph
 from ._models import WIRE_VERSION, AgentBlueprint, GraphBlueprint, to_wire
 from ._normalize import Normalized, WireSpan, clip
@@ -217,6 +220,12 @@ def active_session() -> Session | None:
         return _open_sessions[-1] if _open_sessions else None
 
 
+class _Server(Protocol):
+    """What a session needs from the viewer server it was started with."""
+
+    def stop(self) -> None: ...
+
+
 @dataclass(slots=True)
 class _RegisteredAgent:
     agent: AnyAgent
@@ -290,6 +299,7 @@ class Session:
         self._instrumentation: InstrumentationSettings | None = None
         self._previous_instrumentation: Any = False
         self._closed = False
+        self._server: _Server | None = None
 
         self._agents: dict[int, _RegisteredAgent] = {}
         self._graphs: dict[int, _RegisteredGraph] = {}
@@ -559,13 +569,62 @@ class Session:
                 }
             )
 
+    # ------------------------------------------------------------- export
+
+    def save(self, path: str | os.PathLike[str]) -> Path:
+        """Write everything captured so far as a `.pviz.jsonl` recording.
+
+        A recording is the event log, one JSON event per line. Open it later with
+        `pydantic-ai-viz open`, or turn it into a page with `export_html()`. It
+        contains every captured prompt and tool result.
+
+        Args:
+            path: Where to write the file. An existing file is replaced.
+
+        Returns:
+            The path written.
+
+        Raises:
+            OSError: If the file cannot be written.
+        """
+        return write_jsonl(self.events, path)
+
+    def export_html(self, path: str | os.PathLike[str]) -> Path:
+        """Write everything captured so far as one self-contained HTML file.
+
+        The file holds the viewer and the events and opens in any browser, with no
+        server. It contains every captured prompt and tool result.
+
+        Args:
+            path: Where to write the file. An existing file is replaced.
+
+        Returns:
+            The path written.
+
+        Raises:
+            OSError: If the file cannot be written.
+        """
+        return write_html(self.events, path)
+
     # ----------------------------------------------------------- lifecycle
 
-    def close(self) -> None:
-        """End the session: stop capturing and undo `Agent.instrument_all`. Safe to call twice.
+    def wait(self) -> None:
+        """Block until Ctrl+C, to keep a script alive while you look at the viewer.
 
-        The events stay readable. Runs still in flight finish normally; what they emit
-        after this point is not recorded.
+        Returns quietly on Ctrl+C, and also once `close()` is called from another
+        thread. The session is left open; close it yourself or use a `with` block.
+        """
+        # Short sleeps instead of one long wait: on Windows a blocked wait is not interrupted by Ctrl+C.
+        with contextlib.suppress(KeyboardInterrupt):
+            while not self._closed:
+                time.sleep(0.2)
+
+    def close(self) -> None:
+        """End the session: stop the server, stop capturing and undo `Agent.instrument_all`.
+
+        Safe to call twice. The events stay readable, so `save()` and `export_html()`
+        still work. Runs still in flight finish normally; what they emit after this
+        point is not recorded.
         """
         with _sessions_lock:
             if self._closed:
@@ -579,7 +638,11 @@ class Session:
                 with contextlib.suppress(Exception):
                     Agent.instrument_all(self._previous_instrumentation)
         _stream.remove_sink(self._stream_delta)
+        # Closing the log ends every open event stream, so the server has nothing left to wait for.
         self._log.close()
+        if self._server is not None:
+            with contextlib.suppress(Exception):
+                self._server.stop()
 
     def __enter__(self) -> Self:
         return self
