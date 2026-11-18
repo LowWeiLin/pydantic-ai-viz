@@ -9,6 +9,7 @@ import type { Activity, CanvasAgent, CanvasTool, GraphCanvasNode } from "../data
 import { plural } from "../shell/format";
 import { Badge, Chip, StatusDot } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
+import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { cx, statusMeta, toneClass } from "../ui/tone";
 import type { Toolset } from "../wire";
 import { DELEGATION_INLET, graphNodeLabel, nodeKind } from "./layout";
@@ -264,7 +265,7 @@ export function ToolNode({ data }: NodeProps<Node<ToolNodeData, "tool">>) {
       />
       <div className="pointer-events-none relative flex h-full items-center gap-2 px-2.5">
         <Icon name={data.delegates ? "agent" : "tool"} size={14} className="tone-text" />
-        <span className="min-w-0 flex-1 truncate font-mono text-data text-fg">{data.name}</span>
+        <MiddleTruncate text={data.name} className="min-w-0 flex-1 font-mono text-data text-fg" />
         {overlay && activity.retries > 0 && (
           <span className="tone-retry tone-text inline-flex shrink-0 items-center gap-0.5 font-medium text-meta">
             <Icon name="retry" size={12} />

@@ -5,6 +5,7 @@ import { Chip, StatusDot } from "./Badge";
 import { CopyButton } from "./CopyButton";
 import { EmptyState, Redacted, Snippet } from "./EmptyState";
 import { JsonTree } from "./JsonTree";
+import { MiddleTruncate } from "./MiddleTruncate";
 import { Dialog, Tabs } from "./overlays";
 import { SchemaTable, schemaRows, schemaType } from "./SchemaTable";
 import { statusMeta } from "./tone";
@@ -32,6 +33,40 @@ describe("StatusDot and Chip", () => {
     );
     const chip = screen.getByText("scripted-support").parentElement;
     expect(chip).toHaveClass("tone-model", "tone-soft", "pulse-ring", "font-mono");
+  });
+});
+
+describe("MiddleTruncate", () => {
+  const NAME = "lookup_customer_records_in_the_legacy_billing_system_3";
+
+  test("a long name keeps its end apart from the part that may be clipped", () => {
+    const { container } = render(<MiddleTruncate text={NAME} />);
+    const [whole, head, tail] = Array.from(container.querySelectorAll("span > span"));
+    expect(head).toHaveClass("truncate");
+    expect(tail).toHaveTextContent("_system_3");
+    expect(tail).toHaveClass("shrink-0");
+    expect(tail).not.toHaveClass("truncate");
+    expect(`${head?.textContent}${tail?.textContent}`).toBe(NAME);
+    // Assistive technology gets the name once, in one piece, not as two words.
+    expect(whole).toHaveTextContent(NAME);
+    expect(whole).toHaveClass("sr-only");
+    expect(head).toHaveAttribute("aria-hidden", "true");
+    expect(tail).toHaveAttribute("aria-hidden", "true");
+  });
+
+  test("the name of a button that holds a long name is that name", () => {
+    render(
+      <button type="button">
+        <MiddleTruncate text={NAME} />
+      </button>,
+    );
+    expect(screen.getByRole("button", { name: NAME })).toBeInTheDocument();
+  });
+
+  test("a short name is left in one piece", () => {
+    const { container } = render(<MiddleTruncate text="get_order" className="font-mono" />);
+    expect(container.querySelectorAll("span")).toHaveLength(1);
+    expect(screen.getByText("get_order")).toHaveClass("truncate", "font-mono");
   });
 });
 

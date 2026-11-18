@@ -6,6 +6,7 @@ import type { StreamPart } from "../data/selectors";
 import { Redacted } from "../ui/EmptyState";
 import { Icon, type IconName } from "../ui/Icon";
 import { JsonTree } from "../ui/JsonTree";
+import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { cx, type Tone, toneClass } from "../ui/tone";
 import type { Json, Message, Part } from "../wire";
 import { Label, Note, TextBlock, useContentOff, Value } from "./parts";
@@ -93,7 +94,9 @@ export function ToolCallCard({
     <div className="tone-tool overflow-hidden rounded-control border border-line bg-surface">
       <div className="flex h-7 items-center gap-2 border-line border-b bg-surface-2 px-2.5">
         <Icon name="tool" size={13} className="tone-text" />
-        <code className="min-w-0 truncate font-medium text-fg">{name}</code>
+        <code className="flex min-w-0 font-medium text-fg">
+          <MiddleTruncate text={name} />
+        </code>
         {callId && (
           <span className="ml-auto max-w-[45%] shrink-0 truncate font-mono text-faint text-meta">
             {callId}
@@ -149,7 +152,9 @@ function PartView({ part }: { part: ConversationPart }) {
         <div className="tone-tool overflow-hidden rounded-control border border-line bg-surface">
           <div className="flex h-7 items-center gap-2 border-line border-b bg-surface-2 px-2.5">
             <Icon name="tool" size={13} className="tone-text" />
-            <code className="min-w-0 truncate font-medium text-fg">{part.name}</code>
+            <code className="flex min-w-0 font-medium text-fg">
+              <MiddleTruncate text={part.name} />
+            </code>
             <span className="ml-auto text-faint text-meta">result</span>
           </div>
           <div className="px-2.5 py-2">

@@ -145,8 +145,8 @@ function AgentOverview({ agent }: { agent: AgentBlueprint }) {
                   key={toolset.id}
                   className="flex flex-wrap items-center gap-x-2 gap-y-1 text-ui"
                 >
-                  <Icon name="toolset" size={13} className="text-faint" />
-                  <span className="font-medium">{toolset.label}</span>
+                  <Icon name="toolset" size={13} className="shrink-0 text-faint" />
+                  <span className="min-w-0 flex-1 break-words font-medium">{toolset.label}</span>
                   {toolset.wrappers.map((wrapper) => (
                     <Chip key={wrapper} mono>
                       {wrapper}

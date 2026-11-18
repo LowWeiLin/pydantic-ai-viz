@@ -20,6 +20,7 @@ import { spanDuration, statusLabel } from "../inspector/parts";
 import { formatDuration, plural } from "../shell/format";
 import { StatusDot } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
+import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { cx, kindMeta, statusMeta, toneClass } from "../ui/tone";
 import type { Span } from "../wire";
 import { PlaybackBar } from "./PlaybackBar";
@@ -156,7 +157,7 @@ export function TimelineRow({
         style={{ paddingLeft: 12 + depth * 14 }}
       >
         <Icon name={kind.icon} size={14} className="tone-text" label={kind.label} />
-        <span className="min-w-0 flex-1 truncate font-mono text-data">{span.name}</span>
+        <MiddleTruncate text={span.name} className="min-w-0 flex-1 font-mono text-data" />
         <StatusDot
           status={status}
           showLabel

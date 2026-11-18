@@ -479,7 +479,7 @@ export function SpanInspector({
         meta={formatDuration(spanDuration(span, now))}
       >
         {owner && (
-          <p className="m-0 text-muted text-ui">
+          <p className="m-0 break-words text-muted text-ui">
             in agent <span className="font-medium text-fg">{owner}</span>
           </p>
         )}
