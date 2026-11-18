@@ -1,0 +1,112 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pydantic-ai-viz"
+dynamic = ["version"]
+description = "See what your Pydantic AI agents are and what they do: blueprints, live runs and shareable replays. Unofficial, not affiliated with Pydantic."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "pydantic-ai-viz contributors" }]
+keywords = [
+    "pydantic-ai",
+    "agents",
+    "llm",
+    "visualization",
+    "tracing",
+    "opentelemetry",
+    "devtools",
+    "pydantic-graph",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Debuggers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pydantic-ai-slim>=2.70,<3",
+    "opentelemetry-sdk>=1.30",
+]
+
+[project.urls]
+Homepage = "https://github.com/LowWeiLin/pydantic-ai-viz"
+Documentation = "https://lowweilin.github.io/pydantic-ai-viz/"
+Repository = "https://github.com/LowWeiLin/pydantic-ai-viz"
+Issues = "https://github.com/LowWeiLin/pydantic-ai-viz/issues"
+Changelog = "https://github.com/LowWeiLin/pydantic-ai-viz/blob/main/CHANGELOG.md"
+
+[project.scripts]
+pydantic-ai-viz = "pydantic_ai_viz.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "anyio>=4",
+    "inline-snapshot>=0.20",
+    "ruff>=0.9",
+    "pyright>=1.1.390",
+    "pre-commit>=4",
+]
+docs = [
+    "mkdocs-material>=9.6,<10",
+    "mkdocstrings[python]>=0.28",
+]
+
+[tool.hatch.version]
+path = "src/pydantic_ai_viz/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pydantic_ai_viz"]
+exclude = ["src/pydantic_ai_viz/_static/.gitignore"]
+artifacts = ["src/pydantic_ai_viz/_static/viewer.html"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/tests", "/scripts", "/schema", "/README.md", "/LICENSE", "/CHANGELOG.md"]
+artifacts = ["src/pydantic_ai_viz/_static/viewer.html"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["web"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "C4", "PT", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Docstrings are required on the public API only.
+"tests/**" = ["D"]
+"scripts/**" = ["D"]
+"examples/**" = ["D"]
+"src/pydantic_ai_viz/_*.py" = ["D"]
+"src/pydantic_ai_viz/demos/**" = ["D"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+strict = ["src"]
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+xfail_strict = true

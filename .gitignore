@@ -1,0 +1,26 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Docs and hosted demo output
+site/
+
+# Web
+node_modules/
+web/dist/
+web/test-results/
+web/playwright-report/
+
+# Built viewer copied into the package by the web build
+src/pydantic_ai_viz/_static/viewer.html
+
+# Tooling scratch
+.design-workflow.tmp.js
