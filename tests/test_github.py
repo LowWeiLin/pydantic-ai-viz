@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai_viz import Limits, _github, analyze
+from pydantic_ai_viz import Limits, _github, analyze, cli
 from pydantic_ai_viz._analyze import TargetError, is_remote
 from pydantic_ai_viz._github import Checkout, FetchError, Reference, fetch, parse
 from pydantic_ai_viz._models import SourceLocation
@@ -512,3 +512,38 @@ def test_the_time_allowed_for_fetching_is_a_limit_of_its_own(hub: Hub, cache: Pa
         analyze("gh:acme/shop", limits=Limits(max_fetch_seconds=0))
     # Fetching does not use up the time for reading.
     assert len(analyze("gh:acme/shop", limits=Limits(max_fetch_seconds=60)).agents) == 4
+
+
+# ------------------------------------------------------------- command line
+
+
+def test_view_fetches_a_repository_reads_it_and_runs_none_of_it(
+    hub: Hub, cache: Path, capsys: pytest.CaptureFixture[str], placeholder_viewer: None
+) -> None:
+    code = cli.main(["view", f"gh:acme/shop@{hub.second}/src", "--export", "shop.html"])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert captured.out == "Wrote HTML export shop.html\n"
+    assert captured.err.splitlines() == [
+        f"pydantic-ai-viz: note: read acme/shop from GitHub at commit {hub.second}; none of its code was run",
+        "pydantic-ai-viz: note: skipped src/shop/link.py: it is not valid Python (invalid syntax on line 1)",
+        "Read 4 files without running any code: 3 agents, 0 graphs",
+    ]
+    page = Path("shop.html").read_text(encoding="utf-8")
+    assert f"acme/shop@{hub.second[:7]}" in page
+    assert "shop" not in {name.partition(".")[0] for name in sys.modules}
+
+
+def test_view_never_imports_what_it_fetched(
+    hub: Hub, cache: Path, capsys: pytest.CaptureFixture[str], placeholder_viewer: None
+) -> None:
+    code = cli.main(["view", "--import", "gh:acme/shop", "--export", "shop.html"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.err.startswith("pydantic-ai-viz: error: --import is refused for gh:acme/shop: ")
+    assert not Path("shop.html").exists()
+    assert not cache.exists()  # refused before anything was fetched
+
+    code = cli.main(["view", "gh:acme/shop/examples/nothing.py", "--export", "shop.html"])
+    assert code == 2
+    assert "acme/shop has no 'examples/nothing.py' at commit" in capsys.readouterr().err

@@ -19,7 +19,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol, TextIO
 
-from ._analyze import Analysis, TargetError, analyze
+from ._analyze import Analysis, TargetError, analyze, is_remote
 from ._export import export_html
 from ._server import DEFAULT_PORT, open_in_browser, serve, serve_session, server_of, wait_for_client
 from ._session import Session, blueprint_session, record
@@ -176,10 +176,12 @@ def _read_source(targets: list[str]) -> Analysis:
     for notice in analysis.notices:
         _say(f"pydantic-ai-viz: note: {notice}", sys.stderr)
     if not analysis.blueprints:
+        remote = any(is_remote(target) for target in targets)
         raise _UsageError(
-            f"no agents or graphs found in the source of {', '.join(targets)}. The code is read, not run: "
-            "an agent built in a way that cannot be seen in the source is not found. "
-            "Use --import to import the code instead (this runs it)"
+            f"no agents or graphs found in the source of {', '.join(targets)} "
+            f"({_plural(len(analysis.files), 'file')} read). The code is read, not run: "
+            "an agent built in a way that cannot be seen in the source is not found."
+            + ("" if remote else " Use --import to import the code instead (this runs it)")
         )
     unresolved = sum(len(blueprint.warnings) for blueprint in analysis.blueprints)
     summary = (
@@ -194,7 +196,17 @@ def _read_source(targets: list[str]) -> Analysis:
 
 def _view(args: argparse.Namespace) -> int:
     # --import loads the targets and reads the live objects. Without it nothing of theirs is executed.
-    targets = resolve_targets(args.targets) if args.import_targets else [_read_source(args.targets)]
+    if args.import_targets:
+        fetched = [target for target in args.targets if is_remote(target)]
+        if fetched:
+            raise _UsageError(
+                f"--import is refused for {', '.join(fetched)}: code fetched from the network is only "
+                "ever read, never run. Leave out --import, or clone the repository yourself and decide "
+                "whether you trust it"
+            )
+        targets = resolve_targets(args.targets)
+    else:
+        targets = [_read_source(args.targets)]
     # Either way no agent is run, so nothing needs instrumenting and no run will ever appear.
     with blueprint_session(*targets) as session:
         if args.export:
@@ -306,23 +318,27 @@ def _build_parser() -> argparse.ArgumentParser:
     view = commands.add_parser(
         "view",
         help="draw the blueprint of agents and graphs from their source code, without running it",
-        description="Draw blueprints by reading source files. The code is parsed, never imported or executed: "
-        "its dependencies need not be installed and nothing in it runs. What the source computes at run time "
-        "is shown as the expression that computes it.",
+        description="Draw blueprints by reading source code: a file, a whole directory, a module or a GitHub "
+        "repository. The code is parsed, never imported or executed: its dependencies need not be installed "
+        "and nothing in it runs. Imports between the project's own files are followed. What the source "
+        "computes at run time is shown as the expression that computes it.",
     )
     view.add_argument(
         "targets",
         nargs="+",
         metavar="TARGET",
-        help="path/to/file.py, or path/to/file.py:name for one agent or graph. "
-        "With --import also pkg.module and pkg.module:attr",
+        help="a file (path/to/file.py, or path/to/file.py:name for one agent or graph), a directory "
+        "(every .py file below it), a module name (pkg.module or pkg.module:name, found on disk without "
+        "importing it), or a GitHub repository (https://github.com/owner/repo[/tree/REF[/SUBDIR]] or "
+        "gh:owner/repo[@REF][/SUBDIR], fetched with git and only read)",
     )
     view.add_argument(
         "--import",
         dest="import_targets",
         action="store_true",
         help="import the targets and read the live objects instead of the source. "
-        "This EXECUTES the target code, so use it only on code you trust; its dependencies must be installed",
+        "This EXECUTES the target code, so use it only on code you trust; its dependencies must be installed. "
+        "Takes a file or a module name; refused for a GitHub repository",
     )
     view.add_argument("--export", metavar="OUT.html", help="write a blueprint-only HTML file and exit (no server)")
     _add_server_options(view)

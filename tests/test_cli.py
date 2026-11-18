@@ -586,11 +586,71 @@ def test_view_on_source_without_agents_says_so_and_points_at_import(
     assert (code, out) == (2, "")
     assert err.splitlines() == [
         "pydantic-ai-viz: note: skipped broken.py: it is not valid Python (invalid syntax on line 1)",
-        "pydantic-ai-viz: error: no agents or graphs found in the source of plain.py, broken.py. The code is read, "
-        "not run: an agent built in a way that cannot be seen in the source is not found. Use --import to import "
-        "the code instead (this runs it)",
+        "pydantic-ai-viz: error: no agents or graphs found in the source of plain.py, broken.py (1 file read). "
+        "The code is read, not run: an agent built in a way that cannot be seen in the source is not found. "
+        "Use --import to import the code instead (this runs it)",
     ]
     assert not (project / "x.html").exists()
+
+
+def test_view_on_a_directory_reads_every_file_below_it(capsys: pytest.CaptureFixture[str], project: Path) -> None:
+    (project / "app" / "deep").mkdir(parents=True)
+    (project / "app" / "deep" / "more.py").write_text(
+        "from pydantic_ai import Agent\nfrom viz_cli_agents import triage\nextra = Agent('test', name='extra')\n",
+        encoding="utf-8",
+    )
+    (project / ".venv" / "lib").mkdir(parents=True)
+    (project / ".venv" / "lib" / "installed.py").write_text(AGENTS, encoding="utf-8")
+    code, out, err = run_cli(capsys, "view", ".", "--export", "all.html")
+    assert (code, out) == (0, "Wrote HTML export all.html\n")
+    assert err == "Read 2 files without running any code: 4 agents, 0 graphs\n"
+    boot = boot_of(project / "all.html")
+    assert blueprint_labels(boot["events"]) == ["helper", "triage", "unnamed", "extra"]
+    assert boot["events"][0]["title"] == project.name
+    files = [e["agent"]["location"]["file"] for e in boot["events"] if e["type"] == "blueprint.agent"]
+    assert files == [*["viz_cli_agents.py"] * 3, "app/deep/more.py"]
+
+    # A subdirectory alone, in what is now recognisably a project: the file it imports is read too,
+    # and the agent imported by name is shown with the agent it delegates to.
+    (project / "pyproject.toml").write_text("", encoding="utf-8")
+    code, out, err = run_cli(capsys, "view", "app", "--export", "app.html")
+    assert (code, out) == (0, "Wrote HTML export app.html\n")
+    assert err.splitlines()[-1] == "Read 2 files without running any code: 3 agents, 0 graphs"
+    events = boot_of(project / "app.html")["events"]
+    assert blueprint_labels(events) == ["extra", "helper", "triage"]
+    assert events[2]["agent"]["location"] == {"file": "../viz_cli_agents.py", "line": 10}
+
+
+def test_view_on_a_module_name_finds_the_file_without_importing_it(
+    capsys: pytest.CaptureFixture[str], project: Path
+) -> None:
+    (project / "viz_cli_agents.py").write_text("raise RuntimeError('imported')\n" + AGENTS, encoding="utf-8")
+    code, out, err = run_cli(capsys, "view", "viz_cli_agents:triage", "--export", "one.html")
+    assert (code, out, err) == (0, "Wrote HTML export one.html\n", READ_ONE_FILE + "2 agents, 0 graphs\n")
+    boot = boot_of(project / "one.html")
+    assert blueprint_labels(boot["events"]) == ["triage", "helper"]
+    assert boot["events"][0]["title"] == "viz_cli_agents"
+    assert "viz_cli_agents" not in sys.modules
+
+
+@pytest.mark.parametrize(
+    "target", ["gh:owner/repo", "https://github.com/owner/repo/tree/main/src", "https://example.com/x.py"]
+)
+def test_view_import_is_refused_for_code_that_would_be_fetched(
+    capsys: pytest.CaptureFixture[str], project: Path, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    def no_fetching(*args: object, **kwargs: object) -> None:
+        raise AssertionError("nothing may be fetched for a target that is refused")
+
+    monkeypatch.setattr(subprocess, "run", no_fetching)
+    code, out, err = run_cli(capsys, "view", "--import", "viz_cli_agents.py", target, "--export", "x.html")
+    assert (code, out) == (2, "")
+    assert err == (
+        f"pydantic-ai-viz: error: --import is refused for {target}: code fetched from the network is only ever "
+        "read, never run. Leave out --import, or clone the repository yourself and decide whether you trust it\n"
+    )
+    assert not (project / "x.html").exists()
+    assert "viz_cli_agents" not in sys.modules  # refused before any target was imported
 
 
 def test_view_help_says_that_import_executes_the_code(capsys: pytest.CaptureFixture[str]) -> None:
