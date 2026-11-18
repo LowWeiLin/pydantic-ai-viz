@@ -182,8 +182,10 @@ export function SchemaTable({
               {/* The description sits under the name: a third column leaves it a few words
                   per line in a narrow inspector. */}
               <th scope="row" className="px-2 py-1.5 text-left font-normal">
+                {/* break-all: a long snake_case name has no break opportunity of its own, and
+                    unbroken it pushes the Type column out of a narrow inspector. */}
                 <span
-                  className="font-mono text-fg"
+                  className="break-all font-mono text-fg"
                   style={{ paddingLeft: row.depth * 12 }}
                   title={row.path}
                 >
