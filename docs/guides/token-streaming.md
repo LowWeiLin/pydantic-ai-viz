@@ -19,7 +19,7 @@ The bundled demos always stream, so `pydantic-ai-viz demo` shows what it looks l
     Turning this on makes every model request of the affected agents a **streaming** request, including runs started with plain `agent.run()` or `agent.run_sync()`. A model that cannot stream then fails. With a `FunctionModel` that has no `stream_function`, for example, the run raises:
 
     ```text
-    AssertionError: FunctionModel must receive a 'stream_function' to support streamed requests
+    AssertionError: FunctionModel must receive a `stream_function` to support streamed requests
     ```
 
     That is why `stream` is `False` unless you ask for it.

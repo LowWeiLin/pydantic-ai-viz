@@ -75,7 +75,7 @@ pnpm --dir web build
 
 Released packages on PyPI include the viewer, so this does not happen with `pip install pydantic-ai-viz`.
 
-## A run fails with `AssertionError: FunctionModel must receive a 'stream_function'`
+## A run fails with ``AssertionError: FunctionModel must receive a `stream_function` ``
 
 Token streaming is on (`stream=True` or `--stream`) and the agent uses a model that cannot stream. Turning streaming on makes every model request of that agent a streaming request. Turn it off, or give the `FunctionModel` a `stream_function`. The reason is explained in [Token streaming](guides/token-streaming.md).
 
