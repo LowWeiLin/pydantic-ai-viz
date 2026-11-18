@@ -62,7 +62,11 @@ class ModelInfo(WireModel):
     provider: str | None
     offline: bool
     expression: str | None
-    """Source text of the model argument when it is not a string literal; ``name`` then repeats it."""
+    """Source text of the model argument when it is not a string literal.
+
+    ``name`` then repeats it, unless the source builds one of Pydantic AI's model classes
+    with a literal model name (``OpenAIChatModel("gpt-5.2", ...)``): that name is the ``name``.
+    """
 
 
 class Instruction(WireModel):

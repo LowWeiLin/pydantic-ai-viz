@@ -434,15 +434,23 @@ class _AgentBuilder:
             offline = provider in _compat.OFFLINE_PROVIDERS
             return ModelInfo(id=value, name=name, provider=provider, offline=offline, expression=None)
         text = self.text(node)
+        name: str | None = None
         provider = None
         target = self.resolver.resolve(node, self.scope, self.line)
         if isinstance(target, Expression) and isinstance(target.node, ast.Call):
             callee = self.resolver.callee(target.node, target.scope, target.line)
             if isinstance(callee, External) and callee.is_library(*_OFFLINE_MODELS):
                 provider = _OFFLINE_MODELS[callee.last]
-        if provider is None:
+            elif isinstance(callee, External) and callee.name.startswith("pydantic_ai.models."):
+                # One of Pydantic AI's model classes: ``OpenAIChatModel("gpt-5.2", provider=...)`` names its model.
+                call = target.node
+                spelled = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
+                spelled = spelled or next((item.value for item in call.keywords if item.arg == "model_name"), None)
+                if spelled is not None:
+                    name = string(self.resolver, spelled, target.scope, target.line)
+        if provider is None and name is None:
             self.warn(f"the model is set by `{brief(text)}`, so it is only known when the code runs")
-        return ModelInfo(id=None, name=text, provider=provider, offline=provider is not None, expression=text)
+        return ModelInfo(id=None, name=name or text, provider=provider, offline=provider is not None, expression=text)
 
     def _deps_type(self) -> str | None:
         node = self.arguments.get("deps_type")

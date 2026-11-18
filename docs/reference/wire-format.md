@@ -94,7 +94,7 @@ type AgentBlueprint = {
     name: string;
     provider: string | null;
     offline: boolean;
-    expression: string | null; // source text of a model that is not a string literal; name repeats it
+    expression: string | null; // source text of a model that is not a string literal; name repeats it, or is the literal model name given to a model class
   } | null;
   deps_type: string | null;    // qualified type name; null for object or None
   instructions: Instruction[];

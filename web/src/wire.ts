@@ -119,7 +119,11 @@ export type ModelInfo = {
   name: string;
   provider: string | null;
   offline: boolean;
-  /** Source text of the model argument when it is not a string literal; `name` then repeats it. */
+  /**
+   * Source text of the model argument when it is not a string literal. `name` then repeats it,
+   * unless the source builds a Pydantic AI model class with a literal model name
+   * (`OpenAIChatModel("gpt-5.2", ...)`): that name is the `name`.
+   */
   expression: string | null;
 };
 

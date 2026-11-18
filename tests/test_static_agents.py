@@ -225,8 +225,15 @@ def test_models_given_in_other_ways() -> None:
 
     by_class = agent(found, "by_class")
     assert by_class.model is not None
-    assert by_class.model.expression == 'OpenAIChatModel("gpt-5.2", provider=make_provider())'
-    assert (by_class.model.name, by_class.model.provider, by_class.model.id) == (by_class.model.expression, None, None)
+    # A Pydantic AI model class given a literal name says which model it is; the rest stays an expression.
+    assert by_class.model.model_dump() == {
+        "id": None,
+        "name": "gpt-5.2",
+        "provider": None,
+        "offline": False,
+        "expression": 'OpenAIChatModel("gpt-5.2", provider=make_provider())',
+    }
+    assert by_class.warnings == []
 
     by_env = agent(found, "by_env")
     assert by_env.model is not None
@@ -280,6 +287,58 @@ def test_offline_model_classes_are_recognised_but_not_named(tmp_path: Path) -> N
         ("anthropic:claude-x", "claude-x", "anthropic", False),
         None,
     ]
+
+
+def test_a_model_class_given_a_literal_name_names_the_model(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        import os
+        from pydantic_ai import Agent
+        from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.models.fallback import FallbackModel
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from my_models import LocalModel
+
+        shared_model = OpenAIChatModel("gpt-5.2", provider=make_provider())
+
+        def build_model():
+            return AnthropicModel(model_name="claude-sonnet-5")
+
+        through_variable = Agent(shared_model)
+        through_factory = Agent(build_model())
+        from_environment = Agent(OpenAIChatModel(os.environ["MODEL"]))
+        wrapped = Agent(FallbackModel(shared_model, build_model()))
+        not_ours = Agent(LocalModel("llama"))
+        """,
+    )
+    models = {blueprint.label: blueprint.model for blueprint in found.agents}
+    warnings = {blueprint.label: blueprint.warnings for blueprint in found.agents}
+    assert [(label, m.name, m.expression, m.id, m.provider) for label, m in models.items() if m] == [
+        ("through_variable", "gpt-5.2", "shared_model", None, None),
+        ("through_factory", "claude-sonnet-5", "build_model()", None, None),
+        # A computed name, a model that wraps others, a class from elsewhere: only the expression is known.
+        (
+            "from_environment",
+            'OpenAIChatModel(os.environ["MODEL"])',
+            'OpenAIChatModel(os.environ["MODEL"])',
+            None,
+            None,
+        ),
+        (
+            "wrapped",
+            "FallbackModel(shared_model, build_model())",
+            "FallbackModel(shared_model, build_model())",
+            None,
+            None,
+        ),
+        ("not_ours", 'LocalModel("llama")', 'LocalModel("llama")', None, None),
+    ]
+    assert (warnings["through_variable"], warnings["through_factory"]) == ([], [])
+    assert warnings["from_environment"] == [
+        'the model is set by `OpenAIChatModel(os.environ["MODEL"])`, so it is only known when the code runs'
+    ]
+    assert len(warnings["wrapped"]) == len(warnings["not_ours"]) == 1
 
 
 def test_arguments_from_earlier_pydantic_ai_releases_are_read_too(tmp_path: Path) -> None:
