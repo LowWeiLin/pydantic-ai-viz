@@ -270,7 +270,10 @@ Spans are produced by Pydantic AI as OpenTelemetry spans and converted to the sh
     - A part of an unknown type becomes `{type: "other", raw}`.
     - A message whose parts are all `tool_result` gets the role `"tool"`, whichever role the instrumentation version gave it.
     - Tool-call `arguments` that arrive as a JSON string (streamed requests) are parsed.
-- **`attributes`** holds every raw attribute that was not mapped above, except `model_request_parameters`, `gen_ai.tool.definitions` and `logfire.json_schema`, which are large and already represented in the blueprint.
+- **`attributes`** holds every raw attribute that was not turned into a field of that span.
+    - An attribute is consumed only where its field exists. `gen_ai.conversation.id`, for example, becomes `conversation_id` on an agent run and is left in `attributes` on model requests and tool calls.
+    - `gen_ai.operation.name` decides the kind and is kept. So is `gen_ai.agent.description`, which goes to the blueprint, not to a span field.
+    - `model_request_parameters`, `gen_ai.tool.definitions` and `logfire.json_schema` are left out: they are large and already represented in the blueprint.
 
 ## Recording { #recording }
 
