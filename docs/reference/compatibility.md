@@ -84,10 +84,13 @@ So the failure mode of a Pydantic AI upgrade is a less detailed blueprint with a
 | `settings.tool_retries`, `settings.output_retries` | `agent._max_tool_retries`, `agent._max_output_retries` | `null` and a warning. |
 | `settings.tool_timeout` | `agent._tool_timeout` | `null` and a warning. |
 | `output.mode`, `output.allows_text` | `agent._output_schema` | `"text"` when the output schema is a plain string, else `"unknown"`. Filled in from the first observed run. |
+| `output.tool_names` | `agent._output_toolset`, then its `_tool_defs` | Empty list and a warning. Filled in from observed runs. |
 | `native_tools` | `agent._cap_native_tools` | Empty list. |
 | Graph `nodes` and `edges` | `pydantic_graph.graph_builder.build_mermaid_graph` (importable, but not exported) | The graph is walked through its public `nodes` and `edges_by_source` instead. |
 
 Everything else in a blueprint comes from public API: `agent.name`, `.description`, `.model`, `.deps_type`, `.output_type`, `.model_settings`, `.end_strategy`, `.toolsets`, `.root_capability`, `agent.output_json_schema()`, the public fields of toolsets and tools, and `graph.render()`.
+
+Outside the blueprint, one more private attribute is read: the class attribute `Agent._instrument_default`, which holds what `Agent.instrument_all` was last given. A session reads it so that closing can put the previous instrumentation setting back. If it cannot be read, closing a session switches instrumentation off instead.
 
 If you see a warning of this kind, please [open an issue](https://github.com/LowWeiLin/pydantic-ai-viz/issues) with your `pydantic-ai-slim` version. It is usually a small fix.
 
