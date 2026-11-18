@@ -80,7 +80,7 @@ A `.pviz.jsonl` recording or an HTML export is the event log in a file: everythi
 
 Everything captured is rendered as text, never as HTML, so a prompt or a tool result cannot inject markup or scripts into the page. When data is embedded in an export, it is escaped so that it cannot break out of its container.
 
-The viewer stores one thing in your browser: your light or dark theme choice, in `localStorage`. It stores no run data.
+The viewer stores three display preferences in your browser, in `localStorage`: your light or dark theme choice, and the width and the collapsed state of the inspector panel. It stores no run data.
 
 ## How much is kept
 
