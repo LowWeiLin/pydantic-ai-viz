@@ -195,6 +195,13 @@ If you add a private access, add it to the compat contract test and to the table
 
 ## Releasing (maintainers)
 
+Two things are set up once per repository, outside the code. Without them the workflows fail:
+
+- **GitHub Pages.** In the repository's Settings > Pages > Build and deployment, set Source to "GitHub Actions". The Docs workflow deploys on every push to `main`; until this is set its deploy job fails and the documentation URL answers 404.
+- **PyPI trusted publishing.** On PyPI, add a trusted publisher for the project: owner `LowWeiLin`, repository `pydantic-ai-viz`, workflow `release.yml`, environment `pypi`. The Release workflow publishes with it; no API token is stored in the repository.
+
+For each release:
+
 1. Update `src/pydantic_ai_viz/_version.py`.
 2. In `CHANGELOG.md`, rename "Unreleased" to the new version with today's date and start a new empty "Unreleased" section.
 3. Commit as `chore: release X.Y.Z`, tag `vX.Y.Z` and push the tag.

@@ -5,6 +5,11 @@ name: Docs
 #   /        the MkDocs site
 #   /demo/   the viewer with recordings of the bundled demos
 #   /schema/ the wire-format JSON Schema, at the URL its $id names
+#
+# One-time setup on GitHub, before the first push to main: in the repository's
+#   Settings > Pages > Build and deployment, set Source to "GitHub Actions".
+#   Until that is done the deploy job fails ("Get Pages site failed") and the
+#   documentation URL answers 404.
 
 on:
   push:
