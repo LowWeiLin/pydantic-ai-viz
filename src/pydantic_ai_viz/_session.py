@@ -23,12 +23,12 @@ from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from pydantic_ai import Agent, InstrumentationSettings
 from pydantic_graph import Graph
 
-from . import _compat
+from . import _compat, _stream
 from ._capture import CaptureProcessor
 from ._derive import add_delegate, carry_observed, merge_request, observed_blueprint
 from ._introspect import AnyAgent, AnyGraph, agent_closure, introspect_agent, introspect_graph
 from ._models import WIRE_VERSION, AgentBlueprint, GraphBlueprint, to_wire
-from ._normalize import Normalized, WireSpan
+from ._normalize import Normalized, WireSpan, clip
 from ._version import __version__
 
 Target: TypeAlias = "AnyAgent | AnyGraph | ModuleType"
@@ -230,6 +230,16 @@ class _RegisteredGraph:
     id: str
 
 
+@dataclass(slots=True)
+class _OpenRequest:
+    """A model request in flight: where the token deltas of its run belong."""
+
+    trace_id: str
+    span_id: str
+    tool_names: dict[int, str]
+    """Part index -> tool name, from the event that opened the part."""
+
+
 class Session:
     """A capture session: registered blueprints plus every run observed while it is open.
 
@@ -289,6 +299,8 @@ class Session:
         """Span id of a running tool call -> (owning agent name, tool name)."""
         self._merged_requests: set[str] = set()
         """Agent names whose first model request has been folded into their blueprint."""
+        self._open_requests: dict[str, _OpenRequest] = {}
+        """Run id -> its model request in flight. A run makes one request at a time."""
 
         with _sessions_lock:
             if instrument:
@@ -301,6 +313,8 @@ class Session:
                 self._previous_instrumentation = False if previous is None else previous
                 Agent.instrument_all(self._instrumentation)
             _open_sessions.append(self)
+        if stream:
+            _stream.add_sink(self._stream_delta)
 
         self._log.append(
             {
@@ -397,6 +411,8 @@ class Session:
             blueprint = self._introspect(entry)
             previous = self._agent_blueprints.get(entry.id)
             self._emit_agent(blueprint if previous is None else carry_observed(previous, blueprint))
+            if self.stream:
+                _stream.attach(entry.agent)
 
     def _new_agent_id(self) -> str:
         self._agent_count += 1
@@ -453,12 +469,17 @@ class Session:
                 self._observe_delegation(span, blueprint)
             elif span.kind == "tool_call":
                 self._open_tool_calls[span.span_id] = (span.agent_name, span.data.tool_name)
+            elif span.kind == "model_request" and span.run_id is not None:
+                self._open_requests[span.run_id] = _OpenRequest(span.trace_id, span.span_id, {})
             self._log.append({"type": "span.started", "span": to_wire(span)})
 
     def _span_ended(self, normalized: Normalized) -> None:
         span = normalized.span
         with self._lock:
             self._open_tool_calls.pop(span.span_id, None)
+            run_id = span.run_id
+            if run_id is not None and getattr(self._open_requests.get(run_id), "span_id", None) == span.span_id:
+                del self._open_requests[run_id]
             parameters = normalized.request_parameters
             name = span.agent_name
             if (
@@ -504,6 +525,32 @@ class Session:
             if updated is not owner:
                 self._emit_agent(updated)
 
+    def _stream_delta(self, run_id: str, delta: _stream.Delta) -> None:
+        """Log a token delta against the model request its run has open; drop it if there is none."""
+        with self._lock:
+            request = self._open_requests.get(run_id)
+            if request is None:
+                return
+            tool_name = delta.tool_name
+            if delta.part_kind == "tool_call":
+                if tool_name:
+                    request.tool_names[delta.part_index] = tool_name
+                else:
+                    tool_name = request.tool_names.get(delta.part_index)
+            # Lookup and append share the lock with the span callbacks, so a delta
+            # always lands between its request's span.started and span.ended.
+            self._log.append(
+                {
+                    "type": "stream.delta",
+                    "trace_id": request.trace_id,
+                    "span_id": request.span_id,
+                    "part_index": delta.part_index,
+                    "part_kind": delta.part_kind,
+                    "tool_name": tool_name,
+                    "delta": clip(delta.text),
+                }
+            )
+
     # ----------------------------------------------------------- lifecycle
 
     def close(self) -> None:
@@ -523,6 +570,7 @@ class Session:
                 # If that fails, instrumentation stays on, which is harmless: the log is closed below.
                 with contextlib.suppress(Exception):
                     Agent.instrument_all(self._previous_instrumentation)
+        _stream.remove_sink(self._stream_delta)
         self._log.close()
 
     def __enter__(self) -> Self:
