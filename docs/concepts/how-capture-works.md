@@ -100,7 +100,7 @@ The log is bounded. Past `max_events`, the oldest finished runs are dropped whol
 
 The viewer keeps no state of its own beyond the events it has received. It folds them into a picture: blueprints by id, spans by span id, streamed text by span.
 
-- **Live:** the local server streams the log over Server-Sent Events. A new browser tab gets every retained event and then follows along. After a dropped connection the browser asks for everything after the last event it saw.
+- **Live:** the local server streams the log over Server-Sent Events. A new browser tab gets every retained event and then follows along. After a dropped connection the browser asks for everything after the last event it saw. If the Python process was restarted in the meantime, the server notices that the browser is asking about another session and sends the new one from the start, and the viewer starts over.
 - **Recording or export:** the same events are read from a file or from inside the HTML page.
 
 **Going back in time is a projection, not a replay.** Every span has a start and an end time, so "the state at time *t*" can be computed directly: a span is visible if it had started by *t*, and still running if it had not ended by *t*. Scrubbing is therefore instant, in either direction, on a run of any length.

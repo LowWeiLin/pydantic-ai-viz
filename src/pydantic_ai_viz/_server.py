@@ -212,8 +212,13 @@ class _Handler(BaseHTTPRequestHandler):
     def _events(self) -> None:
         """The session log as server-sent events: the retained backlog first, then live."""
         viewer = self.server.viewer
-        # An id that is not a number is treated as no id at all: the client gets everything.
-        seen = _decimal(self.headers.get("Last-Event-ID", "").strip())
+        session_id = viewer.session.session_id
+        # Ids are "<session id>:<seq>". A browser that reconnects after this process was restarted
+        # (same port, new session) sends an id of the old session; a seq alone could not tell that
+        # apart from a resume. Such an id, or one that does not parse, counts as no id: the client
+        # gets everything, starting with the session.started that makes it start over.
+        theirs, _, seq = self.headers.get("Last-Event-ID", "").strip().rpartition(":")
+        seen = _decimal(seq) if theirs == session_id else None
         # No Content-Length: the stream ends when the connection does.
         self._head(HTTPStatus.OK, "text/event-stream; charset=utf-8", {"X-Accel-Buffering": "no"})
         if self.command == "HEAD":
@@ -225,7 +230,7 @@ class _Handler(BaseHTTPRequestHandler):
                 if events:
                     for start in range(0, len(events), _BACKLOG_CHUNK):
                         frames = [
-                            f"id: {envelope['seq']}\ndata: {dumps(envelope)}\n\n"
+                            f"id: {session_id}:{envelope['seq']}\ndata: {dumps(envelope)}\n\n"
                             for envelope in events[start : start + _BACKLOG_CHUNK]
                         ]
                         self.wfile.write(encode("".join(frames)))

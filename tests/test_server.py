@@ -83,6 +83,7 @@ class EventStream:
 
     def __init__(self, session: Session, last_event_id: str | None = None) -> None:
         self._connection = http.client.HTTPConnection(*address(session), timeout=TIMEOUT)
+        self._session_id = session.session_id
         headers = {"Accept": "text/event-stream"}
         if last_event_id is not None:
             headers["Last-Event-ID"] = last_event_id
@@ -117,7 +118,7 @@ class EventStream:
             elif line == "":
                 if data is not None:
                     envelope = json.loads(data)
-                    assert event_id == str(envelope["seq"])  # the SSE id is the seq
+                    assert event_id == event_id_of(self._session_id, envelope["seq"])
                     events.append(envelope)
                 event_id = data = None
             else:
@@ -135,6 +136,11 @@ class EventStream:
     def close(self) -> None:
         self.response.close()  # the response keeps the socket open until it is closed too
         self._connection.close()
+
+
+def event_id_of(session: Session | str, seq: int) -> str:
+    """The SSE id of an event: the session it belongs to, then its ``seq``."""
+    return f"{session if isinstance(session, str) else session.session_id}:{seq}"
 
 
 def wait_until(condition: Any, timeout: float = TIMEOUT) -> None:
@@ -329,14 +335,14 @@ def test_resume_with_last_event_id_sends_only_newer_events(session: Session) -> 
     events = session.events
     middle = events[len(events) // 2]["seq"]
 
-    stream = EventStream(session, last_event_id=str(middle))
+    stream = EventStream(session, last_event_id=event_id_of(session, middle))
     received = stream.read(len(events) - middle - 1)
     assert received == events[middle + 1 :]
     assert received[0]["seq"] == middle + 1
     stream.close()
 
     # Fully caught up: nothing is resent, the next thing on the stream is the next event.
-    stream = EventStream(session, last_event_id=str(events[-1]["seq"]))
+    stream = EventStream(session, last_event_id=event_id_of(session, events[-1]["seq"]))
     session.register(agent_named("late"))
     (late,) = stream.read(1)
     assert late["seq"] == events[-1]["seq"] + 1
@@ -345,7 +351,9 @@ def test_resume_with_last_event_id_sends_only_newer_events(session: Session) -> 
 
 
 # "\xb2" is a superscript two: a digit to str.isdigit(), but not a number to int().
-@pytest.mark.parametrize("last_event_id", ["999999", "not-a-number", "-1", "", "\xb2", "9" * 5000])
+@pytest.mark.parametrize(
+    "last_event_id", ["999999", "1", "0" * 32 + ":1", ":1", "not-a-number", "-1", "", "\xb2", "9" * 5000]
+)
 def test_an_id_from_another_server_gets_everything_from_seq_0(
     session: Session, last_event_id: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -367,16 +375,20 @@ def test_a_client_that_reconnects_after_a_restart_sees_the_new_session_from_the_
     assert stream.read_until_end() == []
     assert stream.ended  # the old server hung up, as a browser's EventSource would notice
 
-    # The "restarted process": a new session on the same port, with a shorter log than the client saw.
+    # The "restarted process": a new session on the same port. Its log is shorter than what the
+    # client saw, then as long, then longer; the client's id is from another session every time.
     with serve(agent_named(), port=port) as second:
         assert address(second)[1] == port
         assert last_seen > second.events[-1]["seq"]
-        resumed = EventStream(second, last_event_id=str(last_seen))
-        received = resumed.read(len(second.events))
-        resumed.close()
-        assert received == second.events
-        assert received[0]["type"] == "session.started"
-        assert received[0]["session_id"] == second.session_id != first.session_id
+        for extra in ("a", "b", "c", "d", "e"):
+            resumed = EventStream(second, last_event_id=event_id_of(first, last_seen))
+            received = resumed.read(len(second.events))
+            resumed.close()
+            assert received == second.events
+            assert received[0]["type"] == "session.started"
+            assert received[0]["session_id"] == second.session_id != first.session_id
+            second.register(agent_named(extra))
+        assert second.events[-1]["seq"] > last_seen
 
 
 def test_an_idle_stream_gets_ping_comments(session: Session) -> None:

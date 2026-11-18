@@ -369,18 +369,18 @@ Every response carries `Cache-Control: no-store`. No CORS headers are sent. A re
 ```text
 retry: 1000
 
-id: 0
+id: 5f0c2d9e8a7b4c1d9e3f2a1b0c4d5e6f:0
 data: {"seq":0,"ts":1795046400000.0,"type":"session.started",...}
 
-id: 1
+id: 5f0c2d9e8a7b4c1d9e3f2a1b0c4d5e6f:1
 data: {"seq":1,...}
 
 : ping
 ```
 
-- One Server-Sent Event per envelope, with the default event name. `id` equals `seq`.
+- One Server-Sent Event per envelope, with the default event name. `id` is `<session_id>:<seq>`.
 - On a connection without `Last-Event-ID`, the server sends every retained event in order and then follows the log. There is no separate snapshot endpoint.
-- With `Last-Event-ID: n`, the server sends retained events with `seq > n`. If `n` is higher than the server's highest `seq`, the server has restarted, and it sends everything from the start.
+- With `Last-Event-ID: <session_id>:n`, the server sends retained events with `seq > n`. If the session id is not the server's own, the server has restarted since the client last heard from it, and it sends everything from the start. It does the same for an id it cannot parse and for an `n` beyond its highest `seq`.
 - A `: ping` comment is sent every 15 seconds.
 - **Reader rule:** on a `session.started` whose `session_id` differs from the current one, discard all state and start over.
 
