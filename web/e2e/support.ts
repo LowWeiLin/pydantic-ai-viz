@@ -121,8 +121,16 @@ export function writeEmbeddedExport(events: Envelope[], file: string): string {
   return pathToFileURL(file).href;
 }
 
-/** Number of CSS animations and transitions that are running right now. */
+/**
+ * Number of CSS animations and transitions that are visibly running right now. Under reduced
+ * motion the stylesheet cuts every animation to a single 0.001 ms pass, which still exists for
+ * one frame; only something that lasts longer than a frame counts as motion.
+ */
 export const runningAnimations = (page: Page): Promise<number> =>
   page.evaluate(
-    () => document.getAnimations().filter((animation) => animation.playState === "running").length,
+    () =>
+      document.getAnimations().filter((animation) => {
+        const active = Number(animation.effect?.getComputedTiming().activeDuration ?? 0);
+        return animation.playState === "running" && active > 20;
+      }).length,
   );
