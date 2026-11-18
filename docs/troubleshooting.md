@@ -110,6 +110,7 @@ Note that without `defer_model_check=True`, `Agent("openai:gpt-5.2")` raises `Im
 - `pydantic-ai-viz view my_app.agents:support_agent` imports `my_app.agents`. Run the command from the directory and environment where `python -c "import my_app.agents"` works.
 - Only agents and graphs bound to a **top-level name** of the module or file are found. An agent created inside a function or stored in a dict is not. Name it explicitly (`module:attr`) if it is an attribute, or pass the object to `pviz.serve(...)` or `pviz.export_html(...)` in Python.
 - A file target runs the file's top-level code but not its `if __name__ == "__main__":` block. An agent created only inside that block is not found.
+- A target that calls `sys.exit()` in its top-level code (argument parsing outside the `__main__` block is the usual cause) cannot be loaded, and `view` says so. Move the exit, or the code that leads to it, into the `__main__` block.
 
 ## The agent is labelled `agent-1`
 

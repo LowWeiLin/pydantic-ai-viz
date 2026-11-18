@@ -522,6 +522,23 @@ def test_view_reports_an_error_inside_the_target_as_a_runtime_error(
     assert err == "pydantic-ai-viz: error: RuntimeError: boom at import\n"
 
 
+def test_view_on_a_file_that_exits_while_loading_says_so(capsys: pytest.CaptureFixture[str], project: Path) -> None:
+    source = "from viz_cli_agents import triage\nimport sys\nsys.exit(7)\n"
+    (project / "exits.py").write_text(source, encoding="utf-8")
+    code, out, err = run_cli(capsys, "view", "exits.py", "--export", "x.html")
+    assert (code, out) == (2, "")
+    assert err == (
+        "pydantic-ai-viz: error: exits.py called sys.exit(7) while being loaded; a target is loaded without "
+        'being run as a script, so keep exits under `if __name__ == "__main__":`\n'
+    )
+    assert not (project / "x.html").exists()
+    assert active_session() is None
+    # The same for a module target, which is imported.
+    code, _, err = run_cli(capsys, "view", "exits:triage")
+    assert code == 2
+    assert "exits called sys.exit(7) while being loaded" in err
+
+
 # ----------------------------------------------------------------------- run
 
 SCRIPT = """

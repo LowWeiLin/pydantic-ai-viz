@@ -88,7 +88,14 @@ def resolve_target(spec: str) -> Target:
         TargetError: If the file, module or attribute does not exist, or holds no agent or graph.
     """
     location, attr, is_file = _split(spec)
-    namespace = _load_file(location) if is_file else _load_module(location)
+    try:
+        namespace = _load_file(location) if is_file else _load_module(location)
+    except SystemExit as exc:
+        # Left alone, this would end the command without a word and with the target's exit code.
+        raise TargetError(
+            f"{location} called sys.exit({exc.code!r}) while being loaded; a target is loaded without being "
+            'run as a script, so keep exits under `if __name__ == "__main__":`'
+        ) from None
     if attr is None:
         if not any(isinstance(value, Agent | Graph) for value in namespace.values()):
             raise TargetError(f"no agents or graphs found at the top level of {location}")
