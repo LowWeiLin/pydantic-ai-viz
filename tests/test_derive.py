@@ -307,8 +307,8 @@ async def test_tools_from_an_opaque_toolset_are_added_to_a_static_blueprint() ->
         return "fixed"
 
     @agent.toolset(id="late")
-    def late_tools(ctx: RunContext[None]) -> FunctionToolset[None]:  # pyright: ignore[reportUnusedFunction]
-        toolset: FunctionToolset[None] = FunctionToolset(id="late-inner")
+    def late_tools(ctx: RunContext[Any]) -> FunctionToolset[Any]:  # pyright: ignore[reportUnusedFunction]
+        toolset: FunctionToolset[Any] = FunctionToolset(id="late-inner")
 
         @toolset.tool_plain
         def discovered(query: str) -> str:  # pyright: ignore[reportUnusedFunction]
