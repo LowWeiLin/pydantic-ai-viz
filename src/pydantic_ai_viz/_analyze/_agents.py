@@ -149,6 +149,8 @@ class AgentExtractor:
         self.agents: dict[int, _AgentSite] = {}
         """``id(ast.Call)`` -> the agent constructed there, in discovery order."""
         self.toolsets: dict[int, _ToolsetSite] = {}
+        self.conditional = False
+        """Set by ``items`` when an entry it returned depends on a condition."""
 
     # -------------------------------------------------------------- driver
 
@@ -333,22 +335,77 @@ class AgentExtractor:
         return None
 
     def items(self, node: ast.expr, scope: Scope, line: int, depth: int = 0) -> list[Expression] | None:
-        """The entries of a list written in source, with ``*name`` entries expanded; ``None`` if it is not one."""
+        """The entries of a list written in source; ``None`` when what the list holds cannot be read.
+
+        ``*name`` entries are expanded, and so are entries added afterwards with
+        ``append``, ``extend`` and ``insert``. Where an entry depends on a condition
+        (``[a] if flag else []``, an ``append`` inside an ``if``), it is included and
+        ``conditional`` is set, for the caller to say so. A list that is changed in
+        any other way is not read at all.
+        """
+        if depth > _MAX_EXPANSION_DEPTH:
+            return None
+        written = unwrap(node)
+        if isinstance(written, ast.IfExp | ast.BoolOp):
+            return self._either(written, scope, line, depth)
         target = self.resolver.resolve(node, scope, line)
-        if not isinstance(target, Expression) or not isinstance(target.node, ast.List | ast.Tuple | ast.Set):
+        changes = self.resolver.changed()
+        if not isinstance(target, Expression):
             return None
-        if depth > _MAX_EXPANSION_DEPTH or len(target.node.elts) > _MAX_LIST_ITEMS:
+        if isinstance(target.node, ast.IfExp | ast.BoolOp):
+            found: list[Expression] | None = self._either(target.node, target.scope, target.line, depth)
+        elif isinstance(target.node, ast.List | ast.Tuple | ast.Set) and len(target.node.elts) <= _MAX_LIST_ITEMS:
+            found = []
+            for item in target.node.elts:
+                if isinstance(item, ast.Starred):
+                    inner = self.items(item.value, target.scope, target.line, depth + 1)
+                    if inner is None:
+                        return None
+                    found.extend(inner)
+                else:
+                    found.append(Expression(item, target.scope, target.line))
+        else:
             return None
-        found: list[Expression] = []
-        for item in target.node.elts:
-            if isinstance(item, ast.Starred):
-                inner = self.items(item.value, target.scope, target.line, depth + 1)
-                if inner is None:
+        if found is None:
+            return None
+        for change in changes:
+            call = None if change.elsewhere else change.call
+            plain = call is not None and not call.keywords and not any(isinstance(a, ast.Starred) for a in call.args)
+            if call is not None and plain and change.method == "append" and len(call.args) == 1:
+                found.append(Expression(call.args[0], change.scope, change.line))
+            elif call is not None and plain and change.method == "insert" and len(call.args) == 2:
+                found.append(Expression(call.args[1], change.scope, change.line))
+            elif call is not None and plain and change.method == "extend" and len(call.args) == 1:
+                more = self.items(call.args[0], change.scope, change.line, depth + 1)
+                if more is None:
                     return None
-                found.extend(inner)
+                found.extend(more)
             else:
-                found.append(Expression(item, target.scope, target.line))
+                return None  # removed from, sorted, replaced item by item: not something to read off the page
+            if change.conditional:
+                self.conditional = True
         return found if len(found) <= _MAX_LIST_ITEMS else None
+
+    def _either(self, node: ast.IfExp | ast.BoolOp, scope: Scope, line: int, depth: int) -> list[Expression] | None:
+        """The entries of ``[a] if flag else [b]`` or ``given or [a]``: those of every alternative."""
+        if isinstance(node, ast.BoolOp) and not isinstance(node.op, ast.Or):
+            return None
+        branches = [node.body, node.orelse] if isinstance(node, ast.IfExp) else node.values
+        found: list[Expression] = []
+        for branch in branches:
+            if isinstance(branch, ast.Constant) and branch.value is None:
+                continue
+            entries = self.items(branch, scope, line, depth + 1)
+            if entries is None:
+                return None
+            found.extend(entries)
+        self.conditional = True
+        return found
+
+    def take_conditional(self) -> bool:
+        """Whether a list read since the last call had entries that depend on a condition."""
+        conditional, self.conditional = self.conditional, False
+        return conditional
 
 
 class _AgentBuilder:
@@ -386,6 +443,14 @@ class _AgentBuilder:
     def literal(self, node: ast.expr) -> Any:
         """The value an argument spells out; ``NotLiteral`` propagates."""
         return literal(self.resolver, node, self.scope, self.line)
+
+    def _listed(self, node: ast.expr, scope: Scope, line: int, what: str) -> list[Expression] | None:
+        """The entries of a list argument, with a warning when some of them depend on a condition."""
+        entries = self.extractor.items(node, scope, line)
+        if self.extractor.take_conditional() and entries is not None:
+            text = brief(scope.module.text(node))
+            self.warn(f"some of the {what} in `{text}` depend on a condition; those of every case are shown")
+        return entries
 
     # --------------------------------------------------------------- build
 
@@ -482,7 +547,9 @@ class _AgentBuilder:
         node = self.arguments.get(kind)
         if node is None:
             return []
-        entries = self.extractor.items(node, self.scope, self.line)
+        entries = self._listed(
+            node, self.scope, self.line, "instructions" if kind == "instructions" else "system prompts"
+        )
         if entries is None:
             entries = [Expression(node, self.scope, self.line)]
         prompts = (self._prompt(kind, entry) for entry in entries)
@@ -632,7 +699,7 @@ class _AgentBuilder:
         node = self.arguments.get("capabilities")
         if node is None or (isinstance(node, ast.Constant) and node.value is None):
             return []
-        entries = self.extractor.items(node, self.scope, self.line)
+        entries = self._listed(node, self.scope, self.line, "capabilities")
         if entries is None:
             self.warn(
                 f"the capabilities are built by `{brief(self.text(node))}`; they are only known when the code runs"
@@ -727,7 +794,7 @@ class _AgentBuilder:
         node = self.arguments.get("builtin_tools")
         if node is None or (isinstance(node, ast.Constant) and node.value is None):
             return []
-        entries = self.extractor.items(node, self.scope, self.line)
+        entries = self._listed(node, self.scope, self.line, "builtin tools")
         if entries is None:
             self.warn(
                 f"the builtin tools are built by `{brief(self.text(node))}`; they are only known when the code runs"
@@ -751,7 +818,7 @@ class _AgentBuilder:
             return None
         target = self.resolver.resolve(node, self.scope, self.line)
         pairs: list[tuple[str, Expression]] | None = None
-        if isinstance(target, Expression):
+        if isinstance(target, Expression) and not self.resolver.changed():  # ``settings["k"] = v`` afterwards
             inner = target.node
             if isinstance(inner, ast.Dict):
                 pairs = []
@@ -795,7 +862,7 @@ class _AgentBuilder:
             node = self.arguments.get(key)
             if node is None or (isinstance(node, ast.Constant) and node.value is None):
                 continue
-            listed = self.extractor.items(node, self.scope, self.line)
+            listed = self._listed(node, self.scope, self.line, "toolsets")
             if listed is None:
                 text = self.text(node)
                 self.warn(f"the toolsets are built by `{brief(text)}`; they are only known when the code runs")
@@ -848,7 +915,7 @@ class _AgentBuilder:
         own: list[_ToolSpec] = []
         node = self.arguments.get("tools")
         if node is not None:
-            listed = self.extractor.items(node, self.scope, self.line)
+            listed = self._listed(node, self.scope, self.line, "tools")
             if listed is None:
                 self.warn(f"the tools are built by `{brief(self.text(node))}`; they are only known when the code runs")
             for item in listed or []:
@@ -910,7 +977,7 @@ class _AgentBuilder:
                 result.tools = [*self._constructor_tools(call, current), *site.tools]
                 return [result]
             if isinstance(callee, External) and callee.is_library("CombinedToolset") and depth < 4 and call.args:
-                children = self.extractor.items(call.args[0], current.scope, current.line)
+                children = self._listed(call.args[0], current.scope, current.line, "toolsets")
                 if children is not None:
                     combined: list[_ToolsetEntry] = []
                     for child in children:
@@ -960,7 +1027,7 @@ class _AgentBuilder:
         node = node or next((item.value for item in call.keywords if item.arg == "tools"), None)
         if node is None:
             return []
-        listed = self.extractor.items(node, context.scope, context.line)
+        listed = self._listed(node, context.scope, context.line, "tools of a toolset")
         if listed is None:
             self.warn(
                 f"the tools of a toolset are built by `{brief(context.module.text(node))}`; "

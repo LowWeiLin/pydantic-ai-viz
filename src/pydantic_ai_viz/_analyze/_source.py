@@ -32,6 +32,14 @@ MAX_EXPRESSION_CHARS = 200
 """Source text of an expression is cut to this many characters on the wire."""
 
 _WHITESPACE = re.compile(r"\s+")
+MUTATORS = frozenset(
+    {"append", "extend", "insert", "remove", "pop", "clear", "sort", "reverse"}  # lists
+    | {"update", "setdefault", "popitem"}  # dicts
+    | {"add", "discard"}  # sets
+)
+"""Methods that change a list, a dict or a set in place."""
+_MAYBE = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.TryStar, ast.Match)
+"""Statements whose body may run or not, or more than once."""
 _LEAVES = (ast.Name, ast.Constant, ast.expr_context, ast.operator, ast.unaryop, ast.boolop, ast.cmpop)
 """Nodes with nothing below them that the index needs."""
 _TYPE_ALIAS: type[ast.stmt] | None = getattr(ast, "TypeAlias", None)
@@ -65,6 +73,23 @@ class Binding:
 
 
 @dataclass(slots=True, eq=False)
+class Mutation:
+    """A statement that changes a value in place: ``tools.append(f)``, ``settings["k"] = v``, ``del names[0]``."""
+
+    name: str
+    line: int
+    method: str
+    """The method called (``append``, ``update``, ...), or ``[]`` for an item that is assigned or deleted."""
+    call: ast.Call | None
+    scope: Scope
+    """The scope the statement stands in, which need not be the one that binds the name."""
+    conditional: bool
+    """Whether the statement stands inside an ``if``, a loop, a ``try`` or a ``match``: it may not happen."""
+    elsewhere: bool = False
+    """Whether it stands in another function than the one that binds the name: when it runs is not known."""
+
+
+@dataclass(slots=True, eq=False)
 class Scope:
     """A module, a function body or a class body."""
 
@@ -81,6 +106,10 @@ class Scope:
     """Function scopes: the value of each ``return`` directly in this function."""
     receiver: str | None = None
     """Function scopes directly inside a class: the name of the first parameter (``self``)."""
+    mutations: dict[str, list[Mutation]] = field(default_factory=dict[str, list[Mutation]])
+    """In-place changes to the values of names this scope binds, wherever in the file they are made."""
+    attribute_mutations: dict[str, list[Mutation]] = field(default_factory=dict[str, list[Mutation]])
+    """Class scopes: in-place changes to ``self.name`` made in the class's methods."""
 
     def bind(self, binding: Binding) -> None:
         self.bindings.setdefault(binding.name, []).append(binding)
@@ -235,7 +264,9 @@ def parse_module(data: bytes, path: Path, rel: str) -> Module | SkippedFile:
     module = Module(path=path, rel=rel, name=module_name(path), lines=text.split("\n"))
     module.scope = Scope(kind="module", node=tree, parent=None, module=module, qualname="")
     try:
-        _Indexer(module).block(tree.body, module.scope)
+        indexer = _Indexer(module)
+        indexer.block(tree.body, module.scope)
+        indexer.settle()
     except RecursionError:
         return SkippedFile(rel, "it is nested too deeply to analyse")
     return module
@@ -264,6 +295,46 @@ class _Indexer:
 
     def __init__(self, module: Module) -> None:
         self.module = module
+        self._mutations: list[tuple[Mutation, str | None]] = []
+        """In-place changes seen so far, each with the attribute of ``self`` it changes, if it is one."""
+        self._maybe = 0
+        """How many conditional statements enclose the statement being visited, within its function."""
+
+    def settle(self) -> None:
+        """File every in-place change under the scope that binds the name it changes.
+
+        Done once the whole file is indexed: a function may change a name that the
+        module binds further down.
+        """
+        for mutation, attribute in self._mutations:
+            scope = mutation.scope
+            if attribute is not None:
+                owner = scope.enclosing_class()
+                if owner is not None:
+                    mutation.elsewhere = True  # methods run in an order the class does not spell out
+                    owner.attribute_mutations.setdefault(attribute, []).append(mutation)
+                continue
+            current: Scope | None = scope
+            innermost = True
+            while current is not None:
+                if (current.kind != "class" or innermost) and mutation.name in current.bindings:
+                    mutation.elsewhere = current is not scope
+                    current.mutations.setdefault(mutation.name, []).append(mutation)
+                    break
+                innermost = False
+                current = current.parent
+
+    def _mutation(self, target: ast.expr, method: str, call: ast.Call | None, scope: Scope, line: int) -> None:
+        """Record that ``target`` (a name, or an attribute of ``self``) is changed in place."""
+        if isinstance(target, ast.Name):
+            self._mutations.append((Mutation(target.id, line, method, call, scope, self._maybe > 0), None))
+        elif (
+            isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and scope.receiver is not None
+            and target.value.id == scope.receiver
+        ):
+            self._mutations.append((Mutation(target.attr, line, method, call, scope, self._maybe > 0), target.attr))
 
     def block(self, statements: list[ast.stmt], scope: Scope) -> None:
         for statement in statements:
@@ -304,6 +375,8 @@ class _Indexer:
                 )
         elif isinstance(node, ast.Assign):
             for target in node.targets:
+                if isinstance(target, ast.Subscript):
+                    self._mutation(target.value, "[]", None, scope, line)
                 self._assign(target, node.value, scope, line)
             self._assigned(node.targets[0], node.value, scope)
         elif isinstance(node, ast.AnnAssign):
@@ -322,6 +395,9 @@ class _Indexer:
                     scope.returns.append(node.value)
                 self._expression(node.value, scope, bound_to=_function_name(scope))
         elif isinstance(node, ast.Expr):
+            called = unwrap(node.value)
+            if isinstance(called, ast.Call) and isinstance(called.func, ast.Attribute) and called.func.attr in MUTATORS:
+                self._mutation(called.func.value, called.func.attr, called, scope, line)
             self._expression(node.value, scope, statement=True)
         else:
             self._compound(node, scope)
@@ -329,13 +405,24 @@ class _Indexer:
     def _compound(self, node: ast.stmt, scope: Scope) -> None:
         """Any other statement: bind what it binds opaquely, then visit what it contains."""
         line = node.lineno
+        if isinstance(node, ast.AugAssign) and not isinstance(node.target, ast.Name):
+            # ``self.tools += [...]`` and ``settings["k"] += 1`` change a value that a name still stands for.
+            changed = node.target.value if isinstance(node.target, ast.Subscript) else node.target
+            self._mutation(changed, "[]" if isinstance(node.target, ast.Subscript) else "+=", None, scope, line)
+        elif isinstance(node, ast.Delete):
+            for target in node.targets:
+                if isinstance(target, ast.Subscript):
+                    self._mutation(target.value, "[]", None, scope, line)
         if isinstance(node, ast.For | ast.AsyncFor | ast.AugAssign):
             self._opaque(node.target, scope, line)
         elif isinstance(node, ast.With | ast.AsyncWith):
             for item in node.items:
                 if item.optional_vars is not None:
                     self._opaque(item.optional_vars, scope, line)
+        maybe = isinstance(node, _MAYBE)
+        self._maybe += maybe
         self._children(node, scope)
+        self._maybe -= maybe
 
     def _children(self, node: ast.AST, scope: Scope) -> None:
         for child in ast.iter_child_nodes(node):
@@ -381,7 +468,9 @@ class _Indexer:
                 self._expression(expression, scope)
         if node.decorator_list:
             self.module.decorated.append(Decorated(node, scope, body))
+        outer, self._maybe = self._maybe, 0  # what a function does, it does whenever it is called
         self.block(node.body, body)
+        self._maybe = outer
 
     def _class(self, node: ast.ClassDef, scope: Scope) -> None:
         scope.bind(Binding(node.name, "class", node.lineno, scope, node=node))

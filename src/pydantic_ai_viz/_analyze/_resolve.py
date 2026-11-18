@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 from ._locate import skipped_directory
-from ._source import Binding, FunctionNode, Module, Scope, unwrap
+from ._source import Binding, FunctionNode, Module, Mutation, Scope, unwrap
 
 MAX_HOPS = 32
 """How many names, attributes and factory calls one resolution may pass through."""
@@ -285,6 +285,8 @@ class Resolver:
         """``time.monotonic()`` value after which nothing is resolved any more."""
         self.timed_out = False
         """Whether a resolution was refused because the deadline had passed."""
+        self.trail: list[Expression] = []
+        """The names the last top-level ``resolve`` passed through, in order."""
         self._steps_left = MAX_STEPS
 
     # ------------------------------------------------------------- lookup
@@ -308,6 +310,40 @@ class Resolver:
             current = current.parent
         return None
 
+    def origin(self, name: str, scope: Scope, line: int) -> Binding | None:
+        """The binding that gives ``name`` its value, followed through imports between the analysed files."""
+        binding = self.lookup(name, scope, line)
+        for _ in range(MAX_HOPS):
+            if binding is None or binding.kind != "import" or binding.attr is None:
+                return binding
+            module = self.project.find_module(binding.scope.module, binding.module or "", binding.level)
+            found = None if module is None else module.scope.bindings.get(binding.attr)
+            if not found:
+                return None
+            binding = _closest(found, END_OF_MODULE)
+        return None
+
+    def changes(self, node: ast.expr, scope: Scope, line: int) -> list[Mutation]:
+        """In-place changes made to the value ``node`` names before it is used at ``line`` in ``scope``.
+
+        ``node`` is a plain name, or an attribute of ``self``. A change counts when
+        it is made before the use. Where the two stand in different scopes, the
+        order they run in is not known, and every change counts.
+        """
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            owner = _receiver_class(node.value.id, scope)
+            return [] if owner is None else list(owner.attribute_mutations.get(node.attr, ()))
+        if not isinstance(node, ast.Name):
+            return []
+        binding = self.origin(node.id, scope, line)
+        if binding is None:
+            return []
+        return [
+            change
+            for change in binding.scope.mutations.get(binding.name, ())
+            if change.scope is not scope or binding.scope is not scope or binding.line < change.line <= line
+        ]
+
     # ------------------------------------------------------------ resolve
 
     def resolve(self, node: ast.expr, scope: Scope, line: int | None = None, *, depth: int = 0) -> Resolved:
@@ -321,17 +357,36 @@ class Resolver:
                 return None
             self._steps_left = MAX_STEPS
         current = Expression(node, scope, node.lineno if line is None else line)
-        for _ in range(MAX_HOPS):
-            self._steps_left -= 1
-            if self._steps_left < 0:
-                return None  # hops multiply when resolutions nest; the total is capped as well
-            step = self._step(current, depth)
-            if isinstance(step, _Stop):
-                return current
-            if not isinstance(step, Expression):
-                return step
-            current = step
-        return None
+        trail: list[Expression] = []
+        try:
+            for _ in range(MAX_HOPS):
+                self._steps_left -= 1
+                if self._steps_left < 0:
+                    return None  # hops multiply when resolutions nest; the total is capped as well
+                if isinstance(unwrap(current.node), ast.Name | ast.Attribute):
+                    trail.append(current)
+                step = self._step(current, depth)
+                if isinstance(step, _Stop):
+                    return current
+                if not isinstance(step, Expression):
+                    return step
+                current = step
+            return None
+        finally:
+            if depth == 0:
+                self.trail = trail
+
+    def changed(self) -> list[Mutation]:
+        """In-place changes to any name the last ``resolve`` passed through on its way to a value.
+
+        ``tools = [a]`` followed by ``tools.append(b)`` resolves to the list ``[a]``,
+        which is not what ``tools`` holds when it is used. A caller that reads the
+        value has to ask here first.
+        """
+        found: list[Mutation] = []
+        for hop in self.trail:
+            found.extend(self.changes(unwrap(hop.node), hop.scope, hop.line))
+        return found
 
     def _step(self, current: Expression, depth: int) -> Resolved | _Stop:
         node = unwrap(current.node)

@@ -1,7 +1,8 @@
 """Reading literal values out of expressions, without evaluating anything.
 
 A value is read only when the source spells it out: constants, containers of
-constants, string concatenation, and a name that is assigned such a value. A
+constants, string concatenation, and a name that is assigned such a value once
+and whose value is not changed in place afterwards. A
 handful of pure string helpers that prompts are commonly wrapped in
 (``textwrap.dedent``, ``str.strip``) are applied too. Everything else raises
 ``NotLiteral``; the caller then reports the source text instead of a value.
@@ -93,6 +94,8 @@ def _read(resolver: Resolver, expression: Expression, depth: int, budget: _Budge
         return -operand if isinstance(node.op, ast.USub) else operand
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return _concatenate(resolver, expression, depth, budget)
+    if isinstance(node, ast.Name | ast.Attribute) and resolver.changes(node, expression.scope, expression.line):
+        raise NotLiteral  # appended to, updated or otherwise changed after it was assigned
     if isinstance(node, ast.Name):
         binding = resolver.lookup(node.id, expression.scope, expression.line)
         if binding is not None and len(binding.scope.bindings[node.id]) > 1:
@@ -102,7 +105,7 @@ def _read(resolver: Resolver, expression: Expression, depth: int, budget: _Budge
             return _read(resolver, Expression(binding.node, binding.scope, binding.line - 1), depth + 1, budget)
     if isinstance(node, ast.Name | ast.Attribute):
         target = resolver.resolve(node, expression.scope, expression.line)
-        if isinstance(target, Expression) and target.node is not node:
+        if isinstance(target, Expression) and target.node is not node and not resolver.changed():
             return _read(resolver, target, depth + 1, budget)
         raise NotLiteral
     if isinstance(node, ast.Call):
