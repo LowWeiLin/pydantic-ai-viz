@@ -1,0 +1,201 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: "1"
+  PYDANTIC_AI_NO_BANNER: "1"
+  NODE_VERSION: "22"
+  PNPM_VERSION: "11"
+
+# Actions are pinned by major version. astral-sh/setup-uv is the exception: it
+# publishes no floating major tag, so it is pinned to a full version and kept
+# current by Dependabot.
+
+jobs:
+  python-lint:
+    name: Python lint and types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyright
+
+  python-test:
+    name: Test (py${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          - os: windows-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.12"
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run pytest -q
+
+  python-lowest:
+    # Proves the lower bounds declared in pyproject.toml. If this job fails,
+    # raise the floor; do not loosen the test.
+    name: Test (lowest direct dependencies)
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.11"
+      UV_RESOLUTION: lowest-direct
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uv sync
+      - name: Show resolved versions
+        run: uv pip list | grep -i -E "^(pydantic|opentelemetry)"
+      - run: uv run --no-sync pytest -q
+
+  python-latest:
+    # Runs ahead of the lock file, so a new pydantic-ai release that breaks
+    # something is seen on the next push and not only by the weekly canary.
+    name: Test (latest pydantic-ai)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uv sync --upgrade-package pydantic-ai-slim
+      - name: Show resolved versions
+        run: uv pip list | grep -i -E "^(pydantic|opentelemetry)"
+      - run: uv run --no-sync pytest -q
+
+  schema-drift:
+    name: Wire schema is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run python scripts/gen_schema.py
+      - run: git diff --exit-code schema/
+
+  web:
+    name: Web lint, test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir web lint
+      - run: pnpm --dir web typecheck
+      - run: pnpm --dir web test
+      - run: pnpm --dir web build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: viewer
+          path: web/dist/viewer.html
+          if-no-files-found: error
+          retention-days: 7
+
+  e2e:
+    name: End to end (Playwright)
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: viewer
+          path: web/dist
+      - name: Put the viewer where the Python package looks for it
+        run: cp web/dist/viewer.html src/pydantic_ai_viz/_static/viewer.html
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Build recordings from the real demos
+        run: uv run python scripts/build_demo_site.py --out site/demo
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir web exec playwright install --with-deps chromium
+      - name: Playwright (fixtures, real recordings, live smoke)
+        run: pnpm --dir web e2e
+        env:
+          PVIZ_RECORDINGS_DIR: ${{ github.workspace }}/site/demo/recordings
+      - name: Integration tests against the built viewer
+        run: uv run pytest tests/integration -q
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report
+            web/test-results
+          retention-days: 7
+
+  wheel-smoke:
+    name: Wheel smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir web build
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uv build
+      - name: The viewer is inside the wheel
+        run: uv run --no-project python .github/scripts/check_wheel.py dist
+      - name: Install the wheel into a clean environment and record a demo
+        # Run from an empty directory so the source tree cannot be imported.
+        run: |
+          wheel="$(ls "$GITHUB_WORKSPACE"/dist/pydantic_ai_viz-*.whl)"
+          mkdir "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          uv run --no-project --isolated --with "$wheel" pydantic-ai-viz --version
+          uv run --no-project --isolated --with "$wheel" pydantic-ai-viz demo --list
+          uv run --no-project --isolated --with "$wheel" \
+            pydantic-ai-viz demo support --speed 0 --record out.pviz.jsonl --export out.html
+          uv run --no-project python -c "import json; e = json.loads(open('out.pviz.jsonl', encoding='utf-8').readline()); assert e['type'] == 'session.started' and e['pviz'] == 1, e"
+          test "$(wc -c < out.html)" -gt 100000
