@@ -11,7 +11,7 @@ See what your [Pydantic AI](https://ai.pydantic.dev/) agents are (the blueprint)
 
 [![An agent run in pydantic-ai-viz: blueprint canvas, span timeline and inspector](https://raw.githubusercontent.com/LowWeiLin/pydantic-ai-viz/main/docs/assets/screenshots/hero-dark.png)](https://lowweilin.github.io/pydantic-ai-viz/demo/)
 
-The screenshot links to the [live demo](https://lowweilin.github.io/pydantic-ai-viz/demo/), which replays real recordings in your browser.
+The screenshot links to the [hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/), which replays real recordings in your browser.
 
 ## Try it in 10 seconds
 

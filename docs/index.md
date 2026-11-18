@@ -13,7 +13,7 @@ See what your [Pydantic AI](https://ai.pydantic.dev/) agents **are** (the bluepr
 
 <figure class="screenshot" markdown="span">
   [![A finished agent run: the blueprint canvas with every tool marked done, the span timeline, and the inspector open on a retried tool call](assets/screenshots/hero-light.png#only-light)![A finished agent run: the blueprint canvas with every tool marked done, the span timeline, and the inspector open on a retried tool call](assets/screenshots/hero-dark.png#only-dark)](https://lowweilin.github.io/pydantic-ai-viz/demo/)
-  <figcaption>The support demo after its run, with the retried tool call selected. Click the image to open the live demo.</figcaption>
+  <figcaption>The support demo after its run, with the retried tool call selected. Click the image to open the hosted demo.</figcaption>
 </figure>
 
 ## Three commands
@@ -54,7 +54,7 @@ with pviz.serve(agent, open_browser=True) as session:
 ```
 
 [Quickstart](quickstart.md){ .md-button .md-button--primary }
-[Open the live demo](https://lowweilin.github.io/pydantic-ai-viz/demo/){ .md-button }
+[Open the hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/){ .md-button }
 
 ## What it shows
 
