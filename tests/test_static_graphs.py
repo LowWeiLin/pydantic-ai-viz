@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic_graph import Graph
+from pydantic_graph import Graph, GraphBuilder
 from static_support import FIXTURES, analyze_source, fixture, graph
 
 from pydantic_ai_viz import GraphBlueprint, analyze, blueprint
@@ -16,12 +16,16 @@ from pydantic_ai_viz._models import ENVELOPE_ADAPTER, SourceLocation, to_wire
 
 
 def shape(found: GraphBlueprint) -> dict[str, Any]:
-    """What a graph looks like, without what only one of the two ways of reading it can know."""
+    """What a graph looks like, without what only one of the two ways of reading it can know.
+
+    Edges are compared as a set: pydantic-graph releases differ in the order they keep the
+    branches of a fork in. The order the analyser gives them is pinned by the tests below.
+    """
     return {
         "name": found.name,
         "types": (found.state_type, found.input_type, found.output_type),
         "nodes": [(node.id, node.kind, node.label, node.note) for node in found.nodes],
-        "edges": [(edge.source, edge.target, edge.label) for edge in found.edges],
+        "edges": sorted((edge.source, edge.target, edge.label or "") for edge in found.edges),
         "mermaid": found.mermaid,
     }
 
@@ -30,7 +34,8 @@ def shape(found: GraphBlueprint) -> dict[str, Any]:
 
 RUNNABLE = {
     "graphs.py": ["pipeline", "fan_out", "wired"],
-    "graphs_nodes.py": ["reach", "auto", "matchnode", "mixed", "roots", "multi"],
+    "graphs_nodes.py": ["auto", "matchnode", "mixed", "multi"],
+    "graphs_reachable.py": ["reach", "roots"],
     "graphs_unreadable.py": ["counter"],
 }
 
@@ -40,6 +45,9 @@ RUNNABLE = {
 )
 def test_a_graph_read_from_source_is_the_graph_pydantic_graph_builds(name: str, variable: str) -> None:
     path = FIXTURES / name
+    if name == "graphs_reachable.py" and not hasattr(GraphBuilder, "add_reachable"):
+        # Reading the source needs no particular pydantic-graph; building the real graph to compare with does.
+        pytest.skip("the installed pydantic-graph has no GraphBuilder.add_reachable")
     # These fixtures are ours and harmless, so they can be run to get the real graph to compare with.
     live = runpy.run_path(str(path), run_name=path.stem)[variable]
     assert isinstance(live, Graph)
@@ -130,8 +138,7 @@ def test_edges_added_one_at_a_time_and_ids_given_in_the_source() -> None:
 
 
 def test_node_classes_go_where_their_run_method_says_it_returns() -> None:
-    found = fixture("graphs_nodes.py")
-    reach = graph(found, "reach")
+    reach = graph(fixture("graphs_reachable.py"), "reach")
     assert [(n.id, n.kind, n.location and n.location.line) for n in reach.nodes] == [
         ("__start__", "start", None),
         ("first", "step", 33),
@@ -153,7 +160,7 @@ def test_node_classes_go_where_their_run_method_says_it_returns() -> None:
         ("decision_2", "A"),
         ("decision_2", "__end__"),
     ]
-    mixed = graph(found, "mixed")
+    mixed = graph(fixture("graphs_nodes.py"), "mixed")
     # `Annotated[StepNode[...], tail]` names the step `tail`.
     assert ("decision", "tail") in [(e.source, e.target) for e in mixed.edges]
 

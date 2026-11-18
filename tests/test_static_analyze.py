@@ -220,9 +220,14 @@ def test_source_nested_too_deeply_is_skipped_or_cut_short_never_a_crash(tmp_path
     }
     for name, source in cases.items():
         found = analyze(write(tmp_path, name, source))
-        assert found.blueprints == [], name
-        assert len(found.notices) == 1, name
-        assert found.notices[0].startswith(f"skipped {name}: it is "), name
+        if found.blueprints:
+            # Newer Python parsers take long chains in their stride. Then the file is analysed, within
+            # the analyser's own bounds.
+            assert name in ("attributes.py", "additions.py", "calls.py"), name
+            assert (len(found.agents), found.notices) == (1, []), name
+        else:
+            assert len(found.notices) == 1, name
+            assert found.notices[0].startswith(f"skipped {name}: it is "), name
 
 
 def test_tangled_source_ends_in_warnings_not_in_a_loop(tmp_path: Path) -> None:

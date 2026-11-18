@@ -771,7 +771,8 @@ def test_labels_fall_back_from_name_to_variable_to_number(tmp_path: Path) -> Non
 
 def test_every_blueprint_of_every_fixture_is_valid_wire_data() -> None:
     names = ["basic_agent.py", "dynamic_values.py", "toolsets.py", "delegation.py", "factories.py", "outputs.py"]
-    for name in [*names, "tool_signatures.py", "graphs.py", "graphs_unreadable.py", "hostile_side_effects.py"]:
+    graphs = ["graphs.py", "graphs_nodes.py", "graphs_reachable.py", "graphs_classic.py", "graphs_unreadable.py"]
+    for name in [*names, *graphs, "tool_signatures.py", "hostile_side_effects.py"]:
         found = fixture(name)
         assert found.blueprints, name
         for blueprint in found.blueprints:

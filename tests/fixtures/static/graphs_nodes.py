@@ -26,18 +26,6 @@ class C(BaseNode[None, None, int]):
         return End(1)
 
 
-b1 = GraphBuilder(name="reach", output_type=int)
-
-
-@b1.step
-async def first(ctx: StepContext[None, None, None]) -> A:
-    return A()
-
-
-b1.add(b1.edge_from(b1.start_node).to(first))
-b1.add_reachable(A)
-reach = b1.build()
-
 b2 = GraphBuilder(name="auto", output_type=int)
 
 
@@ -86,11 +74,6 @@ b4.add(
     b4.edge_from(tail).to(b4.end_node),
 )
 mixed = b4.build()
-
-b5 = GraphBuilder(name="roots", output_type=int)
-b5.add_edge(b5.start_node, A)
-b5.add_reachable(C, A)
-roots = b5.build()
 
 # ---- a node that starts two paths runs both: a fork goes in between ------------
 
