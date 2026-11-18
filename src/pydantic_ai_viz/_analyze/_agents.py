@@ -72,7 +72,19 @@ _NATIVE_TOOLS: dict[str, str] = {
     "MCPServerTool": "mcp_server",
 }
 """Classes that ``builtin_tools=[...]`` took in earlier Pydantic AI releases -> the kind of native tool each is."""
+_TOOL_FACTORIES: dict[str, str] = {
+    "duckduckgo_search_tool": "duckduckgo_search",
+    "tavily_search_tool": "tavily_search",
+    "exa_search_tool": "exa_search",
+    "exa_find_similar_tool": "exa_find_similar",
+    "exa_get_contents_tool": "exa_get_contents",
+    "exa_answer_tool": "exa_answer",
+    "image_generation_tool": "generate_image",
+}
+"""Functions in ``pydantic_ai.common_tools`` that return a ready-made ``Tool`` -> the name that tool has."""
+_ENVIRONMENT_READERS = frozenset({"os.getenv", "os.environ.get"})
 _MAX_LIST_ITEMS = 500
+_MAX_WRAPPERS = 4
 _MAX_EXPANSION_DEPTH = 6
 
 
@@ -174,8 +186,22 @@ class AgentExtractor:
     def agent_at(self, node: ast.expr, scope: Scope, line: int | None = None) -> _AgentSite | None:
         """The agent an expression stands for, if it can be traced to one construction."""
         target = self.resolver.resolve(node, scope, line)
-        if isinstance(target, Expression) and isinstance(target.node, ast.Call):
-            return self.agents.get(id(target.node))
+        for _ in range(_MAX_WRAPPERS):
+            if not isinstance(target, Expression) or not isinstance(target.node, ast.Call):
+                return None
+            call = target.node
+            found = self.agents.get(id(call))
+            if found is not None:
+                return found
+            # ``TemporalAgent(agent)``, ``DBOSAgent(agent)``: Pydantic AI's wrappers run the agent they are given.
+            callee = self.resolver.callee(call, target.scope, target.line)
+            if not (isinstance(callee, External) and callee.is_library_class() and callee.last.endswith("Agent")):
+                return None
+            wrapped = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
+            wrapped = wrapped or next((item.value for item in call.keywords if item.arg == "wrapped"), None)
+            if wrapped is None:
+                return None
+            target = self.resolver.resolve(wrapped, target.scope, target.line)
         return None
 
     def agent_id(self, node: ast.expr, scope: Scope, line: int | None = None) -> str | None:
@@ -315,9 +341,15 @@ class AgentExtractor:
             return _ToolSpec(target.node.name, target, where, takes_ctx=self._takes_ctx(target))
         if isinstance(target, External):
             return _ToolSpec(target.last, None, location(scope.module, node), external=target.name)
+        if isinstance(target, Expression) and isinstance(target.node, ast.Attribute):
+            return self._method_tool(target)
         if isinstance(target, Expression) and isinstance(target.node, ast.Call) and depth < 2:
             call = target.node
             callee = self.resolver.callee(call, target.scope, target.line)
+            if isinstance(callee, External) and callee.is_library(*_TOOL_FACTORIES):
+                # ``duckduckgo_search_tool()``: a tool the library makes, known by the name the library gives it.
+                where = location(target.module, call)
+                return _ToolSpec(_TOOL_FACTORIES[callee.last], None, where, external=callee.name)
             if isinstance(callee, External) and callee.is_library("Tool"):
                 keywords = {item.arg: item.value for item in call.keywords if item.arg is not None}
                 inner = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
@@ -333,6 +365,29 @@ class AgentExtractor:
                 self._overrides(spec, keywords, target.scope, target.line)
                 return spec
         return None
+
+    def _method_tool(self, target: Expression) -> _ToolSpec | None:
+        """A tool that is a method of an object made in the analysed source: ``db.query`` with ``db = Database()``."""
+        attribute = target.node
+        assert isinstance(attribute, ast.Attribute)
+        owner = self.resolver.resolve(attribute.value, target.scope, target.line)
+        if not isinstance(owner, Expression) or not isinstance(owner.node, ast.Call):
+            return None
+        made = self.resolver.callee(owner.node, owner.scope, owner.line)
+        if not isinstance(made, Definition) or not isinstance(made.node, ast.ClassDef):
+            return None
+        found = made.body.bindings.get(attribute.attr)
+        method = found[-1] if found else None
+        if (
+            method is None
+            or method.kind != "def"
+            or not isinstance(method.node, ast.FunctionDef | ast.AsyncFunctionDef)
+        ):
+            return None
+        function = Definition(method.node, made.body)
+        return _ToolSpec(
+            method.node.name, function, location(made.module, method.node), takes_ctx=self._takes_ctx(function)
+        )
 
     def items(self, node: ast.expr, scope: Scope, line: int, depth: int = 0) -> list[Expression] | None:
         """The entries of a list written in source; ``None`` when what the list holds cannot be read.
@@ -502,6 +557,24 @@ class _AgentBuilder:
         name: str | None = None
         provider = None
         target = self.resolver.resolve(node, self.scope, self.line)
+        if isinstance(unwrap(node), ast.Name | ast.Attribute) and isinstance(target, Expression):
+            # ``Agent(model)``: what ``model`` was assigned says more than its name does.
+            text = target.module.text(target.node)
+        variable: str | None = None
+        if isinstance(target, Expression):
+            environment = self._environment(target)
+            if environment is not None:
+                variable, default = environment
+                if default is not None:
+                    provider, separator, name = default.partition(":")
+                    if not separator:
+                        provider, name = None, default
+                    self.warn(
+                        f"the model is read from the environment variable `{variable}` when the code runs; "
+                        f"`{default}` is the default the source gives"
+                    )
+                    offline = provider in _compat.OFFLINE_PROVIDERS
+                    return ModelInfo(id=None, name=name, provider=provider, offline=offline, expression=text)
         if isinstance(target, Expression) and isinstance(target.node, ast.Call):
             callee = self.resolver.callee(target.node, target.scope, target.line)
             if isinstance(callee, External) and callee.is_library(*_OFFLINE_MODELS):
@@ -513,9 +586,63 @@ class _AgentBuilder:
                 spelled = spelled or next((item.value for item in call.keywords if item.arg == "model_name"), None)
                 if spelled is not None:
                     name = string(self.resolver, spelled, target.scope, target.line)
+                if spelled is not None and name is None:
+                    named = self.resolver.resolve(spelled, target.scope, target.line)
+                    environment = self._environment(named) if isinstance(named, Expression) else None
+                    if environment is not None and environment[1] is not None:
+                        variable, name = environment
+                        self.warn(
+                            f"the model name is read from the environment variable `{variable}` when the code "
+                            f"runs; `{name}` is the default the source gives"
+                        )
+                    elif environment is not None:
+                        variable = environment[0]
         if provider is None and name is None:
-            self.warn(f"the model is set by `{brief(text)}`, so it is only known when the code runs")
+            if variable is not None:
+                self.warn(
+                    f"the model is read from the environment variable `{variable}`, so it is only known "
+                    "when the code runs"
+                )
+            else:
+                self.warn(f"the model is set by `{brief(text)}`, so it is only known when the code runs")
         return ModelInfo(id=None, name=name or text, provider=provider, offline=provider is not None, expression=text)
+
+    def _environment(self, value: Expression) -> tuple[str, str | None] | None:
+        """``(variable, default)`` when an expression reads an environment variable, with the default it names.
+
+        ``os.getenv("MODEL", "openai:gpt-5.2")``, ``os.environ.get("MODEL")``,
+        ``os.environ["MODEL"]`` and ``os.getenv("MODEL") or "openai:gpt-5.2"``.
+        """
+        node = value.node
+        fallback: str | None = None
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or) and len(node.values) == 2:
+            fallback = string(self.resolver, node.values[1], value.scope, value.line)
+            if fallback is None:
+                return None
+            node = node.values[0]
+        if isinstance(node, ast.Subscript):
+            container = self.resolver.resolve(node.value, value.scope, value.line)
+            if isinstance(container, External) and container.name == "os.environ":
+                variable = string(self.resolver, node.slice, value.scope, value.line)
+                return None if variable is None else (variable, fallback)
+            return None
+        if not isinstance(node, ast.Call) or not node.args or isinstance(node.args[0], ast.Starred):
+            return None
+        callee = self.resolver.callee(node, value.scope, value.line)
+        if not isinstance(callee, External) or callee.name not in _ENVIRONMENT_READERS:
+            return None
+        variable = string(self.resolver, node.args[0], value.scope, value.line)
+        if variable is None:
+            return None
+        given = (
+            node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "default"), None)
+        )
+        if given is not None and not isinstance(given, ast.Starred):
+            default = string(self.resolver, given, value.scope, value.line)
+            if default is None and not (isinstance(given, ast.Constant) and given.value is None):
+                return None  # a default that is itself computed
+            return variable, default if default is not None else fallback
+        return variable, fallback
 
     def _deps_type(self) -> str | None:
         node = self.arguments.get("deps_type")

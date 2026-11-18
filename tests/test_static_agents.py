@@ -278,7 +278,11 @@ def test_offline_model_classes_are_recognised_but_not_named(tmp_path: Path) -> N
     assert shared is not None
     assert impostor is not None
     assert (scripted.provider, scripted.offline) == ("function", True)
-    assert (shared.provider, shared.offline, shared.expression) == ("test", True, "shared_model")
+    assert (shared.provider, shared.offline, shared.expression) == (
+        "test",
+        True,
+        "TestModel()",
+    )  # what the variable was assigned
     assert (impostor.provider, impostor.offline) == (None, False)
     listed = [models[f"agent-{index}"] for index in range(5, 9)]
     assert [(m.id, m.name, m.provider, m.offline) if m else None for m in listed] == [
@@ -315,7 +319,7 @@ def test_a_model_class_given_a_literal_name_names_the_model(tmp_path: Path) -> N
     models = {blueprint.label: blueprint.model for blueprint in found.agents}
     warnings = {blueprint.label: blueprint.warnings for blueprint in found.agents}
     assert [(label, m.name, m.expression, m.id, m.provider) for label, m in models.items() if m] == [
-        ("through_variable", "gpt-5.2", "shared_model", None, None),
+        ("through_variable", "gpt-5.2", 'OpenAIChatModel("gpt-5.2", provider=make_provider())', None, None),
         ("through_factory", "claude-sonnet-5", "build_model()", None, None),
         # A computed name, a model that wraps others, a class from elsewhere: only the expression is known.
         (
@@ -336,7 +340,7 @@ def test_a_model_class_given_a_literal_name_names_the_model(tmp_path: Path) -> N
     ]
     assert (warnings["through_variable"], warnings["through_factory"]) == ([], [])
     assert warnings["from_environment"] == [
-        'the model is set by `OpenAIChatModel(os.environ["MODEL"])`, so it is only known when the code runs'
+        "the model is read from the environment variable `MODEL`, so it is only known when the code runs"
     ]
     assert len(warnings["wrapped"]) == len(warnings["not_ours"]) == 1
 

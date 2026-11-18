@@ -65,6 +65,10 @@ class External:
         """Whether this is one of ``names`` from Pydantic AI or pydantic-graph, whichever submodule it came from."""
         return self.name.partition(".")[0] in _LIBRARIES and self.last in names
 
+    def is_library_class(self) -> bool:
+        """Whether this is a class (a capitalised name) of Pydantic AI or pydantic-graph."""
+        return self.name.partition(".")[0] in _LIBRARIES and self.last[:1].isupper()
+
     def comes_from(self, package: str, *names: str) -> bool:
         return self.name.partition(".")[0] == package and self.last in names
 
