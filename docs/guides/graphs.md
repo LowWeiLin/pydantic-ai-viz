@@ -39,14 +39,20 @@ Joins, broadcasts and maps are drawn as cards with their kind. The **Copy Mermai
 Agent runs are captured without touching your code. Graph runs are different: `pydantic-graph` reports its own progress only through Logfire, so there is nothing for a plain OpenTelemetry processor to pick up. To see graph nodes light up, change the one line that runs the graph:
 
 ```python
+import asyncio
+
 import pydantic_ai_viz as pviz
 from my_app.pipeline import Draft, graph
 
-pviz.serve(graph, open_browser=True)
+session = pviz.serve(graph, open_browser=True)
 
-# before: output = await graph.run(state=Draft(), inputs="Announce dark mode")
-output = await pviz.run_graph(graph, state=Draft(), inputs="Announce dark mode")
+# before: output = asyncio.run(graph.run(state=Draft(), inputs="Announce dark mode"))
+output = asyncio.run(pviz.run_graph(graph, state=Draft(), inputs="Announce dark mode"))
+
+session.wait()  # keep the viewer up until Ctrl+C
 ```
+
+Inside code that is already async, the line is `output = await pviz.run_graph(...)`.
 
 [`run_graph`](../reference/python-api.md#run_graph) takes the same `state`, `deps` and `inputs` as `graph.run` and returns the graph's output. While it runs:
 
