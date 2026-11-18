@@ -154,12 +154,17 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm --dir web install --frozen-lockfile
       - run: pnpm --dir web exec playwright install --with-deps chromium
-      - name: Playwright (fixtures, real recordings, live smoke)
+      - name: Playwright (fixtures and real recordings)
         run: pnpm --dir web e2e
         env:
           PVIZ_RECORDINGS_DIR: ${{ github.workspace }}/site/demo/recordings
-      - name: Integration tests against the built viewer
+          # The screenshots spec runs too; keep its output away from the committed docs images.
+          PVIZ_SCREENSHOTS_DIR: ${{ runner.temp }}/screenshots
+      - name: Integration tests, including the live demo in a browser
         run: uv run pytest tests/integration -q
+        env:
+          # The viewer and a browser are here, so a test that would skip without them must run.
+          PVIZ_REQUIRE_BROWSER_TESTS: "1"
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
