@@ -25,9 +25,9 @@ Capture is process-wide, so the viewer also sees runs of agents nobody told it a
 | When this happens | The observed blueprint gains |
 |---|---|
 | The agent's first run starts | Name, description and model name |
-| Its first model request ends | The tools the model was offered, with parameter schemas, grouped by toolset; the output tools; the resolved instructions of that request |
+| A model request ends | The tools the model was offered, with parameter schemas, grouped by toolset; the output tools; the resolved instructions of the first request. Each later request adds the tools not seen before. |
 
-An observed blueprint is accurate, but it is a snapshot of one run. It cannot know which instructions are dynamic, which function implements a tool, or about tools that were filtered out of that request. Passing the agent as a target replaces the observed blueprint with a static one, in place.
+An observed blueprint is accurate, but it only knows what runs have shown. It cannot know which instructions are dynamic, which function implements a tool, or about tools that no request has offered yet. Passing the agent as a target replaces the observed blueprint with a static one, in place.
 
 ### The two also fill each other in
 

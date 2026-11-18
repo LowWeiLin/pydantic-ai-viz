@@ -323,8 +323,6 @@ class Session:
         self._graph_count = 0
         self._open_tool_calls: dict[str, tuple[str | None, str]] = {}
         """Span id of a running tool call -> (owning agent name, tool name)."""
-        self._merged_requests: set[str] = set()
-        """Agent names whose first model request has been folded into their blueprint."""
         self._open_requests: dict[str, _OpenRequest] = {}
         """Run id -> its model request in flight. A run makes one request at a time."""
 
@@ -515,14 +513,10 @@ class Session:
                 del self._open_requests[run_id]
             parameters = normalized.request_parameters
             name = span.agent_name
-            if (
-                span.kind == "model_request"
-                and name is not None
-                and parameters is not None
-                and name not in self._merged_requests
-            ):
-                # Rule 2, once per agent name: the request says which tools and output mode the model was given.
-                self._merged_requests.add(name)
+            if span.kind == "model_request" and name is not None and parameters is not None:
+                # Rule 2: the request says which tools and output mode the model was given. Every request
+                # is looked at, because a dynamic or filtered toolset can offer tools it did not offer
+                # before; merging is a no-op that returns the same object when nothing is new.
                 blueprint = self._blueprint_for_run(name, None, span.data.model_name)
                 merged = merge_request(
                     blueprint, parameters, instructions=span.data.instructions, provider=span.data.provider

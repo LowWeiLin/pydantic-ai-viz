@@ -310,6 +310,35 @@ async def test_a_run_named_like_no_registered_agent_is_never_bound_to_an_unnamed
     }
 
 
+async def test_tools_first_offered_on_a_later_request_still_reach_the_blueprint() -> None:
+    """A dynamic toolset can offer different tools on every run."""
+    agent: Agent[None, str] = Agent(TestModel(call_tools=[]), name="dynamic")
+    calls = 0
+
+    @agent.toolset
+    def offered(ctx: RunContext[None]) -> FunctionToolset[None]:  # pyright: ignore[reportUnusedFunction]
+        nonlocal calls
+        calls += 1
+        return FunctionToolset([first_tool if calls == 1 else second_tool])
+
+    def first_tool() -> str:
+        return "1"
+
+    def second_tool() -> str:
+        return "2"
+
+    with record(agent) as session:
+        await agent.run("one")
+        await agent.run("two")
+        await agent.run("three")  # nothing new: no further blueprint event
+        events = agent_events(session.events)
+    assert [[(tool["name"], tool["origin"]) for tool in a["tools"]] for a in events] == [
+        [],
+        [("first_tool", "observed")],
+        [("first_tool", "observed"), ("second_tool", "observed")],
+    ]
+
+
 async def test_delegation_edge_is_upgraded_to_observed() -> None:
     team = build_team()
     with record(team.main) as session:

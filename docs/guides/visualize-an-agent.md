@@ -69,7 +69,7 @@ Tool nodes
 
 Opaque toolsets
 
-:   A toolset whose tools cannot be listed without running it (an MCP server, or a toolset built by a function at run time) is shown as one placeholder node marked "resolved at run time". Its tools are added to the blueprint, marked as observed, the first time a run uses that agent.
+:   A toolset whose tools cannot be listed without running it (an MCP server, or a toolset built by a function at run time) is shown as one placeholder node marked "resolved at run time". Its tools are added to the blueprint, marked as observed, as runs offer them to the model: the first run adds the ones it was given, and a later run adds any it was not.
 
 Output node
 
