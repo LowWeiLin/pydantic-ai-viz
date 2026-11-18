@@ -2,13 +2,14 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, test, vi } from "vitest";
+import type { Json } from "../wire";
 import { Chip, StatusDot } from "./Badge";
 import { CopyButton } from "./CopyButton";
 import { EmptyState, Redacted, Snippet } from "./EmptyState";
 import { JsonTree } from "./JsonTree";
 import { MiddleTruncate } from "./MiddleTruncate";
 import { Dialog, Tabs } from "./overlays";
-import { SchemaTable, schemaRows, schemaType } from "./SchemaTable";
+import { SchemaTable, schemaRows, schemaType, unresolvedType } from "./SchemaTable";
 import { statusMeta } from "./tone";
 import { useStickToBottom } from "./useStickToBottom";
 
@@ -187,6 +188,35 @@ describe("schemaRows", () => {
       $ref: "#/$defs/Node",
     };
     expect(schemaRows(tree)?.map((r) => r.path)).toEqual(["children"]);
+  });
+
+  test("a type static analysis could not follow is shown as the source names it", () => {
+    const unresolved = { "x-python-type": "Verdict[Claim]" };
+    expect(unresolvedType(unresolved)).toBe("Verdict[Claim]");
+    expect(unresolvedType({ type: "string" })).toBeNull();
+    expect(unresolvedType(null)).toBeNull();
+    expect(schemaType(unresolved, unresolved)).toBe("Verdict[Claim]");
+
+    // As a field, in a list and in a union it reads like any other type.
+    const schema: Json = {
+      type: "object",
+      properties: {
+        claim: { "x-python-type": "Claim[Source]" },
+        all: { type: "array", items: { "x-python-type": "Claim[Source]" } },
+        maybe: { anyOf: [{ "x-python-type": "Claim[Source]" }, { type: "null" }] },
+      },
+    };
+    expect(schemaRows(schema)?.map((row) => row.type)).toEqual([
+      "Claim[Source]",
+      "Claim[Source][]",
+      "Claim[Source] | null",
+    ]);
+
+    // On its own there are no fields to list, and the table says why.
+    render(<SchemaTable schema={unresolved} caption="Output of fact_checker" />);
+    expect(screen.getByText(/Output of fact_checker/)).toHaveTextContent(
+      "Output of fact_checker: Verdict[Claim]. The type is shown as the source names it",
+    );
   });
 
   test("schemas without named fields give null and a type expression", () => {

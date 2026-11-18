@@ -36,10 +36,21 @@ function refName(schema: Schema): string | null {
   return typeof schema.$ref === "string" ? (schema.$ref.split("/").at(-1) ?? null) : null;
 }
 
+/**
+ * The source text of a type that static analysis could not follow to a schema, which it
+ * writes as `{"x-python-type": "Verdict[Claim]"}`. Null for every other schema.
+ */
+export function unresolvedType(schema: Json | null | undefined): string | null {
+  const text = isSchema(schema) ? schema["x-python-type"] : undefined;
+  return typeof text === "string" ? text : null;
+}
+
 /** A compact type expression: "string", "integer[]", "Order | null", '"a" | "b"'. */
 export function schemaType(schema: Json | undefined, root: Schema): string {
   if (schema === true || schema === undefined) return "any";
   if (!isSchema(schema)) return "any";
+  const unresolved = unresolvedType(schema);
+  if (unresolved !== null) return unresolved;
   const named = refName(schema);
   if (named) return named;
   for (const key of ["anyOf", "oneOf"] as const) {
@@ -155,6 +166,8 @@ export function SchemaTable({
     return (
       <p className={cx("m-0 text-muted text-ui", className)}>
         {caption}: <code className="text-fg">{type}</code>
+        {unresolvedType(schema) !== null &&
+          ". The type is shown as the source names it: what it holds is decided at run time."}
       </p>
     );
   }
