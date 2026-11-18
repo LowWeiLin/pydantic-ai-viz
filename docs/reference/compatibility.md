@@ -35,7 +35,7 @@ All runs below are the full Python test suite (`pytest`, 482 tests), on Windows 
 | 3.12.9 | 2.20.0 | 1.45.2 | **Fails**: 30 tests, and 20 more stop with an error |
 | 3.12.9 | 2.0.0 | 1.45.2 | **Fails**: 34 tests, and 23 more stop with an error |
 
-The runs with 2 skipped were made in a clean copy of the repository without the built viewer; the two tests that need it (the demo site builder and the viewer in a browser) are skipped there, as they are in the CI test matrix.
+The runs with 2 skipped were made in a clean copy of the repository without the built viewer; the two tests that need it (the demo site builder and the viewer in a browser) are skipped there, as they will be in the CI test matrix.
 
 That is the complete list. Releases between the ones named were not run.
 
@@ -49,11 +49,11 @@ The floor is the oldest release on which the whole suite passes, found by runnin
 
 The package still imports on 2.0.0 and most of it works there, but "most" is not what a declared range promises, so `pip` will refuse anything older than 2.60.
 
-Not run on this machine, and covered by CI only: Linux and macOS.
+**Linux and macOS were not run.** The CI test matrix is configured to run them, but it had not run when this page was written. Until it has, treat both as expected to work, not as verified.
 
-CI keeps this honest going forward:
+CI is set up to keep this honest going forward:
 
-| CI job | What it proves |
+| CI job | What it checks |
 |---|---|
 | Test matrix | The suite passes on Python 3.11 to 3.14 on Linux, and on 3.12 on Windows and macOS, with the locked dependency versions |
 | Lowest direct dependencies | The suite passes with the *lowest* versions the declared ranges allow. If this job fails, the floor is raised. |
