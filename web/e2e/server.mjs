@@ -7,6 +7,8 @@
 //   /live/          a live session: boot slot filled like the Python server does, and an SSE
 //                   stream that plays the sample fixture's first run in compressed time
 //   /live-hold-N/   the same, but the stream stops (and stays open) after N events
+//   /view/          what `pydantic-ai-viz view` serves: the same boot slot, and a stream that
+//                   sends the blueprint-only fixture and then stays open with nothing to add
 //
 // Usage: node e2e/server.mjs   (port from PVIZ_E2E_PORT, default 4319)
 import { randomUUID } from "node:crypto";
@@ -67,10 +69,15 @@ function sendRecording(res, dir, name) {
 
 // ---------- the live mock ----------
 
-const sample = readFileSync(path.join(fixturesDir, "sample.pviz.jsonl"), "utf8")
-  .split("\n")
-  .filter(Boolean)
-  .map((line) => JSON.parse(line));
+const readEvents = (...file) =>
+  readFileSync(path.join(fixturesDir, ...file), "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+
+const sample = readEvents("sample.pviz.jsonl");
+/** A blueprint-only session: all of it is "header", and no run ever follows. */
+const blueprints = readEvents("blueprint", "newsroom.pviz.jsonl");
 const firstTrace = sample.find((event) => event.type === "span.started").span.trace_id;
 /** Session start, the blueprints, and the first run: what a demo session emits. */
 const script = sample.filter((event) => {
@@ -107,7 +114,7 @@ function again(events, n) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sessions = new Map();
 
-function liveSession(holdAt) {
+function liveSession(holdAt, header, run) {
   const log = [];
   const clients = new Set();
   const state = { busy: false, started: false, runs: 0, down: false };
@@ -140,7 +147,7 @@ function liveSession(holdAt) {
         // Like `pydantic-ai-viz demo`: the scenario starts when the first client connects.
         state.started = true;
         for (const event of header) emit(event);
-        void play(run);
+        if (run.length > 0) void play(run);
       }
     },
     /** What a stopped server looks like: open streams end and new ones are refused. */
@@ -162,15 +169,19 @@ function writeEvent(res, envelope) {
   res.write(`id: ${envelope.seq}\ndata: ${JSON.stringify(envelope)}\n\n`);
 }
 
-function sendLiveViewer(res, holdAt) {
+function sendLiveViewer(res, holdAt, blueprintOnly = false) {
   const key = randomUUID();
-  sessions.set(key, liveSession(holdAt));
+  sessions.set(
+    key,
+    blueprintOnly ? liveSession(null, blueprints, []) : liveSession(holdAt, header, run),
+  );
   const boot = JSON.stringify({
     mode: "live",
     events_url: `api/v1/events?s=${key}`,
     export_html_url: "api/v1/export.html",
     export_jsonl_url: "api/v1/export.jsonl",
-    rerun_url: `api/v1/rerun?s=${key}`,
+    // Only the demo can run again; `view` has nothing to run.
+    rerun_url: blueprintOnly ? null : `api/v1/rerun?s=${key}`,
   });
   send(res, 200, readFileSync(viewerFile, "utf8").replace(BOOT_TOKEN, boot), TYPES[".html"]);
 }
@@ -179,10 +190,16 @@ function sendLiveViewer(res, holdAt) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
-  const live = /^\/live(?:-hold-(\d+))?\/(.*)$/.exec(url.pathname);
+  const live = /^\/(?:view|live(?:-hold-(\d+))?)\/(.*)$/.exec(url.pathname);
   if (live) {
     const session = sessions.get(url.searchParams.get("s") ?? "");
-    if (live[2] === "") return sendLiveViewer(res, live[1] ? Number(live[1]) : null);
+    if (live[2] === "") {
+      return sendLiveViewer(
+        res,
+        live[1] ? Number(live[1]) : null,
+        url.pathname.startsWith("/view/"),
+      );
+    }
     if (live[2] === "api/v1/events" && session) {
       const lastId = Number(req.headers["last-event-id"] ?? -1);
       return session.connect(res, Number.isFinite(lastId) ? lastId : -1);
@@ -199,6 +216,11 @@ const server = http.createServer((req, res) => {
   const recording = /^recordings\/([^/]+)$/.exec(rest);
   if (recording && name !== "bare") {
     return sendRecording(res, name === "shots" ? recordingsDir : fixturesDir, recording[1]);
+  }
+  // The blueprint-only fixtures, which are not recordings and are in no index.
+  const blueprint = /^recordings\/blueprint\/([^/]+)$/.exec(rest);
+  if (blueprint && name === "fx") {
+    return sendFile(res, path.join(fixturesDir, "blueprint", path.basename(blueprint[1])));
   }
   send(res, 404, '{"error":"not found"}');
 });

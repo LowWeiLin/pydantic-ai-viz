@@ -15,6 +15,10 @@ const webDir = path.resolve(import.meta.dirname, "..");
 const fixturesDir = path.join(webDir, "fixtures");
 const schemaPath = path.resolve(webDir, "..", "schema", "pviz.schema.json");
 const recordings = readdirSync(fixturesDir).filter((name) => name.endsWith(".pviz.jsonl"));
+/** Blueprint-only sessions. They hold no run, so they are kept out of the recordings. */
+const blueprints = readdirSync(path.join(fixturesDir, "blueprint")).map(
+  (name) => `blueprint/${name}`,
+);
 
 test("the expected fixtures exist", () => {
   expect(recordings.sort()).toEqual([
@@ -22,6 +26,7 @@ test("the expected fixtures exist", () => {
     "redacted.pviz.jsonl",
     "sample.pviz.jsonl",
   ]);
+  expect(blueprints).toEqual(["blueprint/newsroom.pviz.jsonl"]);
 });
 
 const hasSchema = existsSync(schemaPath);
@@ -39,7 +44,7 @@ describe.skipIf(!hasSchema)("fixtures match schema/pviz.schema.json", () => {
       )
     : null;
 
-  test.each(recordings)("%s", (name) => {
+  test.each([...recordings, ...blueprints])("%s", (name) => {
     const problems: string[] = [];
     fixture(name).forEach((envelope, i) => {
       if (validate?.(envelope)) return;
@@ -229,6 +234,51 @@ describe("what each fixture is for", () => {
         expect(span.data).toMatchObject({ arguments: null, result: null });
       if (span.kind === "model_request") expect(span.data.usage).not.toBeNull();
     }
+  });
+
+  test("newsroom: read from source, with everything static analysis can and cannot say", () => {
+    const envelopes = fixture("blueprint/newsroom.pviz.jsonl");
+    expect(fixtureText("blueprint/newsroom.pviz.jsonl")).not.toContain("\r");
+    expect(envelopes.map((e) => e.seq)).toEqual(envelopes.map((_, i) => i));
+    expect(types(envelopes)).toEqual(
+      new Set(["session.started", "blueprint.agent", "blueprint.graph"]),
+    );
+    expect(envelopes[0]).toMatchObject({ type: "session.started", mode: "blueprint" });
+    expect(envelopes[0]?.type === "session.started" && envelopes[0].notices).toHaveLength(1);
+
+    const agents = envelopes.flatMap((e) => (e.type === "blueprint.agent" ? [e.agent] : []));
+    const graphs = envelopes.flatMap((e) => (e.type === "blueprint.graph" ? [e.graph] : []));
+    for (const blueprint of [...agents, ...graphs]) {
+      expect(blueprint.source).toBe("code");
+      expect(blueprint.location).not.toBeNull();
+    }
+    // More than one file, and a delegation from one file into another.
+    const fileOf = new Map(agents.map((agent) => [agent.id, agent.location?.file]));
+    expect(new Set([...fileOf.values(), ...graphs.map((g) => g.location?.file)]).size).toBe(4);
+    expect(
+      agents.some((agent) =>
+        agent.delegates.some((d) => fileOf.get(d.agent_id) !== fileOf.get(agent.id)),
+      ),
+    ).toBe(true);
+
+    // A model that is an expression, and a model class that still names its model.
+    const models = agents.map((agent) => agent.model);
+    expect(models.some((m) => m?.expression !== null && m?.name === m?.expression)).toBe(true);
+    expect(models.some((m) => m?.expression !== null && m?.name !== m?.expression)).toBe(true);
+    // An f-string template, a function, and an expression as instructions.
+    const instructions = agents.flatMap((agent) => agent.instructions);
+    expect(instructions.some((i) => i.dynamic && i.text !== null)).toBe(true);
+    expect(instructions.some((i) => i.function !== null)).toBe(true);
+    expect(instructions.some((i) => i.expression !== null)).toBe(true);
+    // A computed setting, an opaque toolset, a type that could not be followed, and a tool
+    // whose definition was not among the files.
+    expect(agents.some((agent) => Object.keys(agent.settings.expressions).length > 0)).toBe(true);
+    expect(agents.some((agent) => agent.toolsets.some((t) => t.opaque && t.expression))).toBe(true);
+    expect(JSON.stringify(agents)).toContain('"x-python-type"');
+    expect(agents.some((agent) => agent.tools.some((t) => t.parameters_schema === null))).toBe(
+      true,
+    );
+    expect(agents.some((agent) => agent.name === null)).toBe(true);
   });
 
   test("index.json lists every recording", () => {

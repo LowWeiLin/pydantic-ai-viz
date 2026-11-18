@@ -1187,6 +1187,374 @@ function redacted() {
   return rec;
 }
 
+// ---------- blueprint/newsroom.pviz.jsonl ----------
+
+/**
+ * What `pydantic-ai-viz view newsroom/` writes: a blueprint-only session read from source
+ * code. Four agents and a graph in four files, with everything static analysis can say and
+ * everything it cannot: a model and settings that are expressions, an f-string and a computed
+ * instruction, an opaque toolset, a type it could not resolve, delegation across files, and a
+ * file it had to skip. It has no spans, so it lives in a folder of its own: the checks on the
+ * recordings next to it are about runs.
+ */
+function newsroom() {
+  const rec = new Recording({
+    title: "newsroom",
+    seed: 0x5eed0004,
+    t0: 1795046400000,
+    stream: false,
+  });
+  rec.header.mode = "blueprint";
+  rec.header.notices = [
+    "newsroom/legacy.py was skipped: it is not valid Python (invalid syntax on line 12)",
+  ];
+
+  const at = (file, line) => ({ file: `newsroom/${file}`, line });
+  const fromCode = (name, toolset, description, parameters, file, line, extra = {}) =>
+    tool(name, toolset, description, parameters, {
+      origin: "code",
+      function: `newsroom.${file.replace(/\.py$/, "")}.${name}`,
+      location: at(file, line),
+      return_schema: { type: "string" },
+      ...extra,
+    });
+  const literal = (text, file, line, kind = "instructions") => ({
+    kind,
+    dynamic: false,
+    text,
+    function: null,
+    expression: null,
+    location: at(file, line),
+  });
+  const codeAgent = (fields) => {
+    const built = agent({ capabilities: [], ...fields });
+    return {
+      ...built,
+      source: "code",
+      // `agent` blanks what only static analysis fills in; here that is the point.
+      model: { expression: null, ...fields.model },
+      instructions: fields.instructions ?? [],
+      toolsets: (fields.toolsets ?? []).map((toolset) => ({
+        expression: null,
+        location: null,
+        ...toolset,
+      })),
+      output: fields.output ?? built.output,
+      // Static analysis reads what the code sets and never fills in a default.
+      settings: {
+        model_settings: null,
+        end_strategy: null,
+        tool_retries: null,
+        output_retries: null,
+        tool_timeout: null,
+        expressions: {},
+        ...fields.settings,
+      },
+    };
+  };
+  const computedBy = (what, code) =>
+    `${what} is set by \`${code}\`, so it is only known when the code runs`;
+
+  const story = {
+    type: "object",
+    properties: {
+      headline: { type: "string", description: "At most twelve words." },
+      body: { type: "string" },
+      sources: { type: "array", items: { type: "string", format: "uri" }, minItems: 1 },
+      section: { enum: ["world", "business", "science"], default: "world" },
+    },
+    required: ["headline", "body", "sources"],
+  };
+
+  const editor = codeAgent({
+    id: "a1",
+    name: "editor",
+    label: "editor",
+    description: "Runs the desk: assigns stories and decides what is published",
+    location: at("desk.py", 24),
+    model: { id: "openai:gpt-5.2", name: "gpt-5.2", provider: "openai", offline: false },
+    deps_type: "newsroom.desk.Desk",
+    instructions: [
+      literal(
+        "You run a small news desk. Assign each story to the reporter, have the facts " +
+          "checked, and publish only what the fact checker has passed.",
+        "desk.py",
+        27,
+      ),
+      {
+        kind: "instructions",
+        dynamic: true,
+        text: "Today is {today:%A}. Follow the {STYLE.name} style guide.",
+        function: null,
+        expression: null,
+        location: at("desk.py", 44),
+      },
+      {
+        kind: "system_prompt",
+        dynamic: true,
+        text: null,
+        function: "newsroom.desk.deadline_reminder",
+        expression: null,
+        location: at("desk.py", 49),
+      },
+    ],
+    toolsets: [agentTools],
+    tools: [
+      fromCode(
+        "assign_story",
+        "ts0",
+        "Ask the reporter to research and draft a story.",
+        objectSchema({ topic: { type: "string", description: "What the story is about." } }),
+        "desk.py",
+        55,
+        { takes_ctx: true },
+      ),
+      fromCode(
+        "check_facts",
+        "ts0",
+        "Have the fact checker go through a draft.",
+        objectSchema({ draft: { type: "string" } }),
+        "desk.py",
+        68,
+        { takes_ctx: true },
+      ),
+      fromCode(
+        "publish",
+        "ts0",
+        "Publish a story that has passed its checks.",
+        objectSchema(
+          { story_id: { type: "string" }, embargo: { type: "string", format: "date-time" } },
+          ["story_id"],
+        ),
+        "desk.py",
+        81,
+        { is_async: false, max_retries: 0, return_schema: { type: "boolean" } },
+      ),
+    ],
+    output: {
+      mode: "tool",
+      allows_text: false,
+      type_name: "Story",
+      json_schema: story,
+      tool_names: ["final_result"],
+      location: at("desk.py", 12),
+    },
+    settings: {
+      model_settings: { max_tokens: 2000 },
+      tool_retries: 2,
+      expressions: {
+        output_retries: "MAX_RETRIES",
+        "model_settings.temperature": "DESK.temperature",
+      },
+    },
+    delegates: [
+      { tool_name: "assign_story", agent_id: "a2", evidence: "code" },
+      { tool_name: "check_facts", agent_id: "a4", evidence: "code" },
+    ],
+    warnings: [
+      computedBy("output_retries", "MAX_RETRIES"),
+      computedBy("the model setting temperature", "DESK.temperature"),
+    ],
+  });
+
+  const archive = 'MCPServerStdio("uvx", args=["mcp-archive"])';
+  const reporter = codeAgent({
+    id: "a2",
+    name: "reporter",
+    label: "reporter",
+    description: "Researches a topic and drafts the story",
+    location: at("reporters.py", 31),
+    model: {
+      id: null,
+      name: "get_model()",
+      provider: null,
+      offline: false,
+      expression: "get_model()",
+    },
+    instructions: [
+      {
+        kind: "instructions",
+        dynamic: true,
+        text: null,
+        function: null,
+        expression: 'PROMPTS["reporter"]',
+        location: at("reporters.py", 33),
+      },
+    ],
+    toolsets: [
+      agentTools,
+      {
+        id: "ts1",
+        toolset_id: "wires",
+        label: "FunctionToolset 'wires'",
+        kind: "function",
+        wrappers: [],
+        opaque: false,
+        location: at("reporters.py", 12),
+      },
+      {
+        id: "ts2",
+        toolset_id: null,
+        label: "MCPServerStdio",
+        kind: "mcp",
+        wrappers: ["PrefixedToolset"],
+        opaque: true,
+        expression: archive,
+        location: at("reporters.py", 22),
+      },
+    ],
+    tools: [
+      fromCode(
+        "ask_stringer",
+        "ts0",
+        "Ask the stringer on the ground for a quote.",
+        objectSchema({ question: { type: "string" } }),
+        "reporters.py",
+        40,
+        { takes_ctx: true },
+      ),
+      fromCode(
+        "search_wires",
+        "ts1",
+        "Search the wire services.",
+        objectSchema(
+          {
+            query: { type: "string" },
+            since: { type: "string", format: "date", description: "Earliest date to include." },
+            limit: { type: "integer", default: 5, minimum: 1, maximum: 20 },
+          },
+          ["query"],
+        ),
+        "reporters.py",
+        14,
+        { is_async: false },
+      ),
+      fromCode(
+        "fetch_article",
+        "ts1",
+        "Fetch the full text of a wire article.",
+        objectSchema({ url: { type: "string", format: "uri" } }),
+        "reporters.py",
+        18,
+      ),
+    ],
+    delegates: [{ tool_name: "ask_stringer", agent_id: "a3", evidence: "code" }],
+    warnings: [
+      computedBy("the model", "get_model()"),
+      computedBy("an instruction", 'PROMPTS["reporter"]'),
+      `the tools of \`${archive}\` are listed by the server, so they are only known when the code runs`,
+    ],
+  });
+
+  const stringer = codeAgent({
+    id: "a3",
+    // No `name=`: the label is the variable the agent is assigned to.
+    name: null,
+    label: "stringer",
+    location: at("reporters.py", 58),
+    model: {
+      id: null,
+      name: "claude-sonnet-4-5",
+      provider: null,
+      offline: false,
+      expression: 'AnthropicModel("claude-sonnet-4-5", provider=provider)',
+    },
+    instructions: [literal("Answer in one short quote, in the first person.", "reporters.py", 60)],
+  });
+
+  const checker = codeAgent({
+    id: "a4",
+    name: "fact_checker",
+    label: "fact_checker",
+    description: "Checks every claim in a draft against its sources",
+    location: at("checks.py", 19),
+    model: { id: "openai:gpt-5.2-mini", name: "gpt-5.2-mini", provider: "openai", offline: false },
+    instructions: [
+      literal(
+        "Check each claim against the sources. Never guess.",
+        "checks.py",
+        21,
+        "system_prompt",
+      ),
+    ],
+    toolsets: [agentTools],
+    tools: [
+      fromCode(
+        "lookup_source",
+        "ts0",
+        "Open one of the sources a claim cites.",
+        objectSchema({ claim: { "x-python-type": "Claim[Source]" }, index: { type: "integer" } }),
+        "checks.py",
+        27,
+      ),
+      // Imported from a package that was not among the analysed files: only its name is known.
+      tool("archive_search", "ts0", null, null, {
+        origin: "code",
+        is_async: null,
+        takes_ctx: null,
+        function: "newsdesk_tools.archive_search",
+      }),
+    ],
+    output: {
+      mode: "native",
+      allows_text: false,
+      type_name: "Verdict[Claim]",
+      json_schema: { "x-python-type": "Verdict[Claim]" },
+      tool_names: [],
+      location: at("checks.py", 8),
+    },
+    warnings: [
+      "the output type `Verdict[Claim]` is generic, so its schema is only known when the code runs",
+    ],
+  });
+
+  const node = (id, kind, label, line, note = null) => ({
+    id,
+    kind,
+    label,
+    note,
+    location: line === null ? null : at("pipeline.py", line),
+  });
+  const publishing = {
+    id: "g1",
+    name: "publishing",
+    label: "publishing",
+    source: "code",
+    location: at("pipeline.py", 44),
+    state_type: "newsroom.pipeline.PublishState",
+    input_type: "str",
+    output_type: "Story",
+    nodes: [
+      node("__start__", "start", null, null),
+      node("draft", "step", "Draft", 16),
+      node("review", "step", "Review", 24),
+      node("decision", "decision", null, 47, "approved?"),
+      node("publish", "step", "Publish", 33),
+      node("__end__", "end", null, null),
+    ],
+    edges: [
+      { source: "__start__", target: "draft", label: null },
+      { source: "draft", target: "review", label: null },
+      { source: "review", target: "decision", label: null },
+      { source: "decision", target: "draft", label: "revise" },
+      { source: "decision", target: "publish", label: "approve" },
+      { source: "publish", target: "__end__", label: null },
+    ],
+    mermaid:
+      "---\ntitle: publishing\n---\nstateDiagram-v2\n  direction LR\n  [*] --> draft\n" +
+      "  draft --> review\n  state decision <<choice>>\n  review --> decision\n" +
+      "  decision --> draft: revise\n  decision --> publish: approve\n  publish --> [*]",
+    warnings: [],
+  };
+
+  rec.emit(0, { type: "blueprint.agent", agent: editor });
+  rec.emit(0, { type: "blueprint.agent", agent: reporter });
+  rec.emit(0, { type: "blueprint.agent", agent: stringer });
+  rec.emit(0, { type: "blueprint.agent", agent: checker });
+  rec.emit(0, { type: "blueprint.graph", graph: publishing });
+  return rec;
+}
+
 // ---------- write ----------
 
 const files = {
@@ -1224,8 +1592,11 @@ const files = {
   )}\n`,
 };
 
-mkdirSync(fixturesDir, { recursive: true });
+// Blueprint-only sessions are kept apart from the recordings: see `newsroom`.
+files["blueprint/newsroom.pviz.jsonl"] = newsroom().jsonl();
+
 for (const [name, text] of Object.entries(files)) {
+  mkdirSync(path.dirname(path.join(fixturesDir, name)), { recursive: true });
   writeFileSync(path.join(fixturesDir, name), text, "utf8");
   console.log(`gen-fixtures: ${name} (${text.split("\n").length - 1} lines, ${text.length} bytes)`);
 }
