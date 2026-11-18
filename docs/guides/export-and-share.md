@@ -24,7 +24,7 @@ from my_app.agents import support_agent
 with pviz.record(support_agent, title="Refund flow") as session:
     support_agent.run_sync("My order arrived broken.")
 
-    session.save("refund-flow.pviz.jsonl")   # a recording
+    session.save("refund-flow.pviz.jsonl")  # a recording
     session.export_html("refund-flow.html")  # an export
 ```
 
@@ -36,7 +36,7 @@ The module-level [`export_html`](../reference/python-api.md#export_html) convert
 
 ```python
 pviz.export_html("refund-flow.pviz.jsonl", "refund-flow.html")  # recording -> export
-pviz.export_html(support_agent, "blueprint.html")               # blueprint only, no runs
+pviz.export_html(support_agent, "blueprint.html")  # blueprint only, no runs
 ```
 
 ## Save from the command line

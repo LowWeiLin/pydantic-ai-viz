@@ -112,7 +112,7 @@ from quickstart import agent
 
 with pviz.record(agent) as session:
     agent.run_sync("What is 2 + 3?")
-    session.save("helper.pviz.jsonl")   # a recording: replay it with `pydantic-ai-viz open`
+    session.save("helper.pviz.jsonl")  # a recording: replay it with `pydantic-ai-viz open`
     session.export_html("helper.html")  # an export: one HTML file, opens offline
 ```
 

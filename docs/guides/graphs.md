@@ -18,9 +18,9 @@ pydantic-ai-viz view my_app.pipeline:graph
 import pydantic_ai_viz as pviz
 from my_app.pipeline import graph
 
-bp = pviz.blueprint(graph)       # a GraphBlueprint
+bp = pviz.blueprint(graph)  # a GraphBlueprint
 print([node.id for node in bp.nodes])
-print(bp.mermaid)                # the same text as graph.render(direction="LR")
+print(bp.mermaid)  # the same text as graph.render(direction="LR")
 ```
 
 On the canvas:

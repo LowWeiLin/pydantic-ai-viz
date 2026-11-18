@@ -49,7 +49,7 @@ pydantic-ai-viz demo --port 9000
 ```
 
 ```python
-pviz.serve(agent, port=9000)   # or port=0 for any free port
+pviz.serve(agent, port=9000)  # or port=0 for any free port
 ```
 
 A second `pydantic-ai-viz` process is the usual culprit. An old browser tab pointing at the first port then still shows the first session.
@@ -87,7 +87,7 @@ These are fine to **draw**. `view` and `blueprint` never call the model, never r
 
 ```python
 agent = Agent("openai:gpt-5.2", defer_model_check=True)
-pviz.blueprint(agent).model   # id='openai:gpt-5.2', name='gpt-5.2', provider='openai'
+pviz.blueprint(agent).model  # id='openai:gpt-5.2', name='gpt-5.2', provider='openai'
 ```
 
 An agent with no model is drawn with no model chip.

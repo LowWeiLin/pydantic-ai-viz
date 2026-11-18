@@ -57,7 +57,7 @@ uv run pyright
 uv run pytest -q
 ```
 
-`uv run ruff format .` and `uv run ruff check --fix .` fix most lint findings.
+`uv run ruff format .` and `uv run ruff check --fix .` fix most lint findings. The formatter also formats Python code blocks in Markdown files, so a docs change can fail `ruff format --check`; the same command fixes it.
 
 All tests are offline: they use Pydantic AI's `TestModel` and `FunctionModel`, never a real provider. Keep it that way. A test must not need an API key or a network connection.
 
@@ -157,7 +157,7 @@ The hooks are optional and catch most CI failures before you push:
 uv run pre-commit install --install-hooks
 ```
 
-They run ruff, the ruff formatter, whitespace and end-of-file fixers, Biome on changed files under `web/`, and a commit-message check for the Conventional Commits format. To run them over the whole repository: `uv run pre-commit run --all-files`.
+They run ruff, the ruff formatter, whitespace and end-of-file fixers, Biome over `web/` when a file there changes (this one needs `pnpm --dir web install` to have been run), and a commit-message check for the Conventional Commits format. To run them over the whole repository: `uv run pre-commit run --all-files`.
 
 ## Pull requests
 

@@ -21,7 +21,7 @@ You do not wrap your agent or change how you call it. You start a session; from 
 
     result = support_agent.run_sync("Where is my order?")
 
-    session.wait()   # block until Ctrl+C so you can look around
+    session.wait()  # block until Ctrl+C so you can look around
     session.close()
     ```
 

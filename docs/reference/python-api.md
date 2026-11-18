@@ -196,8 +196,8 @@ A Pydantic model describing one agent. Returned by [`blueprint`](#blueprint) for
 
 ```python
 bp = pviz.blueprint(agent)
-bp.model_dump()        # a plain dict
-bp.model_dump_json()   # JSON, the same shape as on the wire
+bp.model_dump()  # a plain dict
+bp.model_dump_json()  # JSON, the same shape as on the wire
 ```
 
 Main fields: `id`, `name`, `label`, `description`, `source`, `model`, `deps_type`, `instructions`, `toolsets`, `tools`, `native_tools`, `output`, `capabilities`, `settings`, `delegates` and `warnings`. Each is specified under [Blueprints](wire-format.md#blueprints) in the wire format reference.
