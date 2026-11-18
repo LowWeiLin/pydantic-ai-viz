@@ -236,6 +236,41 @@ test.describe("replay", () => {
     ).toBeVisible();
   });
 
+  test("a very long error message leaves the tabs and their content in view", async ({
+    page,
+  }, testInfo) => {
+    // Validation and retry errors run to thousands of characters. The header must not grow
+    // until the tabs are pushed out of a panel that does not scroll.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const events = readRecording(fixturePath("failed"));
+    const long = `1 validation error for Digest\n${"items.0.url: Input should be a valid URL. ".repeat(60)}`;
+    const failed = events.flatMap((event) =>
+      event.type === "span.ended" && event.span.error && event.span.kind !== "other"
+        ? [event.span]
+        : [],
+    );
+    for (const span of failed) if (span.error) span.error.message = long;
+    const run = failed.find((span) => span.kind === "agent_run");
+    const tool = failed.find((span) => span.kind === "tool_call");
+    if (!run || !tool) throw new Error("the failed fixture changed shape");
+
+    const file = writeEmbeddedExport(events, testInfo.outputPath("long-error.html"));
+    const inspector = page.getByRole("complementary", { name: "Span details" });
+    for (const span of [run, tool]) {
+      await page.goto(`${file}#/runs/${span.trace_id}?span=${span.span_id}`);
+      await page.reload(); // a change of hash alone does not open the run afresh
+      await expect(inspector.getByRole("heading", { name: span.name })).toBeVisible();
+      const panel = await inspector.boundingBox();
+      const tabs = await inspector.getByRole("tablist").boundingBox();
+      const content = await inspector.getByRole("tabpanel").boundingBox();
+      if (!panel || !tabs || !content) throw new Error("the inspector is not laid out");
+      expect(tabs.y + tabs.height).toBeLessThan(panel.y + panel.height);
+      expect(content.height).toBeGreaterThan(150);
+      // The whole message is still there to read.
+      await expect(inspector.getByText("items.0.url").first()).toBeVisible();
+    }
+  });
+
   test("a redacted session says content capture is off", async ({ page }) => {
     await page.goto(recording("redacted"));
     await skipToEnd(page);

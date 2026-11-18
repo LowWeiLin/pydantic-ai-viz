@@ -483,9 +483,17 @@ export function SpanInspector({
             in agent <span className="font-medium text-fg">{owner}</span>
           </p>
         )}
-        {showError && span.error && <ErrorBox error={span.error} retry={false} />}
+        {/* The header does not scroll, so an error in it is capped: a message of thousands of
+            characters would otherwise push the tabs out of the panel. */}
+        {showError && span.error && (
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll area must take focus to be scrolled from the keyboard.
+          <div tabIndex={0} className="max-h-40 overflow-y-auto rounded-control">
+            <ErrorBox error={span.error} retry={false} />
+          </div>
+        )}
         {span.kind === "tool_call" && span.error && (
-          <p className="m-0 whitespace-pre-wrap break-words text-ui">
+          // Three lines here; the whole message is in the Error / Retry tab.
+          <p className="m-0 line-clamp-3 whitespace-pre-wrap break-words text-ui">
             <span className="font-medium font-mono text-data">{span.error.type}</span>
             {span.error.message && <span className="text-fg">: {span.error.message}</span>}
           </p>
