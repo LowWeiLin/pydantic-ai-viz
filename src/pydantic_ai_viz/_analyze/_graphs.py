@@ -763,6 +763,9 @@ class GraphExtractor:
             if not builder.targets(node) and self._is_class_node(node) and not self._infer(builder, node, again=True):
                 builder.unreadable.append(f"{node.base}.run")
             pending.extend(reversed(builder.targets(node)))
+        if any(not any(node is known for known in seen) for node in pending):
+            # Stopped at the bound: say so, so that part of a graph is not taken for the whole of it.
+            builder.unreadable.append(context.module.text(call))
 
     # ----------------------------------------------------------- blueprint
 

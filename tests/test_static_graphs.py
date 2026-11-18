@@ -11,6 +11,7 @@ from pydantic_graph import Graph
 from static_support import FIXTURES, analyze_source, fixture, graph
 
 from pydantic_ai_viz import GraphBlueprint, analyze, blueprint
+from pydantic_ai_viz._analyze import _graphs
 from pydantic_ai_viz._models import ENVELOPE_ADAPTER, SourceLocation, to_wire
 
 
@@ -294,6 +295,23 @@ def test_paths_the_reader_does_not_understand_are_named_not_guessed(tmp_path: Pa
         "Vague.run",
     ]
     assert all("--import" in warning for warning in odd.warnings)
+
+
+def test_a_graph_too_large_to_follow_to_the_end_says_that_it_is_cut_short(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ring = "".join(
+        f"class N{index}(BaseNode):\n    async def run(self, ctx) -> 'N{(index + 1) % 12}': ...\n"
+        for index in range(12)
+    )
+    source = f"from pydantic_graph import BaseNode, GraphBuilder\nb = GraphBuilder()\n{ring}b.add_reachable(N0)\n"
+    (whole,) = analyze_source(tmp_path, source).graphs
+    assert (len(whole.nodes), whole.warnings) == (12, [])
+
+    monkeypatch.setattr(_graphs, "_MAX_REACHABLE", 5)
+    (cut,) = analyze_source(tmp_path, source).graphs
+    assert 0 < len(cut.nodes) < 12
+    assert [warning.split("`")[1] for warning in cut.warnings] == ["b.add_reachable(N0)"]
 
 
 def test_deeply_nested_decisions_are_given_up_on_not_followed_for_ever(tmp_path: Path) -> None:
