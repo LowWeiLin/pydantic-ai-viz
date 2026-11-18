@@ -344,12 +344,16 @@ def test_resume_with_last_event_id_sends_only_newer_events(session: Session) -> 
     stream.close()
 
 
-@pytest.mark.parametrize("last_event_id", ["999999", "not-a-number", "-1", ""])
-def test_an_id_from_another_server_gets_everything_from_seq_0(session: Session, last_event_id: str) -> None:
+# "\xb2" is a superscript two: a digit to str.isdigit(), but not a number to int().
+@pytest.mark.parametrize("last_event_id", ["999999", "not-a-number", "-1", "", "\xb2", "9" * 5000])
+def test_an_id_from_another_server_gets_everything_from_seq_0(
+    session: Session, last_event_id: str, capsys: pytest.CaptureFixture[str]
+) -> None:
     events = session.events
     stream = EventStream(session, last_event_id=last_event_id)
     assert stream.read(len(events)) == events
     stream.close()
+    assert capsys.readouterr().err == ""  # no traceback on the terminal of the program being watched
 
 
 def test_a_client_that_reconnects_after_a_restart_sees_the_new_session_from_the_start() -> None:
@@ -604,6 +608,21 @@ def test_an_oversized_request_body_is_refused(session: Session, demo: Scenario, 
     else:
         assert response.status == 413
     assert demo.starts == 0
+
+
+@pytest.mark.parametrize("length", ["\xb2", "9" * 5000, "-1", "ten", ""])
+def test_a_content_length_that_is_not_a_number_is_a_400(
+    session: Session, length: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with socket.create_connection(address(session), timeout=TIMEOUT) as raw:
+        head = f"GET /api/v1/health HTTP/1.1\r\nHost: localhost\r\nContent-Length: {length}\r\n\r\n"
+        raw.sendall(head.encode("latin-1"))
+        reply = b""
+        while chunk := raw.recv(65536):
+            reply += chunk
+    assert reply.startswith(b"HTTP/1.1 400 ")
+    assert reply.endswith(b'{"error": "bad Content-Length"}')
+    assert capsys.readouterr().err == ""
 
 
 # -------------------------------------------------------- ports and lifecycle

@@ -70,6 +70,15 @@ def _host_name(header: str | None) -> str | None:
     return value.rsplit(":", 1)[0] if ":" in value else value
 
 
+def _decimal(value: str) -> int | None:
+    """A header value as a non-negative integer; ``None`` unless it is plain ASCII digits.
+
+    ``str.isdigit`` alone also accepts characters such as a superscript two, which
+    ``int`` rejects, and ``int`` refuses a digit string of several thousand characters.
+    """
+    return int(value) if value.isascii() and value.isdigit() and len(value) <= 18 else None
+
+
 class _HTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     # On Windows SO_REUSEADDR lets a second process bind a port that is in use, which would
@@ -129,15 +138,18 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _dispatch(self) -> None:
         viewer = self.server.viewer
-        length = self.headers.get("Content-Length", "")
-        if length.isdigit() and int(length) > 0:
+        declared = self.headers.get("Content-Length")
+        length = 0 if declared is None else _decimal(declared.strip())
+        if length is None:
+            return self._send_json(HTTPStatus.BAD_REQUEST, {"error": "bad Content-Length"})
+        if length > 0:
             # Unread request bytes would turn our close into a reset and could lose the response
             # (on Windows the reset overtakes it), so a refused body is taken off the socket too,
             # up to a bound that an honest client never reaches.
-            if int(length) > _MAX_REQUEST_BODY:
-                self._discard(min(int(length), _MAX_DISCARD))
+            if length > _MAX_REQUEST_BODY:
+                self._discard(min(length, _MAX_DISCARD))
                 return self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "request body too large"})
-            self.rfile.read(int(length))
+            self.rfile.read(length)
         if viewer.loopback and _host_name(self.headers.get("Host")) not in _LOOPBACK_NAMES:
             # DNS rebinding: a web page can point its own host name at 127.0.0.1, but it
             # cannot make the browser send a loopback name in the Host header.
@@ -200,12 +212,13 @@ class _Handler(BaseHTTPRequestHandler):
     def _events(self) -> None:
         """The session log as server-sent events: the retained backlog first, then live."""
         viewer = self.server.viewer
-        last_event_id = self.headers.get("Last-Event-ID", "").strip()
+        # An id that is not a number is treated as no id at all: the client gets everything.
+        seen = _decimal(self.headers.get("Last-Event-ID", "").strip())
         # No Content-Length: the stream ends when the connection does.
         self._head(HTTPStatus.OK, "text/event-stream; charset=utf-8", {"X-Accel-Buffering": "no"})
         if self.command == "HEAD":
             return
-        with viewer.session._log.subscribe(int(last_event_id) if last_event_id.isdigit() else None) as stream:  # pyright: ignore[reportPrivateUsage]
+        with viewer.session._log.subscribe(seen) as stream:  # pyright: ignore[reportPrivateUsage]
             self.wfile.write(b"retry: 1000\n\n")
             while True:
                 events = stream.get(timeout=viewer.ping_interval)

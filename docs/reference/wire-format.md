@@ -362,7 +362,7 @@ With `include_content: false`, the events have the same shape, with `content`, `
 | `POST /api/v1/rerun` | Demo mode only. `202 {"accepted": true}`, or `409 {"accepted": false, "reason": "running"}`. `404` outside demo mode. |
 | anything else | `404 {"error": "not found"}` |
 
-Every response carries `Cache-Control: no-store`. No CORS headers are sent. A request whose `Host` header is not a loopback name gets `403`, unless the server was started on a non-loopback host. `POST` also requires the `Origin` header to be absent or the server's own.
+Every response carries `Cache-Control: no-store`. No CORS headers are sent. A request whose `Host` header is not a loopback name gets `403`, unless the server was started on a non-loopback host. `POST` also requires the `Origin` header to be absent or the server's own. A request body over 64 KiB gets `413`, and a `Content-Length` that is not a plain number gets `400`.
 
 ### Event stream { #sse }
 
