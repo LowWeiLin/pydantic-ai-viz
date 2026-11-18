@@ -390,6 +390,100 @@ export function blueprintForAgentName(data: DataState, name: string | null): Age
   return null;
 }
 
+// ---------- blueprint list ----------
+
+export type BlueprintEntry = {
+  kind: "agent" | "graph";
+  id: string;
+  label: string;
+  /** The source file it is defined in; null when it was not read from source. */
+  file: string | null;
+  warnings: number;
+};
+
+export type BlueprintGroup = {
+  /** Null collects the blueprints without a source location. */
+  file: string | null;
+  entries: BlueprintEntry[];
+};
+
+export type BlueprintIndex = {
+  /** Files in the order they were first seen; the group without a file comes last. */
+  groups: BlueprintGroup[];
+  /** True when the blueprints come from more than one place, so the file names matter. */
+  byFile: boolean;
+  /** All blueprints, before filtering. */
+  total: number;
+  /** Blueprints that match the query. */
+  matched: number;
+};
+
+/** A session with more blueprints than this gets a filter box. */
+export const BLUEPRINT_FILTER_FROM = 9;
+
+/**
+ * The sidebar's blueprint list: grouped by the file each blueprint is defined in, agents
+ * before graphs within a file, narrowed to those whose label, name or file contains `query`
+ * (case does not matter; an empty query keeps everything).
+ */
+export function blueprintIndex(
+  data: Pick<DataState, "agents" | "agentOrder" | "graphs" | "graphOrder">,
+  query = "",
+): BlueprintIndex {
+  const all: (BlueprintEntry & { name: string | null })[] = [];
+  for (const id of data.agentOrder) {
+    const agent = data.agents[id];
+    if (!agent) continue;
+    all.push({
+      kind: "agent",
+      id,
+      label: agent.label,
+      name: agent.name,
+      file: agent.location?.file ?? null,
+      warnings: agent.warnings.length,
+    });
+  }
+  for (const id of data.graphOrder) {
+    const graph = data.graphs[id];
+    if (!graph) continue;
+    all.push({
+      kind: "graph",
+      id,
+      label: graph.label,
+      name: graph.name,
+      file: graph.location?.file ?? null,
+      warnings: graph.warnings.length,
+    });
+  }
+
+  const needle = query.trim().toLowerCase();
+  const groups = new Map<string | null, BlueprintEntry[]>();
+  let matched = 0;
+  for (const { name, ...entry } of all) {
+    // Every file keeps its place in the order, whether or not the query leaves it anything.
+    let entries = groups.get(entry.file);
+    if (!entries) {
+      entries = [];
+      groups.set(entry.file, entries);
+    }
+    const fields = [entry.label, name ?? "", entry.file ?? ""];
+    if (needle !== "" && !fields.some((field) => field.toLowerCase().includes(needle))) continue;
+    entries.push(entry);
+    matched += 1;
+  }
+  const ordered = [...groups]
+    .filter(([, entries]) => entries.length > 0)
+    .map(([file, entries]) => ({ file, entries }))
+    // Stable: files keep their first-seen order, and the group without a file goes last.
+    .sort((a, b) => Number(a.file === null) - Number(b.file === null));
+  return { groups: ordered, byFile: groups.size > 1, total: all.length, matched };
+}
+
+/** The last part of a path: what a file is called when its folder is clear from context. */
+export function fileName(path: string): string {
+  return path.split("/").filter(Boolean).at(-1) ?? path;
+}
+
 export type RunSubject = { kind: "agent" | "graph"; id: string; label: string };
 
 /** Blueprints that take part in a run, root first: the options of the canvas subject switcher. */

@@ -16,10 +16,13 @@ import {
 import type { Event, Span } from "../wire";
 import {
   assembleStream,
+  BLUEPRINT_FILTER_FROM,
   blueprintForAgentName,
+  blueprintIndex,
   canvasModel,
   conversationSoFar,
   displayStatus,
+  fileName,
   graphCanvasModel,
   projectSpan,
   runBoundaries,
@@ -664,5 +667,107 @@ describe("fixtures through the selectors", () => {
     expect(parts?.map((p) => p.kind)).toEqual(["thinking", "text"]);
     expect(parts?.[1]?.text).toBe("Fetching the pydantic-ai feed");
     expect(blueprintForAgentName(failed, "digest")?.source).toBe("observed");
+  });
+});
+
+describe("blueprintIndex", () => {
+  const agentAt = (id: string, file: string | null, fields: object = {}): [number, Event] => [
+    1,
+    {
+      type: "blueprint.agent",
+      agent: agentBlueprint({
+        id,
+        source: file === null ? "object" : "code",
+        location: file === null ? null : { file, line: 1 },
+        ...fields,
+      }),
+    },
+  ];
+  const graphAt = (id: string, file: string | null): [number, Event] => [
+    2,
+    {
+      type: "blueprint.graph",
+      graph: {
+        ...graphBlueprint(id, ["a", "b"]),
+        location: file === null ? null : { file, line: 1 },
+        warnings: ["w"],
+      },
+    },
+  ];
+  const shape = (index: ReturnType<typeof blueprintIndex>) =>
+    index.groups.map((group) => [group.file, group.entries.map((entry) => entry.id)]);
+
+  test("one group, not by file, when no blueprint comes from source", () => {
+    const index = blueprintIndex(fixtureState("sample.pviz.jsonl"));
+    expect(index).toMatchObject({ byFile: false, total: 5, matched: 5 });
+    expect(shape(index)).toEqual([[null, ["a1", "a2", "a3", "a4", "g1"]]]);
+  });
+
+  test("one file is one group too: its name would be on every row", () => {
+    const index = blueprintIndex(stateOf(agentAt("a1", "app.py"), agentAt("a2", "app.py")));
+    expect(index.byFile).toBe(false);
+    expect(shape(index)).toEqual([["app.py", ["a1", "a2"]]]);
+  });
+
+  test("several files: grouped in first-seen order, agents before graphs in each", () => {
+    const data = stateOf(
+      agentAt("a1", "pkg/desk.py", { warnings: ["x", "y"] }),
+      agentAt("a2", "pkg/reporters.py"),
+      agentAt("a3", "pkg/desk.py"),
+      agentAt("a4", null),
+      graphAt("g1", "pkg/desk.py"),
+      graphAt("g2", "pkg/flows.py"),
+    );
+    const index = blueprintIndex(data);
+    expect(index).toMatchObject({ byFile: true, total: 6, matched: 6 });
+    // What has no file is not from source: it is listed last, whenever it arrived.
+    expect(shape(index)).toEqual([
+      ["pkg/desk.py", ["a1", "a3", "g1"]],
+      ["pkg/reporters.py", ["a2"]],
+      ["pkg/flows.py", ["g2"]],
+      [null, ["a4"]],
+    ]);
+    expect(index.groups[0]?.entries).toEqual([
+      { kind: "agent", id: "a1", label: "a1", file: "pkg/desk.py", warnings: 2 },
+      { kind: "agent", id: "a3", label: "a3", file: "pkg/desk.py", warnings: 0 },
+      { kind: "graph", id: "g1", label: "g1", file: "pkg/desk.py", warnings: 1 },
+    ]);
+  });
+
+  test("a query matches label, name or file, in any case, and keeps the grouping", () => {
+    const data = stateOf(
+      agentAt("a1", "billing/refunds.py", { name: "refund_agent", label: "Refunds" }),
+      agentAt("a2", "billing/invoices.py", { name: null, label: "invoicer" }),
+      agentAt("a3", "support/triage.py", { name: "triage", label: "triage" }),
+      graphAt("g1", "support/flows.py"),
+    );
+    expect(shape(blueprintIndex(data, "BILLING"))).toEqual([
+      ["billing/refunds.py", ["a1"]],
+      ["billing/invoices.py", ["a2"]],
+    ]);
+    expect(shape(blueprintIndex(data, "  refund_agent "))).toEqual([
+      ["billing/refunds.py", ["a1"]],
+    ]);
+    expect(shape(blueprintIndex(data, "invoicer"))).toEqual([["billing/invoices.py", ["a2"]]]);
+    expect(shape(blueprintIndex(data, "g1"))).toEqual([["support/flows.py", ["g1"]]]);
+    // Still "by file" with one group left: the heading says which file the match is in.
+    expect(blueprintIndex(data, "g1")).toMatchObject({ byFile: true, total: 4, matched: 1 });
+    expect(blueprintIndex(data, "nothing like it")).toMatchObject({
+      groups: [],
+      total: 4,
+      matched: 0,
+    });
+    expect(blueprintIndex(data, "   ").matched).toBe(4);
+  });
+
+  test("an empty session, and the size from which a filter is offered", () => {
+    expect(blueprintIndex(stateOf())).toEqual({ groups: [], byFile: false, total: 0, matched: 0 });
+    expect(BLUEPRINT_FILTER_FROM).toBeGreaterThan(5);
+  });
+
+  test("fileName is the last part of a path", () => {
+    expect(fileName("pkg/agents/desk.py")).toBe("desk.py");
+    expect(fileName("desk.py")).toBe("desk.py");
+    expect(fileName("")).toBe("");
   });
 });
