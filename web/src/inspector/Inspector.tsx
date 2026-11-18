@@ -2,7 +2,7 @@
  * Chooses the inspector panel for what is selected: a span of a run, or a part of a blueprint
  * picked on the canvas.
  */
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import type { CanvasTarget } from "../canvas/targets";
 import { useViewer } from "../data/store";
 import type { GraphBlueprint } from "../wire";
@@ -13,7 +13,7 @@ import {
   ToolInspector,
   UnlistedToolInspector,
 } from "./BlueprintInspector";
-import { Note } from "./parts";
+import { Note, type Reveal } from "./parts";
 import { SpanInspector as SpanInspectorImpl } from "./SpanInspector";
 
 /**
@@ -34,6 +34,12 @@ export function BlueprintInspector({
   graph?: GraphBlueprint | null;
 }) {
   const agents = useViewer((state) => state.data.agents);
+  // The output node and the model chip are parts of the agent's panel: picking one brings its
+  // section into view. A new target object asks again, so a second click scrolls back to it.
+  const reveal = useMemo<Reveal | null>(
+    () => (target.kind === "output" || target.kind === "model" ? { section: target.kind } : null),
+    [target],
+  );
   if (target.kind === "graphNode") {
     const node = graph?.nodes.find((n) => n.id === target.nodeId);
     if (graph && node) return <GraphNodeInspector graph={graph} node={node} />;
@@ -48,7 +54,7 @@ export function BlueprintInspector({
         <UnlistedToolInspector agent={agent} name={target.name} />
       );
     }
-    if (agent) return <AgentInspector agent={agent} />;
+    if (agent) return <AgentInspector agent={agent} reveal={reveal} />;
   }
   return (
     <div className="p-3">

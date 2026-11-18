@@ -137,8 +137,12 @@ for (const scheme of ["dark", "light"] as const) {
       if (!retried) throw new Error(`${recording.file} has no retried tool call`);
       await page.locator(`[role="treeitem"][data-span="${retried.span_id}"]`).click();
       await expect(canvasNode(page, /^Tool .*retried/).first()).toBeVisible();
+      // The retry is the first section of the call's details.
       const inspector = page.getByRole("complementary", { name: "Span details" });
-      await inspector.getByRole("tab", { name: "Error / Retry" }).click();
+      await expect(inspector.getByRole("tab", { name: "Details" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
       await expect(inspector).toContainText("retries");
       await shoot(page, `hero-${scheme}.png`);
     });

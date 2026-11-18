@@ -40,9 +40,7 @@ function GraphBlueprintView({ id }: { id: string }) {
                 <Chip tone="graph">{plural(graph.nodes.length, "node")}</Chip>
                 <Chip tone="graph">{plural(graph.edges.length, "edge")}</Chip>
                 {graph.warnings.length > 0 && (
-                  <Chip tone="retry" icon="warning">
-                    {plural(graph.warnings.length, "warning")}
-                  </Chip>
+                  <Chip icon="warning">{plural(graph.warnings.length, "warning")}</Chip>
                 )}
               </>
             }

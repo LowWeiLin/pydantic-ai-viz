@@ -327,19 +327,36 @@ describe("screens", () => {
     expect(screen.getByRole("heading", { level: 2, name: "triage" })).toBeInTheDocument();
     const details = screen.getByRole("complementary", { name: "Blueprint details" });
     expect(within(details).getByRole("heading", { name: "triage" })).toBeInTheDocument();
-    expect(within(details).getByText("offline model")).toBeInTheDocument();
-    expect(within(details).getByText("FunctionToolset 'kb'")).toBeInTheDocument();
-    expect(within(details).getByRole("link", { name: "refunds" })).toHaveAttribute(
+
+    // A blueprint is short: everything about the agent is in one scroll, under headings.
+    expect(within(details).queryByRole("tablist")).toBeNull();
+    const panel = within(details).getByRole("region", { name: "Agent blueprint" });
+    expect(
+      within(panel)
+        .getAllByRole("heading", { level: 4 })
+        .map((heading) => heading.textContent),
+    ).toEqual([
+      "Model",
+      "Instructions3",
+      "Toolsets",
+      "OutputResolution",
+      "Delegates to1",
+      "Settings",
+      "Capabilities",
+      "Mermaid",
+    ]);
+    expect(within(panel).getByText(/A test or function model/)).toBeInTheDocument();
+    expect(within(panel).getByText("FunctionToolset 'kb'")).toBeInTheDocument();
+    expect(within(panel).getByRole("link", { name: "refunds" })).toHaveAttribute(
       "href",
       "#/agents/a2",
     );
-    expect(within(details).getByText("seen in a run")).toBeInTheDocument();
-    expect(within(details).getByText("PendingMessageDrainCapability")).not.toBeVisible();
-
-    await user.click(within(details).getByRole("tab", { name: "Instructions" }));
-    expect(within(details).getByText(/Computed at run time by/)).toHaveTextContent(
+    expect(within(panel).getByText("seen in a run")).toBeInTheDocument();
+    expect(within(panel).getByText("PendingMessageDrainCapability")).not.toBeVisible();
+    expect(within(panel).getByText(/Computed at run time by/)).toHaveTextContent(
       "customer_context",
     );
+    expect(within(panel).getByRole("table", { name: "Output of triage" })).toBeVisible();
 
     // Every part of the blueprint is a button on the canvas, the sub-agent included.
     for (const name of ["Agent triage", "Agent refunds", "Tool search_kb", "Tool issue_refund"]) {
@@ -347,20 +364,71 @@ describe("screens", () => {
     }
     await user.click(screen.getByRole("button", { name: "Tool get_order" }));
     expect(within(details).getByRole("heading", { name: "get_order" })).toBeInTheDocument();
-    await user.click(within(details).getByRole("tab", { name: "Parameters" }));
-    expect(within(details).getByRole("table", { name: "Parameters of get_order" })).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: /^Output of triage: Resolution/ }));
-    expect(within(details).getByRole("table", { name: "Output of triage" })).toBeVisible();
+    expect(within(details).queryByRole("tablist")).toBeNull();
+    const tool = within(details).getByRole("region", { name: "Tool" });
+    expect(
+      within(tool)
+        .getAllByRole("heading", { level: 4 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Parameters", "Returns", "Definition"]);
+    expect(within(tool).getByRole("table", { name: "Parameters of get_order" })).toBeVisible();
   });
 
-  test("an observed blueprint says so and shows its warning", () => {
+  test("picking the output node brings the output section of the agent into view", async () => {
+    const user = userEvent.setup();
+    // jsdom has no layout: say where things are. The panel is 100 px down the page and the
+    // output section 300 px, so the panel has to scroll by 200 to bring it to its top.
+    const layout = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: Element) {
+        const section = this.getAttribute("data-section");
+        const top = section === "output" ? 300 : this.tagName === "SECTION" ? 100 : 0;
+        return new DOMRect(0, top, 0, 0);
+      });
+    try {
+      window.location.hash = "#/agents/a1";
+      render(<App plan={embedded("sample.pviz.jsonl")} />);
+      const details = screen.getByRole("complementary", { name: "Blueprint details" });
+      const panel = within(details).getByRole("region", { name: "Agent blueprint" });
+      const output = screen.getByRole("button", { name: /^Output of triage: Resolution/ });
+      await user.click(output);
+      expect(panel.scrollTop).toBe(200);
+      // The panel is still the agent's: the output is one of its sections.
+      expect(within(details).getByRole("heading", { name: "triage" })).toBeInTheDocument();
+      // Asking again scrolls again, in case the reader has moved away since.
+      panel.scrollTop = 0;
+      await user.click(output);
+      expect(panel.scrollTop).toBe(200);
+      // Picking the agent itself leaves the panel where the reader has it.
+      panel.scrollTop = 40;
+      await user.click(screen.getByRole("button", { name: "Agent triage" }));
+      expect(panel.scrollTop).toBe(40);
+      // Nothing but the panel is scrolled: the shell's fixed layout must not move.
+      expect(document.documentElement.scrollTop).toBe(0);
+    } finally {
+      layout.mockRestore();
+    }
+  });
+
+  test("an observed blueprint says so and shows its warning", async () => {
+    const user = userEvent.setup();
     window.location.hash = "#/agents/a1";
     render(<App plan={embedded("failed.pviz.jsonl")} />);
     const details = screen.getByRole("complementary", { name: "Blueprint details" });
-    expect(screen.getAllByText("Observed from runs").length).toBeGreaterThan(0);
-    expect(within(details).getAllByText(/Register the agent with/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("1 warning").length).toBeGreaterThan(0);
+    // The count is above the canvas; the list is the first thing in the panel, said once.
+    expect(screen.getByText("1 warning")).toBeInTheDocument();
+    const panel = within(details).getByRole("region", { name: "Agent blueprint" });
+    expect(within(panel).getAllByRole("heading", { level: 4 })[0]).toHaveTextContent("Warnings1");
+    expect(within(details).getByText(/Register the agent with/)).toBeInTheDocument();
+
+    // How the blueprint is known is one chip, and the chip opens the key to all three ways.
+    await user.click(within(details).getByRole("button", { name: /^Observed in runs/ }));
+    const legend = screen.getByRole("dialog", { name: "How a blueprint is known" });
+    expect(
+      within(legend)
+        .getAllByRole("term")
+        .map((term) => term.textContent),
+    ).toEqual(["From source", "From a live object", "Observed in runs (this one)"]);
   });
 
   test("a graph blueprint draws nodes by kind, inspects them and copies Mermaid", async () => {
@@ -521,7 +589,17 @@ describe("screens", () => {
     expect(await within(details).findByRole("heading", { name: "issue_refund" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Not started yet" })).toBeNull();
     expect(screen.getByRole("button", { name: "Replay" })).toBeInTheDocument();
-    await user.click(within(details).getByRole("tab", { name: "Result" }));
+    // Arguments and result are short: both are in the one "Details" tab, under headings.
+    expect(
+      within(details)
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent),
+    ).toEqual(["Details", "Raw"]);
+    expect(
+      within(within(details).getByRole("tabpanel"))
+        .getAllByRole("heading", { level: 4 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Arguments", "Result"]);
     expect(within(details).getByText(/RF-88213/)).toBeInTheDocument();
 
     // Replaying from the start hides the span again; one click goes back to it.
@@ -553,7 +631,8 @@ describe("screens", () => {
     await waitFor(() => expect(window.location.hash).toMatch(/^#\/runs\//));
     await skipToEnd(user);
     await user.click(screen.getAllByRole("treeitem")[2] as HTMLElement);
-    expect(screen.getByText(/Content capture is off/)).toBeInTheDocument();
+    // The arguments and the result, each where its value would be.
+    expect(screen.getAllByText(/Content capture is off/)).toHaveLength(2);
     expect(screen.getByText("Content off")).toBeInTheDocument();
   });
 

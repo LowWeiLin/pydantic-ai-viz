@@ -15,7 +15,13 @@ const floating =
 
 // ---------- Tabs ----------
 
-export type TabItem = { id: string; label: string; content: ReactNode };
+export type TabItem = {
+  id: string;
+  label: string;
+  content: ReactNode;
+  /** No padding around the panel: for content that brings its own, such as stacked sections. */
+  flush?: boolean;
+};
 
 /**
  * A tab strip with its panels. Uncontrolled unless `value` is given. Arrow keys move between
@@ -73,7 +79,11 @@ export function Tabs({
         <RadixTabs.Content
           key={item.id}
           value={item.id}
-          className="min-h-0 flex-1 overflow-auto p-3 focus-visible:outline-offset-[-2px]"
+          className={cx(
+            // relative: see `Sections` in inspector/parts.tsx.
+            "relative min-h-0 flex-1 overflow-auto focus-visible:outline-offset-[-2px]",
+            !item.flush && "p-3",
+          )}
         >
           {item.content}
         </RadixTabs.Content>

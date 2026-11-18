@@ -1,5 +1,5 @@
 /** Pieces shared by the inspector panels: header, sticky tabs, notes and value blocks. */
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { displayStatus } from "../data/selectors";
 import { useViewer } from "../data/store";
 import { Redacted } from "../ui/EmptyState";
@@ -86,7 +86,7 @@ export function StickyTabs({
   label,
   items,
 }: {
-  /** What the choice is remembered under: "tool_call", "agent". */
+  /** What the choice is remembered under: "tool_call", "agent_run". */
   group: string;
   label: string;
   items: TabItem[];
@@ -94,6 +94,23 @@ export function StickyTabs({
   const [, rerender] = useState(0);
   const wanted = remembered.get(group);
   const value = items.some((item) => item.id === wanted) ? wanted : items[0]?.id;
+  const [only] = items;
+  // One tab is no choice: its content is shown without a strip.
+  if (items.length === 1 && only) {
+    return (
+      <section
+        aria-label={label}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll area must take focus to be scrolled from the keyboard.
+        tabIndex={0}
+        className={cx(
+          "relative min-h-0 flex-1 overflow-auto focus-visible:outline-offset-[-2px]",
+          !only.flush && "p-3",
+        )}
+      >
+        {only.content}
+      </section>
+    );
+  }
   return (
     <Tabs
       label={label}
@@ -227,6 +244,81 @@ export function ErrorBox({ error, retry }: { error: SpanError; retry: boolean })
           </pre>
         </details>
       )}
+    </section>
+  );
+}
+
+export type SectionItem = {
+  /** Unique within the panel; `Sections` can be asked to bring it into view by this id. */
+  id: string;
+  title: string;
+  /** A short fact beside the title: a count, a type name. */
+  aside?: ReactNode;
+  content: ReactNode;
+};
+
+/**
+ * Short parts of one thing stacked under headings, for use inside something that scrolls (a
+ * tab panel, or `Sections`). Each heading stays at the top while its part is being read, so a
+ * long panel never loses the name of what is on screen.
+ */
+export function SectionList({ items }: { items: SectionItem[] }) {
+  return (
+    <>
+      {items.map((item) => (
+        // A heading is enough structure: a landmark per section would be noise.
+        <div key={item.id} data-section={item.id}>
+          <h4 className="sticky top-0 z-10 m-0 flex items-baseline justify-between gap-2 border-line border-b bg-surface-2 px-3 py-1">
+            <Label>{item.title}</Label>
+            {item.aside && <span className="text-faint text-meta">{item.aside}</span>}
+          </h4>
+          <div className="flex flex-col gap-3 px-3 pt-2.5 pb-4">{item.content}</div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** Asks `Sections` to bring a section into view. A new object asks again for the same one. */
+export type Reveal = { section: string };
+
+/**
+ * A whole panel as stacked sections in one scroll: the layout for content that is short and
+ * read together (a blueprint, a tool). Tabs stay for content that is long or different in kind.
+ */
+export function Sections({
+  label,
+  items,
+  reveal,
+}: {
+  /** Names the scroll area for assistive tech, e.g. "Agent blueprint". */
+  label: string;
+  items: SectionItem[];
+  reveal?: Reveal | null;
+}) {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const panel = ref.current;
+    if (!reveal || !panel) return;
+    const target = [...panel.querySelectorAll("[data-section]")].find(
+      (element) => element.getAttribute("data-section") === reveal.section,
+    );
+    if (!target) return;
+    // Not scrollIntoView: it scrolls every ancestor that can scroll, and the shell's fixed
+    // layout can (its overflow is hidden, not absent). Only this panel may move.
+    panel.scrollTop += target.getBoundingClientRect().top - panel.getBoundingClientRect().top;
+  }, [reveal]);
+  return (
+    <section
+      ref={ref}
+      aria-label={label}
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll area must take focus to be scrolled from the keyboard.
+      tabIndex={0}
+      // relative: what is absolutely positioned inside (every `sr-only` label is) must scroll
+      // and be clipped with the panel, not be laid out against the page.
+      className="relative min-h-0 flex-1 overflow-y-auto focus-visible:outline-offset-[-2px]"
+    >
+      <SectionList items={items} />
     </section>
   );
 }

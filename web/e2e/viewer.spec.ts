@@ -514,31 +514,105 @@ test.describe("navigation", () => {
     await expect.poll(() => background(page)).toBe(light);
   });
 
-  test("blueprint screens: agent and tool tabs, graph node, Copy Mermaid", async ({
+  test("blueprint screens: stacked sections, graph node, Copy Mermaid", async ({
     page,
     context,
   }) => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const copied = () => page.evaluate(() => navigator.clipboard.readText());
     await page.goto(recording("sample", "#/agents/a1"));
     const inspector = page.getByRole("complementary", { name: "Blueprint details" });
-    for (const tab of ["Overview", "Instructions", "Output"]) {
-      await inspector.getByRole("tab", { name: tab }).click();
-      await expect(inspector.getByRole("tabpanel")).toBeVisible();
-    }
-    await canvasNode(page, /^Tool get_order/).click();
-    for (const tab of ["Overview", "Parameters", "Returns"]) {
-      await inspector.getByRole("tab", { name: tab }).click();
-      await expect(inspector.getByRole("tabpanel")).toBeVisible();
-    }
-    await inspector.getByRole("tab", { name: "Parameters" }).click();
-    await expect(inspector.getByRole("tabpanel")).toContainText("order_id");
+    // An agent is one scroll of sections; there is nothing to switch between.
+    await expect(inspector.getByRole("tablist")).toHaveCount(0);
+    const sections = inspector.getByRole("region", { name: "Agent blueprint" });
+    await expect(sections.getByRole("heading", { level: 4 })).toHaveText([
+      /^Model/,
+      /^Instructions/,
+      /^Toolsets/,
+      /^Output/,
+      /^Delegates to/,
+      /^Settings/,
+      /^Capabilities/,
+      /^Mermaid/,
+    ]);
+    await page.getByRole("button", { name: "Copy Mermaid" }).click();
+    // The clipboard of the platform may hold its own line endings.
+    expect(await copied()).toMatch(/^flowchart LR\r?\n {2}agent1\["triage<br\/>model: /);
 
-    await page.getByRole("link", { name: /pipeline.*6 nodes/ }).click();
+    await canvasNode(page, /^Tool get_order/).click();
+    await expect(inspector.getByRole("tablist")).toHaveCount(0);
+    await expect(
+      inspector.getByRole("region", { name: "Tool" }).getByRole("heading", { level: 4 }),
+    ).toHaveText(["Parameters", "Returns", "Definition"]);
+    await expect(inspector.getByRole("table", { name: "Parameters of get_order" })).toContainText(
+      "order_id",
+    );
+
+    await page
+      .getByRole("navigation", { name: /^Blueprints/ })
+      .getByRole("link", { name: "pipeline" })
+      .click();
     await canvasNode(page, "Decision decision").click();
     await expect(page.getByText("Leads to")).toBeVisible();
     await page.getByRole("button", { name: "Copy Mermaid" }).click();
-    const copied = await page.evaluate(() => navigator.clipboard.readText());
-    expect(copied).toContain("stateDiagram-v2");
+    expect(await copied()).toContain("stateDiagram-v2");
+  });
+
+  test("a section heading stays in view while its section is read", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 620 });
+    await page.goto(recording("sample", "#/agents/a1"));
+    const sections = page.getByRole("region", { name: "Agent blueprint" });
+    const top = async (name: RegExp) =>
+      (await sections.getByRole("heading", { level: 4, name }).boundingBox())?.y ?? Number.NaN;
+    const panelTop = (await sections.boundingBox())?.y ?? Number.NaN;
+
+    // Clicking the output node scrolls the panel to the output section...
+    await canvasNode(page, /^Output of triage/).click();
+    await expect.poll(() => top(/^Output/)).toBeCloseTo(panelTop, 0);
+    // ...and its heading holds that place while the schema under it scrolls by.
+    await sections.evaluate((element) => element.scrollBy(0, 90));
+    expect(await top(/^Output/)).toBeCloseTo(panelTop, 0);
+    await expect(sections.getByRole("table", { name: "Output of triage" })).toBeVisible();
+
+    // The panel scrolls from the keyboard: it is one tab stop.
+    await sections.focus();
+    await page.keyboard.press("Home");
+    await expect.poll(() => top(/^Model/)).toBeCloseTo(panelTop, 0);
+    await page.keyboard.press("End");
+    await expect(sections.getByRole("heading", { level: 4, name: /^Mermaid/ })).toBeInViewport();
+  });
+
+  test("the tab strip has no scrollbar of its own", async ({ page }) => {
+    // The strip scrolls sideways when it must. It once scrolled vertically too, by one pixel:
+    // each tab reached below the strip to cover its border, and a scrollbar showed at its right.
+    await openRun(page, "sample", TRIAGE);
+    await skipToEnd(page);
+    await rows(page).nth(1).click();
+    const strip = page.getByRole("complementary", { name: "Span details" }).getByRole("tablist");
+    const overflow = () =>
+      strip.evaluate((element) => ({
+        vertical: element.scrollHeight - element.clientHeight,
+        horizontal: element.scrollWidth - element.clientWidth,
+      }));
+    expect(await overflow()).toEqual({ vertical: 0, horizontal: 0 });
+    // In the narrowest inspector the tabs may run off to the side, and only to the side.
+    const splitter = page.getByRole("separator", { name: "Resize span details" });
+    await splitter.focus();
+    await page.keyboard.press("End");
+    expect((await overflow()).vertical).toBe(0);
+    // The hairline under the strip is still drawn, and the active tab's underline covers it.
+    const lines = await strip.evaluate((element) => {
+      const active = element.querySelector('[data-state="active"]');
+      return {
+        strip: getComputedStyle(element).boxShadow,
+        bottom: element.getBoundingClientRect().bottom,
+        tabBottom: active?.getBoundingClientRect().bottom,
+        underline: active ? getComputedStyle(active).borderBottomWidth : null,
+      };
+    });
+    expect(lines.strip).toContain("inset");
+    expect(lines.tabBottom).toBe(lines.bottom);
+    expect(lines.underline).toBe("2px");
   });
 
   test("every span kind has its inspector tabs", async ({ page }) => {
@@ -552,17 +626,56 @@ test.describe("navigation", () => {
         await expect(inspector.getByRole("tabpanel")).toBeVisible();
       }
     };
+    /** The headings of the sections stacked in the tab that is open. */
+    const expectSections = (names: string[]) =>
+      expect(inspector.getByRole("tabpanel").getByRole("heading", { level: 4 })).toHaveText(names);
+
+    // A tab for what is long or different in kind; sections for what is read together.
     await rows(page).nth(0).click();
-    await expectTabs(["Conversation", "Output", "Usage", "Raw"]);
+    await expectTabs(["Conversation", "Output", "Raw"]);
+    await inspector.getByRole("tab", { name: "Output" }).click();
+    await expectSections(["Output", "Usage"]);
     await rows(page).nth(1).click();
-    await expectTabs(["Response", "Input messages", "Instructions", "Usage", "Raw"]);
+    await expectTabs(["Response", "Input", "Raw"]);
+    await inspector.getByRole("tab", { name: "Response" }).click();
+    await expectSections(["Request", "Response"]);
+    await inspector.getByRole("tab", { name: "Input" }).click();
+    await expectSections(["Instructions", "Input messages"]);
     await rows(page).nth(2).click();
-    await expectTabs(["Arguments", "Result", "Error / Retry", "Raw"]);
+    await expectTabs(["Details", "Raw"]);
+    await inspector.getByRole("tab", { name: "Details" }).click();
+    await expectSections(["Retry", "Arguments", "Result"]);
+    // A call that went well has no error section to show.
+    await rows(page).nth(3).click();
+    await expectSections(["Arguments", "Result"]);
 
     await openRun(page, "sample", PIPELINE);
     await skipToEnd(page);
     await rows(page).nth(1).click();
-    await expectTabs(["Inputs", "Output", "Raw"]);
+    await expectTabs(["Details", "Raw"]);
+    await inspector.getByRole("tab", { name: "Details" }).click();
+    await expectSections(["Inputs", "Output"]);
+  });
+
+  test("the tab that was open stays open from one span to the next", async ({ page }) => {
+    await openRun(page, "sample", TRIAGE);
+    await skipToEnd(page);
+    const inspector = page.getByRole("complementary", { name: "Span details" });
+    await rows(page).nth(2).click();
+    await inspector.getByRole("tab", { name: "Raw" }).click();
+    await page.keyboard.press("j");
+    await expect(rows(page).nth(3)).toHaveAttribute("aria-selected", "true");
+    await expect(inspector.getByRole("tab", { name: "Raw" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    // Arrow keys move between the tabs, as in any tab list.
+    await inspector.getByRole("tab", { name: "Raw" }).focus();
+    await page.keyboard.press("ArrowLeft");
+    await expect(inspector.getByRole("tab", { name: "Details" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   test("an address that points at nothing explains itself", async ({ page }) => {
@@ -646,7 +759,6 @@ test.describe("network", () => {
     await page.goto(`${page.url().split("#")[0]}#/runs/${span.trace_id}?span=${span.span_id}`);
     await skipToEnd(page);
     const inspector = page.getByRole("complementary", { name: "Span details" });
-    await inspector.getByRole("tab", { name: "Result" }).click();
     await expect(inspector.getByRole("tabpanel")).toContainText(
       '<img src=x onerror="window.__pwned',
     );

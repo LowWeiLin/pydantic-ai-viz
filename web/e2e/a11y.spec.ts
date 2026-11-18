@@ -51,11 +51,11 @@ const SCREENS: { name: string; open: (page: Page) => Promise<void> }[] = [
     },
   },
   {
-    name: "tool blueprint, parameters",
+    name: "tool blueprint",
     open: async (page) => {
       await page.goto(recording("sample", "#/agents/a1"));
       await canvasNode(page, /^Tool get_order/).click();
-      await page.getByRole("tab", { name: "Parameters" }).click();
+      await expect(page.getByRole("table", { name: "Parameters of get_order" })).toBeVisible();
     },
   },
   {
@@ -82,7 +82,16 @@ const SCREENS: { name: string; open: (page: Page) => Promise<void> }[] = [
       await openRun(page, "sample", TRIAGE);
       await skipToEnd(page);
       await rows(page).nth(2).click();
-      await page.getByRole("tab", { name: "Error / Retry" }).click();
+      await expect(page.getByText("A retry is not a failure")).toBeVisible();
+    },
+  },
+  {
+    name: "run view, model request",
+    open: async (page) => {
+      await openRun(page, "sample", TRIAGE);
+      await skipToEnd(page);
+      await rows(page).nth(1).click();
+      await page.getByRole("tab", { name: "Input" }).click();
     },
   },
   {

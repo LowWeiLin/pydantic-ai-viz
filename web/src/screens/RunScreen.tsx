@@ -10,6 +10,7 @@ import { AgentCanvas } from "../canvas/AgentCanvas";
 import { GraphCanvas } from "../canvas/GraphCanvas";
 import { agentModelSignature, graphModelSignature, useSettled } from "../canvas/signature";
 import { type CanvasTarget, latestSpanFor, spanTargets } from "../canvas/targets";
+import { subjectMermaid } from "../data/mermaid";
 import { changeSpeed, goLive, playFromStart, seek, step, togglePlay } from "../data/playback";
 import {
   canvasModel,
@@ -38,6 +39,7 @@ import { Workspace } from "../shell/Workspace";
 import { Timeline } from "../timeline/Timeline";
 import { Chip, StatusDot } from "../ui/Badge";
 import { Button } from "../ui/Button";
+import { CopyButton } from "../ui/CopyButton";
 import { EmptyState } from "../ui/EmptyState";
 import { kindMeta } from "../ui/tone";
 import { ScreenBar, Segmented } from "./parts";
@@ -200,6 +202,8 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
   const cutShort =
     !live && view.status === "running" && playback.mode !== "playing" && t >= bounds.end;
   const graph = subject?.kind === "graph" ? data.graphs[subject.id] : null;
+  // The blueprint the run is drawn on can be copied as Mermaid: the picture without the run.
+  const hasMermaid = subject !== null && (subject.kind === "agent" || graph?.mermaid != null);
 
   return (
     <Workspace
@@ -240,6 +244,11 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
                   </Chip>
                 )}
               </>
+            }
+            aside={
+              hasMermaid ? (
+                <CopyButton text={() => subjectMermaid(data, subject) ?? ""} label="Copy Mermaid" />
+              ) : undefined
             }
           />
           <div className="min-h-0 flex-1">

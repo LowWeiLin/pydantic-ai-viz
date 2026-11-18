@@ -299,6 +299,22 @@ describe("CopyButton, EmptyState, Tabs, Dialog", () => {
     expect(screen.getByText("the result")).toBeInTheDocument();
   });
 
+  test("a panel that brings its own padding is given none", () => {
+    render(
+      <Tabs
+        label="Span details"
+        items={[
+          { id: "details", label: "Details", flush: true, content: <p>stacked</p> },
+          { id: "raw", label: "Raw", content: <p>raw</p> },
+        ]}
+        defaultValue="raw"
+      />,
+    );
+    expect(screen.getByRole("tabpanel", { name: "Raw" })).toHaveClass("p-3");
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Details" }));
+    expect(screen.getByRole("tabpanel", { name: "Details" })).not.toHaveClass("p-3");
+  });
+
   test("no tab sticks out of the strip: it scrolls sideways only", () => {
     // The strip scrolls when the tabs do not fit, so anything taller than it would give it a
     // vertical scrollbar. A tab that reached below the strip to cover its border did that.

@@ -1,14 +1,16 @@
 /**
- * The inspector for a selected span. Tabs depend on the span kind:
+ * The inspector for a selected span. A tab is kept for what is long (a message list) or
+ * different in kind (the raw attributes); what is short and read together is stacked as
+ * sections inside one tab:
  *
- *   agent run      Conversation · Output · Usage · Raw
- *   model request  Response · Input messages · Instructions · Usage · Raw
- *   tool call      Arguments · Result · Error / Retry · Raw
- *   graph run/node Inputs · Output · Raw
- *   anything else  Raw
+ *   agent run      Conversation | Output (Output · Usage) | Raw
+ *   model request  Response (Request · Response) | Input (Instructions · Messages) | Raw
+ *   tool call      Details (Error or Retry · Arguments · Result) | Raw
+ *   graph run/node Details (Inputs · Output) | Raw
+ *   anything else  the raw attributes, with no tab strip
  *
  * The span is the projection at the replay position: fields that only exist once a span has
- * ended are null before that, and each tab says so instead of showing a blank.
+ * ended are null before that, and each part says so instead of showing a blank.
  */
 import { conversationSoFar, displayStatus, type RunView, type StreamPart } from "../data/selectors";
 import { Facts, orDash } from "../screens/parts";
@@ -34,6 +36,8 @@ import {
   InspectorHeader,
   Missing,
   Note,
+  type SectionItem,
+  SectionList,
   StickyTabs,
   spanDuration,
   statusLabel,
@@ -43,6 +47,14 @@ import {
 } from "./parts";
 
 type Ctx = { view: RunView; now: number };
+
+/** A tab whose content is short parts read together, stacked under headings. */
+const sectionsTab = (id: string, label: string, items: SectionItem[]): TabItem => ({
+  id,
+  label,
+  flush: true,
+  content: <SectionList items={items} />,
+});
 
 // ---------- shared tabs ----------
 
@@ -205,139 +217,154 @@ function agentRunTabs(span: AgentRunSpan, { view, now }: Ctx): TabItem[] {
         </div>
       ),
     },
-    {
-      id: "output",
-      label: "Output",
-      content:
-        data.output === null ? (
-          <Missing
-            what="The output"
-            running={running}
-            none={
-              span.status === "error"
-                ? "The run failed before it produced an output."
-                : "This run has no output."
-            }
-          />
-        ) : (
-          <Value value={data.output} label="output" />
-        ),
-    },
-    {
-      id: "usage",
-      label: "Usage",
-      content: (
-        <div className="flex flex-col gap-3">
-          {requests.length === 0 ? (
-            <Note>No model requests yet.</Note>
-          ) : (
-            <UsageTable
-              caption={`Token usage of ${span.name} by model request`}
-              rows={requests.map((request, i) => ({
-                label: `${i + 1}. ${request.data.model_name}`,
-                usage: request.data.usage,
-                durationMs: spanDuration(request, now),
-              }))}
+    sectionsTab("output", "Output", [
+      {
+        id: "output",
+        title: "Output",
+        content:
+          data.output === null ? (
+            <Missing
+              what="The output"
+              running={running}
+              none={
+                span.status === "error"
+                  ? "The run failed before it produced an output."
+                  : "This run has no output."
+              }
             />
-          )}
-          {data.usage && (
-            <p className="m-0 text-muted text-ui">
-              The agent reported{" "}
-              <span className="font-mono text-fg">
-                {formatCount(data.usage.input_tokens)} in / {formatCount(data.usage.output_tokens)}{" "}
-                out
-              </span>
-              . That figure includes any sub-agent that shares its usage, so run totals are summed
-              from model requests instead.
-            </p>
-          )}
-        </div>
-      ),
-    },
+          ) : (
+            <Value value={data.output} label="output" />
+          ),
+      },
+      {
+        id: "usage",
+        title: "Usage",
+        content: (
+          <>
+            {requests.length === 0 ? (
+              <Note>No model requests yet.</Note>
+            ) : (
+              <UsageTable
+                caption={`Token usage of ${span.name} by model request`}
+                rows={requests.map((request, i) => ({
+                  label: `${i + 1}. ${request.data.model_name}`,
+                  usage: request.data.usage,
+                  durationMs: spanDuration(request, now),
+                }))}
+              />
+            )}
+            {data.usage && (
+              <p className="m-0 text-muted text-ui">
+                The agent reported{" "}
+                <span className="font-mono text-fg">
+                  {formatCount(data.usage.input_tokens)} in /{" "}
+                  {formatCount(data.usage.output_tokens)} out
+                </span>
+                . That figure includes any sub-agent that shares its usage, so run totals are summed
+                from model requests instead.
+              </p>
+            )}
+          </>
+        ),
+      },
+    ]),
   ];
 }
 
 function modelRequestTabs(
   span: ModelRequestSpan,
-  { now }: Ctx,
   stream: readonly StreamPart[] | undefined,
 ): TabItem[] {
   const running = span.status === "running";
   const { data } = span;
   const settings = Object.keys(data.settings).length > 0 ? data.settings : null;
+  // Worth a line only when the provider answered with another model than the one asked for.
+  const answeredBy =
+    data.response_model !== null && data.response_model !== data.model_name
+      ? data.response_model
+      : null;
   return [
-    {
-      id: "response",
-      label: "Response",
-      content:
-        data.output_messages !== null ? (
-          <ConversationView
-            messages={data.output_messages}
-            label="Response"
-            empty="The model returned no content."
-          />
-        ) : stream ? (
-          <Tail key={span.span_id} growth={streamLength(stream)}>
-            <StreamingText parts={stream} />
-          </Tail>
-        ) : (
-          <Missing
-            what="The response"
-            running={running}
-            none={
-              span.status === "error" ? "The request failed before a response arrived." : "None."
-            }
-          />
+    sectionsTab("response", "Response", [
+      {
+        id: "request",
+        title: "Request",
+        content: (
+          <>
+            {/* The model and the duration are in the header; what is here is what it adds. */}
+            <Facts
+              items={[
+                ["Provider", orDash(data.provider)],
+                ...(answeredBy ? [["Answered by", answeredBy] as [string, string]] : []),
+                [
+                  "Tokens",
+                  data.usage
+                    ? `${formatCount(data.usage.input_tokens)} in / ${formatCount(data.usage.output_tokens)} out`
+                    : orDash(null),
+                ],
+              ]}
+            />
+            {running && <Note icon="running">Token counts arrive when the request ends.</Note>}
+            {settings && (
+              <details>
+                <summary className="font-medium text-muted text-ui">Request settings</summary>
+                <JsonTree value={settings} label="request settings" className="mt-1.5" />
+              </details>
+            )}
+          </>
         ),
-    },
-    {
-      id: "input",
-      label: "Input messages",
-      content:
-        data.input_messages === null ? (
-          <Missing what="The input" running={running} none="No input messages were recorded." />
-        ) : (
-          <ConversationView messages={data.input_messages} label="Input messages" />
-        ),
-    },
-    {
-      id: "instructions",
-      label: "Instructions",
-      content:
-        data.instructions === null ? (
-          <Missing
-            what="The instructions"
-            running={running}
-            none="This request carried no instructions."
-          />
-        ) : (
-          <TextBlock text={data.instructions} />
-        ),
-    },
-    {
-      id: "usage",
-      label: "Usage",
-      content: (
-        <div className="flex flex-col gap-4">
-          <Facts
-            items={[
-              ["Input tokens", data.usage ? formatCount(data.usage.input_tokens) : orDash(null)],
-              ["Output tokens", data.usage ? formatCount(data.usage.output_tokens) : orDash(null)],
-              ["Duration", formatDuration(spanDuration(span, now))],
-              ["Model", data.model_name],
-              ["Provider", orDash(data.provider)],
-              ["Response model", orDash(data.response_model)],
-            ]}
-          />
-          {running && <Note icon="running">Token counts arrive when the request ends.</Note>}
-          {settings && (
-            <Block title="Request settings">
-              <JsonTree value={settings} label="request settings" />
-            </Block>
-          )}
-        </div>
-      ),
-    },
+      },
+      {
+        // Last, so that a response still being streamed grows at the bottom of the panel.
+        id: "response",
+        title: "Response",
+        content:
+          data.output_messages !== null ? (
+            <ConversationView
+              messages={data.output_messages}
+              label="Response"
+              empty="The model returned no content."
+            />
+          ) : stream ? (
+            <Tail key={span.span_id} growth={streamLength(stream)}>
+              <StreamingText parts={stream} />
+            </Tail>
+          ) : (
+            <Missing
+              what="The response"
+              running={running}
+              none={
+                span.status === "error" ? "The request failed before a response arrived." : "None."
+              }
+            />
+          ),
+      },
+    ]),
+    sectionsTab("input", "Input", [
+      {
+        id: "instructions",
+        title: "Instructions",
+        content:
+          data.instructions === null ? (
+            <Missing
+              what="The instructions"
+              running={running}
+              none="This request carried no instructions."
+            />
+          ) : (
+            <TextBlock text={data.instructions} />
+          ),
+      },
+      {
+        id: "messages",
+        title: "Input messages",
+        content:
+          data.input_messages === null ? (
+            <Missing what="The input" running={running} none="No input messages were recorded." />
+          ) : (
+            <ConversationView messages={data.input_messages} label="Input messages" />
+          ),
+      },
+    ]),
   ];
 }
 
@@ -345,100 +372,105 @@ function toolCallTabs(span: ToolCallSpan): TabItem[] {
   const running = span.status === "running";
   const { data } = span;
   const failed = span.status === "error";
+  const problem: SectionItem | null =
+    span.error || data.retry
+      ? {
+          // First: when a call went wrong, that is what the reader came for.
+          id: "error",
+          title: data.retry ? "Retry" : "Error",
+          content: (
+            <>
+              {data.retry && (
+                <Facts
+                  items={[
+                    ["Attempt", `${data.retry.attempt} of ${data.retry.max_retries} retries`],
+                    ["Cause", data.retry.cause],
+                  ]}
+                />
+              )}
+              {span.error && <ErrorBox error={span.error} retry={data.retry !== null} />}
+              {data.retry && (
+                <Note>
+                  A retry is not a failure: the tool asked the model to call it again, and the run
+                  went on.
+                </Note>
+              )}
+            </>
+          ),
+        }
+      : null;
   return [
-    {
-      id: "arguments",
-      label: "Arguments",
-      content:
-        data.arguments === null ? (
-          <Missing what="Arguments" running={false} none="This call has no arguments." />
-        ) : (
-          <Value value={data.arguments} label={`arguments of ${data.tool_name}`} />
-        ),
-    },
-    {
-      id: "result",
-      label: "Result",
-      content:
-        data.result === null ? (
-          <Missing
-            what="The result"
-            running={running}
-            none={failed ? "The call failed without a result." : "The tool returned nothing."}
-          />
-        ) : (
-          <div className="flex flex-col gap-2">
-            {data.retry && (
-              <Note icon="retry">This text went back to the model as the reason to try again.</Note>
-            )}
-            <Value value={data.result} label={`result of ${data.tool_name}`} />
-          </div>
-        ),
-    },
-    {
-      id: "error",
-      label: "Error / Retry",
-      content: (
-        <div className="flex flex-col gap-3">
-          {data.retry && (
-            <Facts
-              items={[
-                ["Attempt", `${data.retry.attempt} of ${data.retry.max_retries} retries`],
-                ["Cause", data.retry.cause],
-              ]}
-            />
-          )}
-          {span.error ? (
-            <ErrorBox error={span.error} retry={data.retry !== null} />
+    sectionsTab("details", "Details", [
+      ...(problem ? [problem] : []),
+      {
+        id: "arguments",
+        title: "Arguments",
+        content:
+          data.arguments === null ? (
+            <Missing what="Arguments" running={false} none="This call has no arguments." />
           ) : (
-            <Note icon={running ? "running" : "check"}>
-              {running ? "Still running. No error so far." : "This call did not fail."}
-            </Note>
-          )}
-          {data.retry && (
-            <Note>
-              A retry is not a failure: the tool asked the model to call it again, and the run went
-              on.
-            </Note>
-          )}
-        </div>
-      ),
-    },
+            <Value value={data.arguments} label={`arguments of ${data.tool_name}`} />
+          ),
+      },
+      {
+        id: "result",
+        title: "Result",
+        content:
+          data.result === null ? (
+            <Missing
+              what="The result"
+              running={running}
+              none={failed ? "The call failed without a result." : "The tool returned nothing."}
+            />
+          ) : (
+            <>
+              {data.retry && (
+                <Note icon="retry">
+                  This text went back to the model as the reason to try again.
+                </Note>
+              )}
+              <Value value={data.result} label={`result of ${data.tool_name}`} />
+            </>
+          ),
+      },
+    ]),
   ];
 }
 
 function graphTabs(span: GraphRunSpan | GraphNodeSpan): TabItem[] {
   const running = span.status === "running";
   return [
-    {
-      id: "inputs",
-      label: "Inputs",
-      content:
-        span.data.inputs === null ? (
-          <Missing what="Inputs" running={false} none="No inputs." />
-        ) : (
-          <Value value={span.data.inputs} label="inputs" />
-        ),
-    },
-    {
-      id: "output",
-      label: "Output",
-      content:
-        span.kind === "graph_node" ? (
-          <Note>
-            Outputs are recorded for the whole graph run, not per node. A node's result shows as the
-            inputs of the node that ran next.
-          </Note>
-        ) : span.data.output === null ? (
-          <Missing
-            what="The output"
-            running={running}
-            none={span.status === "error" ? "The graph failed before it finished." : "No output."}
-          />
-        ) : (
-          <Value value={span.data.output} label="output" />
-        ),
-    },
+    sectionsTab("details", "Details", [
+      {
+        id: "inputs",
+        title: "Inputs",
+        content:
+          span.data.inputs === null ? (
+            <Missing what="Inputs" running={false} none="No inputs." />
+          ) : (
+            <Value value={span.data.inputs} label="inputs" />
+          ),
+      },
+      {
+        id: "output",
+        title: "Output",
+        content:
+          span.kind === "graph_node" ? (
+            <Note>
+              Outputs are recorded for the whole graph run, not per node. A node's result shows as
+              the inputs of the node that ran next.
+            </Note>
+          ) : span.data.output === null ? (
+            <Missing
+              what="The output"
+              running={running}
+              none={span.status === "error" ? "The graph failed before it finished." : "No output."}
+            />
+          ) : (
+            <Value value={span.data.output} label="output" />
+          ),
+      },
+    ]),
   ];
 }
 
@@ -447,7 +479,7 @@ function kindTabs(span: Span, ctx: Ctx, stream: readonly StreamPart[] | undefine
     case "agent_run":
       return agentRunTabs(span, ctx);
     case "model_request":
-      return modelRequestTabs(span, ctx, stream);
+      return modelRequestTabs(span, stream);
     case "tool_call":
       return toolCallTabs(span);
     case "graph_run":
@@ -474,7 +506,7 @@ export function SpanInspector({
     ...kindTabs(span, { view, now }, view.streams[span.span_id]),
     { id: "raw", label: "Raw", content: <RawAttributes span={span} view={view} /> },
   ];
-  // A tool call's error lives in its own tab; every other kind shows it up front.
+  // A tool call's error is the first section of its details; every other kind shows it here.
   const showError = span.error !== null && span.kind !== "tool_call";
   const owner = span.agent_name !== null && span.kind !== "agent_run" ? span.agent_name : null;
   return (
@@ -500,13 +532,6 @@ export function SpanInspector({
           <div tabIndex={0} className="max-h-40 overflow-y-auto rounded-control">
             <ErrorBox error={span.error} retry={false} />
           </div>
-        )}
-        {span.kind === "tool_call" && span.error && (
-          // Three lines here; the whole message is in the Error / Retry tab.
-          <p className="m-0 line-clamp-3 whitespace-pre-wrap break-words text-ui">
-            <span className="font-medium font-mono text-data">{span.error.type}</span>
-            {span.error.message && <span className="text-fg">: {span.error.message}</span>}
-          </p>
         )}
       </InspectorHeader>
       <StickyTabs group={span.kind} label="Span details" items={tabs} />

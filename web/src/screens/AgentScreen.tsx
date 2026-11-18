@@ -1,19 +1,20 @@
 /**
- * The agent blueprint screen: the canvas in the main slot, the inspector beside it. Clicking a
- * node inspects that part; with nothing picked the inspector shows the agent itself.
+ * The agent blueprint screen: the canvas in the main slot, the inspector beside it, and
+ * "Copy Mermaid" in the bar. Clicking a node inspects that part; with nothing picked the
+ * inspector shows the agent itself.
  */
 import { useMemo, useState } from "react";
 import { AgentCanvas } from "../canvas/AgentCanvas";
 import type { CanvasTarget } from "../canvas/targets";
+import { agentMermaid } from "../data/mermaid";
 import { canvasModel } from "../data/selectors";
 import { useViewer } from "../data/store";
 import { BlueprintInspector } from "../inspector/Inspector";
-import { rememberTab } from "../inspector/parts";
 import { plural } from "../shell/format";
 import { NotFound, WaitingForRun } from "../shell/states";
 import { Workspace } from "../shell/Workspace";
 import { Chip } from "../ui/Badge";
-import { Tooltip } from "../ui/overlays";
+import { CopyButton } from "../ui/CopyButton";
 import { ScreenBar } from "./parts";
 
 function AgentBlueprintView({ id }: { id: string }) {
@@ -28,7 +29,6 @@ function AgentBlueprintView({ id }: { id: string }) {
   const agent = data.agents[id];
   if (!model || !agent) return null;
 
-  const others = model.agents.length - 1;
   return (
     <Workspace
       inspectorLabel="Blueprint details"
@@ -41,47 +41,17 @@ function AgentBlueprintView({ id }: { id: string }) {
             kind="Agent blueprint"
             title={agent.label}
             chips={
-              <>
-                {agent.model?.offline && (
-                  <Tooltip content="A test or function model: runs offline and calls no provider.">
-                    <span className="inline-flex">
-                      <Chip>offline model</Chip>
-                    </span>
-                  </Tooltip>
-                )}
-                {agent.source === "observed" && (
-                  <Tooltip content="Built from what its runs showed. Pass the agent to serve() or record() to see instructions, schemas and settings in full.">
-                    <span className="inline-flex">
-                      <Chip tone="accent" icon="info">
-                        Observed from runs
-                      </Chip>
-                    </span>
-                  </Tooltip>
-                )}
-                <Chip tone="tool" icon="tool">
-                  {plural(agent.tools.length, "tool")}
-                </Chip>
-                {others > 0 && (
-                  <Chip tone="agent" icon="agent">
-                    {plural(others, "sub-agent")}
-                  </Chip>
-                )}
-                {agent.warnings.length > 0 && (
-                  <Chip tone="retry" icon="warning">
-                    {plural(agent.warnings.length, "warning")}
-                  </Chip>
-                )}
-              </>
+              agent.warnings.length > 0 ? (
+                <Chip icon="warning">{plural(agent.warnings.length, "warning")}</Chip>
+              ) : undefined
             }
+            aside={<CopyButton text={() => agentMermaid(model)} label="Copy Mermaid" />}
           />
           <div className="min-h-0 flex-1">
             <AgentCanvas
               model={model}
               highlight={highlight}
-              onPick={(next) => {
-                if (next.kind === "output") rememberTab("agent", "output");
-                setPicked(next);
-              }}
+              onPick={setPicked}
               onClear={() => setPicked(null)}
             />
           </div>
