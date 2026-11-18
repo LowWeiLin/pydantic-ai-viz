@@ -146,7 +146,7 @@ Close the first session (or leave its `with` block) before starting another. In 
 
 Events are kept in memory, in the process that called `serve`. Nothing is written to disk unless you [save or export](export-and-share.md).
 
-When the log grows past `max_events`, the oldest **finished** runs are dropped, a whole run at a time. Blueprints are never dropped, and a run that is still going is never cut in half. For a service that runs for days, the viewer therefore always shows the most recent runs. Raise `max_events` if you need a longer history and have the memory for it.
+When the log grows past `max_events`, the oldest **finished** runs are dropped, a whole run at a time. Blueprints are never dropped, a run that is still going is never cut in half, and the run that finished last is always kept, even when it alone is larger than the limit. For a service that runs for days, the viewer therefore always shows the most recent runs. Raise `max_events` if you need a longer history and have the memory for it.
 
 Very long strings (over 32,768 characters) are cut, with a note saying how long the original was.
 

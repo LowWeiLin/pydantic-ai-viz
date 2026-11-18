@@ -386,7 +386,7 @@ data: {"seq":1,...}
 
 ### Eviction { #eviction }
 
-When the log exceeds `max_events` (50,000 by default), the oldest completed traces are dropped, each as a whole. `session.started` and blueprint events are never dropped. Evicted events leave gaps in `seq`.
+When the log exceeds `max_events` (50,000 by default), the oldest completed traces are dropped, each as a whole. `session.started` and blueprint events are never dropped. Neither is a trace with a span still open, nor the trace that completed last, so a log can hold more than `max_events` events. Evicted events leave gaps in `seq`.
 
 ## HTML export { #html-export }
 

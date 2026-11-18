@@ -102,9 +102,15 @@ def test_eviction_never_drops_session_started_blueprints_or_a_running_trace() ->
         log.append(span_event("started", trace, trace))
         log.append(span_event("ended", trace, trace))
     events = log.snapshot()
-    # Over the limit, and rightly so: everything that may go (traces 2 and 3, each as soon as it completed) is gone.
-    assert types_of(events) == ["session.started", "span.started", *["blueprint.agent"] * 5]
-    assert events[1]["span"]["trace_id"] == f"{1:032x}"
+    # Over the limit, and rightly so: all that may go is trace 2, which went when trace 3 completed.
+    assert types_of(events) == [
+        "session.started",
+        "span.started",
+        *["blueprint.agent"] * 5,
+        "span.started",
+        "span.ended",
+    ]
+    assert [e["span"]["trace_id"] for e in events if "span" in e] == [f"{1:032x}", f"{3:032x}", f"{3:032x}"]
     assert log.last_seq == 10
 
 
@@ -115,8 +121,45 @@ def test_trace_with_an_open_child_is_not_complete() -> None:
     log.append(span_event("ended", 1, 2))
     log.append({"type": "blueprint.agent", "agent": {}})  # over the limit, but span 1 is still open
     assert len(log.snapshot()) == 4
-    log.append(span_event("ended", 1, 1))  # now complete: evicted whole on this very append
-    assert types_of(log.snapshot()) == ["blueprint.agent"]
+    log.append(span_event("ended", 1, 1))  # now complete, but the newest finished trace always stays
+    assert len(log.snapshot()) == 5
+    log.append(span_event("started", 2, 3))
+    log.append(span_event("ended", 2, 3))  # a newer trace finished: trace 1 goes, whole
+    assert types_of(log.snapshot()) == ["blueprint.agent", "span.started", "span.ended"]
+
+
+def test_a_trace_larger_than_the_log_survives_its_own_completion() -> None:
+    log = EventLog(max_events=4)
+    log.append({"type": "session.started"})
+    log.append(span_event("started", 1, 1))
+    for _ in range(10):
+        log.append({"type": "stream.delta", "trace_id": f"{1:032x}", "span_id": f"{1:016x}"})
+    log.append(span_event("ended", 1, 1))
+    assert len(log.snapshot()) == 13  # the run someone just watched is still there to look at and to save
+    log.append(span_event("started", 2, 2))
+    assert len(log.snapshot()) == 14
+    log.append(span_event("ended", 2, 2))  # only now is there something newer to show
+    assert types_of(log.snapshot()) == ["session.started", "span.started", "span.ended"]
+
+
+def test_a_trace_that_finishes_while_a_larger_one_is_open_stays_until_a_newer_one_finishes() -> None:
+    log = EventLog(max_events=4)
+    log.append(span_event("started", 1, 1))  # the long-running trace
+    for _ in range(6):
+        log.append({"type": "stream.delta", "trace_id": f"{1:032x}", "span_id": f"{1:016x}"})
+
+    def traces() -> list[int]:
+        return sorted({int(e["span"]["trace_id"] if "span" in e else e["trace_id"], 16) for e in log.snapshot()})
+
+    log.append(span_event("started", 2, 2))
+    log.append(span_event("ended", 2, 2))
+    assert traces() == [1, 2]
+    log.append(span_event("started", 3, 3))
+    assert traces() == [1, 2, 3]
+    log.append(span_event("ended", 3, 3))
+    assert traces() == [1, 3]
+    log.append(span_event("ended", 1, 1))  # the oldest trace is now the one that finished last
+    assert traces() == [1]
 
 
 def test_max_events_must_be_positive() -> None:

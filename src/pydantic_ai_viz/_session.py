@@ -76,6 +76,8 @@ class EventLog:
         """Trace id -> span ids started but not ended. Insertion order is age order."""
         self._sizes: dict[str, int] = {}
         """Trace id -> number of retained events."""
+        self._last_completed: str | None = None
+        """The trace whose last open span ended most recently."""
         self._subscribers = 0
         self._closed = False
 
@@ -96,6 +98,8 @@ class EventLog:
                     open_spans.add(envelope["span"]["span_id"])
                 elif envelope["type"] == "span.ended":
                     open_spans.discard(envelope["span"]["span_id"])
+                    if not open_spans:
+                        self._last_completed = trace_id
             if len(self._events) > self.max_events:
                 self._evict()
             self._changed.notify_all()
@@ -104,15 +108,17 @@ class EventLog:
     def _evict(self) -> None:
         """Drop the oldest completed traces whole until the log fits again.
 
-        ``session.started`` and blueprints belong to no trace and always stay, and so
-        does a trace with a span still open, even if that leaves the log over the limit.
+        ``session.started`` and blueprints belong to no trace and always stay. So does a
+        trace with a span still open, and so does the trace that finished last: a run is
+        not dropped the moment it ends, however large it is, or there would be nothing
+        to look at or to save. Each of these can leave the log over the limit.
         """
         excess = len(self._events) - self.max_events
         doomed: set[str] = set()
         for trace_id, open_spans in self._open_spans.items():
             if excess <= 0:
                 break
-            if not open_spans:
+            if not open_spans and trace_id != self._last_completed:
                 doomed.add(trace_id)
                 excess -= self._sizes[trace_id]
         if not doomed:
