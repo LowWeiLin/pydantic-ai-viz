@@ -11,7 +11,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push replaces the run of a pull request, but every commit on main gets its full run.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   FORCE_COLOR: "1"
