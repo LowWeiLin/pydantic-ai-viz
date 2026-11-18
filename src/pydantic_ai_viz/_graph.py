@@ -10,6 +10,7 @@ attributes, and take the same path into the session as agent spans.
 
 from __future__ import annotations
 
+import asyncio
 from contextvars import Token
 from typing import Any
 
@@ -193,6 +194,15 @@ async def run_graph(
                 # With one task running we know which node failed; with several we do not.
                 running[0].record_exception(exc)
                 running[0].set_status(Status(StatusCode.ERROR, f"{type(exc).__name__}: {exc}"))
+            raise
+        except BaseException as exc:
+            # Cancellation or Ctrl+C: not an error to OpenTelemetry, but the run did not finish,
+            # and neither did the nodes it was in. No traceback is recorded for it.
+            stopped = Status(
+                StatusCode.ERROR, "cancelled" if isinstance(exc, asyncio.CancelledError) else type(exc).__name__
+            )
+            for span in (root, *nodes.spans()):
+                span.set_status(stopped)
             raise
         finally:
             nodes.end_all()

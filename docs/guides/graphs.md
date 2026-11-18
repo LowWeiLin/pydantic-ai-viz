@@ -55,7 +55,7 @@ output = await pviz.run_graph(graph, state=Draft(), inputs="Announce dark mode")
 - a node that is visited again (a loop) shows a visit count,
 - agent runs started inside a step are nested under that step, so you can open a node and read the conversation that happened in it.
 
-If the graph raises, the graph run is marked as an error and the exception is raised to you unchanged.
+If the graph raises, the graph run is marked as an error and the exception is raised to you unchanged. A run that is cancelled (the task is cancelled, or you press Ctrl+C) is marked as an error too, with the message `cancelled`, together with the nodes that were still running.
 
 ### `run_graph` is safe to leave in
 

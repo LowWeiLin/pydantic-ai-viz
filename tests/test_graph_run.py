@@ -289,6 +289,25 @@ async def test_failure_with_several_steps_in_flight_marks_only_the_graph_run() -
     assert len(found) == len(started)  # the steps still running were closed too
 
 
+async def test_cancelled_run_is_recorded_as_failed_and_still_cancels() -> None:
+    graph = build_staggered()
+    with record(graph) as session:
+        task = asyncio.ensure_future(run_graph(graph, inputs=[5.0]))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        found = [span for span in spans(session.events) if span["kind"].startswith("graph")]
+    assert [(s["name"], s["status"]) for s in found] == [
+        ("source", "ok"),
+        ("map", "ok"),
+        ("slow", "error"),
+        ("staggered", "error"),
+    ]
+    assert found[-2]["error"] == {"type": "Error", "message": "cancelled", "stacktrace": None}
+    assert found[-1]["data"]["output"] is None
+
+
 async def test_content_capture_off_omits_inputs_and_output() -> None:
     graph, _ = build_pipeline()
     with record(graph, include_content=False) as session:
