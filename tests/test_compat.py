@@ -60,6 +60,13 @@ def test_private_agent_attribute_exists(attr: str) -> None:
     assert hasattr(_agent(), attr), f"pydantic-ai no longer has Agent.{attr}"
 
 
+def test_instrumentation_default_is_readable() -> None:
+    assert hasattr(Agent, _compat.AGENT_INSTRUMENT_DEFAULT), "pydantic-ai no longer has Agent._instrument_default"
+    assert _compat.instrumentation_default() is False
+    Agent.instrument_all(True)
+    assert _compat.instrumentation_default() is True
+
+
 def test_private_attribute_shapes() -> None:
     agent: Any = _agent()
 

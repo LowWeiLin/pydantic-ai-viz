@@ -14,6 +14,8 @@ from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
+from pydantic_ai import Agent
+
 AGENT_PRIVATE_ATTRS: dict[str, str] = {
     "_instructions": "instructions",
     "_system_prompts": "static system prompts",
@@ -33,6 +35,9 @@ OUTPUT_TOOLSET_TOOL_DEFS = "_tool_defs"
 MERMAID_MODULE = "pydantic_graph.graph_builder"
 MERMAID_FUNCTION = "build_mermaid_graph"
 """Importable, but not in ``pydantic_graph.graph_builder.__all__``."""
+
+AGENT_INSTRUMENT_DEFAULT = "_instrument_default"
+"""Private ``Agent`` class attribute holding what ``Agent.instrument_all`` was last given."""
 
 BUILTIN_CAPABILITIES = frozenset({"ToolSearch", "PendingMessageDrainCapability", "Instrumentation"})
 """Capabilities pydantic-ai injects on its own; the viewer hides them behind a disclosure."""
@@ -73,6 +78,14 @@ def load_build_mermaid_graph() -> Callable[..., Any] | None:
     except Exception:
         return None
     return function if callable(function) else None
+
+
+def instrumentation_default() -> Any:
+    """What ``Agent.instrument_all`` was last called with, or ``None`` if that cannot be read.
+
+    A session reads it to put the previous setting back when it closes.
+    """
+    return getattr(Agent, AGENT_INSTRUMENT_DEFAULT, None)
 
 
 def pydantic_ai_version() -> str:

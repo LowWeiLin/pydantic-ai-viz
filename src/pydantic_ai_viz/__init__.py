@@ -5,6 +5,7 @@ Unofficial community project, not affiliated with or endorsed by Pydantic.
 
 from ._introspect import blueprint
 from ._models import AgentBlueprint, GraphBlueprint
+from ._session import Session, record
 from ._version import __version__
 
-__all__ = ["AgentBlueprint", "GraphBlueprint", "__version__", "blueprint"]
+__all__ = ["AgentBlueprint", "GraphBlueprint", "Session", "__version__", "blueprint", "record"]
