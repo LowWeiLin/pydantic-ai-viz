@@ -250,10 +250,14 @@ test.describe("navigation", () => {
   test("a deep link restores the selection", async ({ page }) => {
     const span = sampleSpan("issue_refund");
     await openRun(page, "sample", span.trace_id, span.span_id);
-    await skipToEnd(page);
-    await expect(page.getByRole("treeitem", { selected: true })).toContainText("issue_refund");
+    // A run opened on a span does not replay from the start: the linked span, which begins
+    // seconds into the run, is there at once, and the run is held at its end.
     const inspector = page.getByRole("complementary", { name: "Span details" });
-    await expect(inspector.getByRole("heading", { name: "issue_refund" })).toBeVisible();
+    await expect(inspector.getByRole("heading", { name: "issue_refund" })).toBeVisible({
+      timeout: 1_500,
+    });
+    await expect(page.getByRole("button", { name: "Replay", exact: true })).toBeVisible();
+    await expect(page.getByRole("treeitem", { selected: true })).toContainText("issue_refund");
     // The canvas highlights the tool on the sub-agent, and a reload keeps all of it.
     await expect(page.locator(".pviz-selected")).toHaveCount(1);
     await page.reload();

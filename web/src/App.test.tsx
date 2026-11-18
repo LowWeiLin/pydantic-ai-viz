@@ -484,11 +484,20 @@ describe("screens", () => {
     )[0];
     window.location.hash = `#/runs/${span?.trace_id}?span=${span?.span_id}`;
     render(<App plan={{ kind: "embedded", events: sample }} />);
-    expect(await screen.findByRole("heading", { name: "Not started yet" })).toBeInTheDocument();
-    await skipToEnd(user);
-    const details = screen.getByRole("complementary", { name: "Span details" });
-    expect(within(details).getByRole("heading", { name: "issue_refund" })).toBeInTheDocument();
+    // No replay from the start here: the linked span would only show up once the replay got to
+    // it. The run opens held at its end, with the span there to read.
+    const details = await screen.findByRole("complementary", { name: "Span details" });
+    expect(await within(details).findByRole("heading", { name: "issue_refund" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Not started yet" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Replay" })).toBeInTheDocument();
     await user.click(within(details).getByRole("tab", { name: "Result" }));
+    expect(within(details).getByText(/RF-88213/)).toBeInTheDocument();
+
+    // Replaying from the start hides the span again; one click goes back to it.
+    await user.click(screen.getByRole("button", { name: "Replay" }));
+    await user.click(await screen.findByRole("button", { name: "Pause" }));
+    await user.click(await screen.findByRole("button", { name: "Jump to this span" }));
+    expect(within(details).getByRole("heading", { name: "issue_refund" })).toBeVisible();
     expect(within(details).getByText(/RF-88213/)).toBeInTheDocument();
   });
 

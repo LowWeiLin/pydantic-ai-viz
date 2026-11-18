@@ -1,6 +1,6 @@
 /** React bindings for the playback clock: read the time, and drive it while playing. */
 import { useEffect } from "react";
-import { type Bounds, effectiveTime, playFromStart, tick } from "./playback";
+import { type Bounds, effectiveTime, playFromStart, seek, tick } from "./playback";
 import { useViewer } from "./store";
 
 /** The projection time every time-aware view should use. `Infinity` in live mode. */
@@ -40,13 +40,20 @@ export function usePlaybackDriver(bounds: Bounds | null): void {
 /**
  * Recordings and exports replay from the start when a run is opened; live sessions stay
  * pinned to now. Runs once per run id.
+ *
+ * A run opened on a span (a shared link, a reload) is held at its end instead: a replay would
+ * hide the very span the link points at until the clock got there.
  */
-export function useAutoReplay(traceId: string, bounds: Bounds | null): void {
+export function useAutoReplay(traceId: string, bounds: Bounds | null, spanId: string | null): void {
   const replayable = useViewer((state) => state.source.kind !== "live");
   const known = bounds !== null;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: restart only when the run changes, not when its bounds grow.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: restart only when the run changes, not when its bounds grow or the selection moves.
   useEffect(() => {
     if (!replayable || !bounds) return;
-    useViewer.getState().updatePlayback((playback) => playFromStart(playback, bounds));
+    useViewer
+      .getState()
+      .updatePlayback((playback) =>
+        spanId ? seek(playback, bounds.end, bounds) : playFromStart(playback, bounds),
+      );
   }, [traceId, replayable, known]);
 }

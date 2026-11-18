@@ -73,7 +73,7 @@ You can also drop a `.pviz.jsonl` file onto a viewer that is showing its gallery
 
 ## Share a run
 
-**Send the export.** It is one self-contained HTML file. It loads no scripts, fonts or styles from the network and makes no requests, so it works from a file share, an email attachment or an air-gapped machine. A deep link to a span (`refund-flow.html#/runs/<trace_id>?span=<span_id>`) opens with that span selected.
+**Send the export.** It is one self-contained HTML file. It loads no scripts, fonts or styles from the network and makes no requests, so it works from a file share, an email attachment or an air-gapped machine. A deep link to a span (`refund-flow.html#/runs/<trace_id>?span=<span_id>`) opens with that span selected and the run held at its end, so the span is there to read at once; press **Replay** to watch the run from the start.
 
 **Or host recordings as a gallery.** The viewer is a static page that looks for a `recordings/index.json` next to itself. Put these on any static host:
 

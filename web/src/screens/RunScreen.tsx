@@ -124,7 +124,7 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
 
   const bounds = useMemo(() => runBounds(data, traceId), [data, traceId]);
   usePlaybackDriver(bounds);
-  useAutoReplay(traceId, bounds);
+  useAutoReplay(traceId, bounds, spanId);
 
   const view = useMemo(() => runView(data, traceId, t), [data, traceId, t]);
   const totals = useMemo(() => runTotals(data, traceId, t), [data, traceId, t]);
@@ -187,6 +187,8 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
   const fullRoot = data.spans[data.traces[traceId]?.[0] ?? ""];
   const kind = kindMeta[root?.kind ?? fullRoot?.kind ?? "other"];
   const selected = spanId ? view.spans[spanId] : undefined;
+  // Selected, but not started yet at the replay position: the empty state offers to go to it.
+  const later = spanId && !selected ? data.spans[spanId] : undefined;
   // With nothing selected the inspector shows the run itself, as a blueprint screen shows
   // its agent.
   const inspected = selected ?? (spanId === null && picked === null ? root : undefined);
@@ -295,9 +297,18 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
                 ? "The selected span begins later than the current replay position."
                 : "The run begins later than the current replay position."}
             </p>
-            <Button onClick={() => update((p) => playFromStart(p, bounds))} icon="play">
-              Replay from the start
-            </Button>
+            {later ? (
+              <Button
+                onClick={() => update((p) => seek(p, later.end_ms ?? later.start_ms, bounds))}
+                icon="stepForward"
+              >
+                Jump to this span
+              </Button>
+            ) : (
+              <Button onClick={() => update((p) => playFromStart(p, bounds))} icon="play">
+                Replay from the start
+              </Button>
+            )}
           </EmptyState>
         )
       }

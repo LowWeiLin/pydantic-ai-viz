@@ -118,7 +118,7 @@ When a run involves several agents, the switcher above the canvas chooses whose 
 
 ## Go back in time
 
-The ruler along the top of the timeline is the scrubber, and the playback bar above it has play, step and speed controls. Dragging the ruler back shows the canvas, the timeline and the inspector exactly as they were at that moment, including half-streamed text. A recording plays from the start when you open it. In a live session, new events still arrive while you are watching the past; press ++l++ or the **Live** button to jump back to now.
+The ruler along the top of the timeline is the scrubber, and the playback bar above it has play, step and speed controls. Dragging the ruler back shows the canvas, the timeline and the inspector exactly as they were at that moment, including half-streamed text. A recording plays from the start when you open it, unless the link points at a span: then the run opens held at its end with that span selected. In a live session, new events still arrive while you are watching the past; press ++l++ or the **Live** button to jump back to now.
 
 | Key | Action |
 |---|---|
