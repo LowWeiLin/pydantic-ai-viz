@@ -474,6 +474,17 @@ test.describe("navigation", () => {
       await page.keyboard.press("Enter");
       await expect(rows(page).last()).toHaveAttribute("aria-selected", "true");
     });
+
+    await test.step("playback keys work with the focus on a clicked row", async () => {
+      await rows(page).nth(2).click();
+      await expect(rows(page).nth(2)).toBeFocused();
+      for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowLeft");
+      expect(await rows(page).count()).toBeLessThan(TRIAGE_SPANS);
+      await page.keyboard.press("Space");
+      await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+      await page.keyboard.press("Space");
+      await expect(page.getByRole("button", { name: "Play", exact: true })).toBeVisible();
+    });
   });
 
   test("the theme toggle works, by button and by key, and is remembered", async ({ page }) => {

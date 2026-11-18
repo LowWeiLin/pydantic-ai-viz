@@ -58,17 +58,23 @@ function isTyping(target: EventTarget | null): boolean {
   );
 }
 
-/** Keys that already mean something on a focused control: they are left to the control. */
+/**
+ * Keys that already mean something on a focused control: they are left to the control.
+ *
+ * A timeline row is not on the list. Its own keys (Up, Down, Home, End, Enter) are no
+ * shortcuts, the tree is flat, so Left and Right mean nothing in it, and a click leaves the
+ * focus on a row: playback keys that stopped working there would stop working for everyone.
+ */
 function controlOwnsKey(target: EventTarget | null, key: string): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const interactive = target.closest(
-    "button, a[href], summary, [role='tab'], [role='slider'], [role='treeitem'], [role='separator']",
+    "button, a[href], summary, [role='tab'], [role='slider'], [role='separator']",
   );
   if (!interactive) return false;
   if (key === " ") return true;
   if (key === "ArrowLeft" || key === "ArrowRight") {
     const role = interactive.getAttribute("role");
-    return role === "tab" || role === "slider" || role === "treeitem" || role === "separator";
+    return role === "tab" || role === "slider" || role === "separator";
   }
   return false;
 }

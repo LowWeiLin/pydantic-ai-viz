@@ -242,7 +242,8 @@ export function Timeline({
             : event.key === "End"
               ? view.order.at(-1)
               : undefined;
-    if (event.key === "Enter" || event.key === " ") {
+    // Enter selects. Space is left alone: it plays and pauses, wherever the focus is.
+    if (event.key === "Enter") {
       event.preventDefault();
       onSelect(id);
     } else if (target !== undefined) {

@@ -587,6 +587,39 @@ describe("shell behaviour", () => {
     expect(document.documentElement).not.toHaveAttribute("data-theme");
   });
 
+  test("playback keys still work with a timeline row or a canvas node focused", async () => {
+    // Clicking a row is the first thing anyone does, and it leaves the focus on that row.
+    const user = userEvent.setup();
+    render(<App plan={embedded("sample.pviz.jsonl")} />);
+    const triage = runs(useViewer.getState().data)[1];
+    await openRun(triage?.traceId, "triage");
+    await skipToEnd(user);
+    const all = screen.getAllByRole("treeitem").length;
+    const row = screen.getAllByRole("treeitem")[2] as HTMLElement;
+    await user.click(row);
+    expect(row).toHaveFocus();
+
+    // Three boundaries back: the first ones are span ends, which hide no row.
+    await user.keyboard("{ArrowLeft}{ArrowLeft}{ArrowLeft}");
+    expect(screen.getAllByRole("treeitem").length).toBeLessThan(all);
+    await user.keyboard("{ArrowRight}");
+    await user.keyboard(" ");
+    expect(await screen.findByRole("button", { name: "Pause" })).toBeInTheDocument();
+    await user.keyboard(" ");
+    expect(await screen.findByRole("button", { name: "Play" })).toBeInTheDocument();
+    // The row keeps its own keys: Enter selects, Down moves on.
+    await user.keyboard("{ArrowDown}");
+    expect(window.location.hash).not.toContain(row.getAttribute("data-span") ?? "none");
+
+    // A canvas node is a real button, so Space presses it; the arrows still step.
+    await skipToEnd(user);
+    const node = screen.getByRole("button", { name: /^Agent triage/ });
+    await user.click(node);
+    const before = screen.getAllByRole("treeitem").length;
+    await user.keyboard("{ArrowLeft}{ArrowLeft}{ArrowLeft}");
+    expect(screen.getAllByRole("treeitem").length).toBeLessThan(before);
+  });
+
   test("the inspector resizes from the keyboard and collapses", async () => {
     const user = userEvent.setup();
     render(
