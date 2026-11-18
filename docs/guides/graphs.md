@@ -76,7 +76,14 @@ When a graph runs several steps at once (after a broadcast or a map), agent runs
 
 The reason is how nesting works. A span becomes the parent of what happens next by being the "current" span, and there can only be one current span at a time on the task that drives the graph. With one step running, pydantic-ai-viz makes that step's span current, and agent runs inside it nest correctly. With several steps running at once, no single one of them can be current, so their agent runs attach one level up.
 
-Nothing is lost: every node still gets its row and every agent run is still captured with its full detail. Only the indentation in the timeline is coarser for parallel batches. Sequential graphs, including ones with decisions and loops, nest exactly.
+Every node still gets its row and every agent run is still captured with its full detail; the indentation in the timeline is just coarser for a parallel batch. A step that follows a parallel one runs alone in its branch, so agent runs inside it nest under it again.
+
+Two more things are less exact while steps run in parallel. `pydantic-graph` announces the steps that follow from a finished step, but not which step that was, so pydantic-ai-viz works it out from the structure of the graph:
+
+- **A failure is shown on the graph run.** If a step raises while other steps are still running, the graph run is marked as an error and carries the exception, and no node is. With one step running, the node that raised is marked too.
+- **End times can be approximate.** A node's row ends when the step after it is announced. In the rare case where that cannot be matched to a node (a join that cancels its remaining branches, for example), the row ends later than the step did.
+
+Sequential graphs, including ones with decisions and loops, nest and time exactly.
 
 ## Other things to know
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -199,6 +200,93 @@ async def test_parallel_batch_puts_agent_runs_under_the_graph_run() -> None:
     assert sorted({span["name"] for span in found if span["kind"] == "graph_node"}) == snapshot(
         ["__end__", "map", "reduce_list_append", "source", "square"]
     )
+
+
+def build_staggered() -> Graph[None, None, list[float], list[float]]:
+    """Maps a list over ``slow`` -> ``after`` (runs an agent) and joins the results.
+
+    ``slow`` sleeps for the size of its input, then raises if the input is negative.
+    """
+    helper = Agent(TestModel(custom_output_text="noted"), name="helper")
+    builder = GraphBuilder(name="staggered", input_type=list[float], output_type=list[float])
+
+    @builder.step
+    async def source(ctx: StepContext[None, None, list[float]]) -> list[float]:
+        return ctx.inputs
+
+    @builder.step
+    async def slow(ctx: StepContext[None, None, float]) -> float:
+        await asyncio.sleep(abs(ctx.inputs))
+        if ctx.inputs < 0:
+            raise ValueError("slow failed")
+        return ctx.inputs
+
+    @builder.step
+    async def after(ctx: StepContext[None, None, float]) -> float:
+        await helper.run("after")
+        return ctx.inputs
+
+    collect = builder.join(reduce_list_append, initial_factory=list[float])
+    builder.add(
+        builder.edge_from(builder.start_node).to(source),
+        builder.edge_from(source).map().to(slow),
+        builder.edge_from(slow).to(after),
+        builder.edge_from(after).to(collect),
+        builder.edge_from(collect).to(builder.end_node),
+    )
+    return builder.build()
+
+
+def duration(span: dict[str, Any]) -> float:
+    return span["end_ms"] - span["start_ms"]
+
+
+async def test_parallel_node_spans_end_when_their_own_task_finishes() -> None:
+    graph = build_staggered()
+    with record(graph) as session:
+        assert await run_graph(graph, inputs=[0.05, 0.5]) == [0.05, 0.5]
+        found = spans(session.events)
+    by_id = {span["span_id"]: span for span in found}
+    quick, long = sorted((span for span in found if span["name"] == "slow"), key=lambda span: span["data"]["inputs"])
+    # Each step lasts as long as its own sleep, not as long as its sibling's.
+    assert duration(quick) < 300
+    assert duration(long) >= 400
+    # A join only folds a value in: it is over at once, however long the other branch still runs.
+    joins = [span for span in found if span["name"] == "reduce_list_append"]
+    assert len(joins) == 2
+    assert all(duration(join) < 200 for join in joins)
+    # A step that follows a parallel one runs alone in its branch, so its agent run nests under it.
+    agent_runs = [span for span in found if span["kind"] == "agent_run"]
+    assert len(agent_runs) == 2
+    for agent_run in agent_runs:
+        node = by_id[agent_run["parent_id"]]
+        assert (node["kind"], node["name"]) == ("graph_node", "after")
+        assert node["start_ms"] <= agent_run["start_ms"] <= agent_run["end_ms"] <= node["end_ms"]
+
+
+async def test_failure_in_a_parallel_branch_is_pinned_on_the_node_that_raised() -> None:
+    graph = build_staggered()
+    with record(graph) as session:
+        with pytest.raises(ValueError, match="slow failed"):
+            await run_graph(graph, inputs=[0.05, -0.4])
+        found = [span for span in spans(session.events) if span["kind"].startswith("graph")]
+    assert [(s["name"], s["data"].get("inputs"), s["status"]) for s in found if s["status"] == "error"] == [
+        ("slow", -0.4, "error"),
+        ("staggered", [0.05, -0.4], "error"),
+    ]
+    assert found[-2]["error"]["message"] == "slow failed"
+
+
+async def test_failure_with_several_steps_in_flight_marks_only_the_graph_run() -> None:
+    """Which of the running steps raised is not known, so none of them is blamed."""
+    graph = build_staggered()
+    with record(graph) as session:
+        with pytest.raises(ValueError, match="slow failed"):
+            await run_graph(graph, inputs=[-0.05, 0.5])
+        started = spans(session.events, "span.started")
+        found = [span for span in spans(session.events) if span["kind"].startswith("graph")]
+    assert [(s["kind"], s["name"]) for s in found if s["status"] == "error"] == [("graph_run", "staggered")]
+    assert len(found) == len(started)  # the steps still running were closed too
 
 
 async def test_content_capture_off_omits_inputs_and_output() -> None:
