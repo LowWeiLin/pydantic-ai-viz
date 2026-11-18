@@ -54,7 +54,7 @@ Keep in mind:
 `serve` starts an HTTP server so your browser can show the session. It is built for one developer on one machine:
 
 - **It binds `127.0.0.1`.** Other machines on your network cannot connect.
-- **It checks the `Host` header.** A request that does not address the server as `127.0.0.1`, `localhost` or `[::1]` gets a `403`. This stops a web page you happen to visit from reading the server through a hostname that it points at your machine (DNS rebinding).
+- **It checks the `Host` header.** A request that does not address the server as `localhost` or by a loopback address (`127.0.0.1`, `[::1]`, or another address in `127.0.0.0/8`) gets a `403`. This stops a web page you happen to visit from reading the server through a hostname that it points at your machine (DNS rebinding).
 - **It sends no CORS headers,** so a page on another origin cannot read its responses, and its one `POST` endpoint rejects requests from other origins.
 - **It has no authentication.** Any program running as any user on your machine can connect to a loopback port. On a shared machine, use `record` and an export in place of `serve`.
 

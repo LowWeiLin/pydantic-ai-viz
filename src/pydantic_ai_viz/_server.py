@@ -13,6 +13,7 @@ import ipaddress
 import json
 import os
 import socket
+import socketserver
 import sys
 import threading
 import warnings
@@ -38,7 +39,6 @@ EXPORT_HTML_URL = "api/v1/export.html"
 EXPORT_JSONL_URL = "api/v1/export.jsonl"
 RERUN_URL = "api/v1/rerun"
 
-_LOOPBACK_NAMES = frozenset({"127.0.0.1", "localhost", "[::1]"})
 _WILDCARD_HOSTS = frozenset({"", "0.0.0.0", "::"})
 _MAX_REQUEST_BODY = 65_536
 _MAX_DISCARD = 1_048_576
@@ -89,7 +89,10 @@ class _HTTPServer(ThreadingHTTPServer):
     def server_bind(self) -> None:
         if os.name == "nt":
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        super().server_bind()
+        # Not HTTPServer.server_bind: that also looks up a host name for the address, which only
+        # CGI scripts use and which takes many seconds for an address without one (127.0.0.2).
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = str(self.server_address[0]), self.server_address[1]
 
     def handle_error(self, request: Any, client_address: Any) -> None:
         # A browser that goes away mid-response is routine, not something to print a traceback for.
@@ -150,9 +153,9 @@ class _Handler(BaseHTTPRequestHandler):
                 self._discard(min(length, _MAX_DISCARD))
                 return self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "request body too large"})
             self.rfile.read(length)
-        if viewer.loopback and _host_name(self.headers.get("Host")) not in _LOOPBACK_NAMES:
+        if viewer.loopback and not is_loopback((_host_name(self.headers.get("Host")) or "").strip("[]")):
             # DNS rebinding: a web page can point its own host name at 127.0.0.1, but it
-            # cannot make the browser send a loopback name in the Host header.
+            # cannot make the browser send a loopback name or address in the Host header.
             return self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden: the Host header is not a loopback name"})
 
         path = urlsplit(self.path).path

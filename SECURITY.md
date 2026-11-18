@@ -19,7 +19,7 @@ pydantic-ai-viz is a local development tool. It is built for one developer on on
 ### What it does to limit exposure
 
 - **Loopback only by default.** The server binds `127.0.0.1`. Other machines on your network cannot reach it.
-- **Host header check.** A request whose `Host` header is not a loopback name (`127.0.0.1`, `localhost` or `[::1]`) is refused with `403`. This blocks DNS-rebinding attacks, where a web page you visit tries to read the local server through a hostname it controls.
+- **Host header check.** A request whose `Host` header is not `localhost` or a loopback address (`127.0.0.1`, `[::1]`, or another address in `127.0.0.0/8`) is refused with `403`. This blocks DNS-rebinding attacks, where a web page you visit tries to read the local server through a hostname it controls.
 - **No cross-origin access.** The server sends no CORS headers, so a page on another origin cannot read its responses. The one `POST` endpoint also rejects a request whose `Origin` is not the server's own.
 - **Nothing is written to disk** unless you ask for a recording or an export. Captured runs live in the memory of your process and go away when it exits.
 - **Nothing is sent over the network.** There is no telemetry. Spans go to a private OpenTelemetry tracer provider inside your process, not to a collector. The viewer loads no fonts, scripts or styles from other hosts, and its Content Security Policy forbids it.

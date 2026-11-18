@@ -477,10 +477,33 @@ def test_post_from_a_foreign_host_is_forbidden_before_anything_runs(session: Ses
     assert calls == []
 
 
-@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "LOCALHOST:5173", "[::1]", "[::1]:8765", "127.0.0.1:1"])
+@pytest.mark.parametrize(
+    "host",
+    [
+        "127.0.0.1",
+        "localhost",
+        "LOCALHOST:5173",
+        "[::1]",
+        "[::1]:8765",
+        "127.0.0.1:1",
+        "127.0.0.2:8765",
+        "[0:0:0:0:0:0:0:1]",
+    ],
+)
 def test_loopback_host_names_are_accepted_with_any_port(session: Session, host: str) -> None:
     # Any port: a dev proxy in front of the server forwards its own Host header.
     assert get(session, "/api/v1/health", {"Host": host}).status == 200
+
+
+def test_a_server_on_another_loopback_address_answers_at_its_own_url() -> None:
+    try:
+        session = serve(port=0, host="127.0.0.2", instrument=False)
+    except OSError:
+        pytest.skip("127.0.0.2 cannot be bound here (macOS only routes 127.0.0.1 by default)")
+    with session:
+        assert session.url is not None
+        assert session.url.startswith("http://127.0.0.2:")
+        assert get(session, "/api/v1/health").status == 200  # the client sends Host: 127.0.0.2:<port>
 
 
 def test_a_request_without_a_host_header_is_forbidden(session: Session) -> None:
