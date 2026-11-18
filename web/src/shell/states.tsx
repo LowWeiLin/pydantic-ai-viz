@@ -133,7 +133,7 @@ export function LoadFailed({ failure }: { failure: Failure }) {
         </dl>
         <p className="m-0">
           Recordings are <code>.pviz.jsonl</code> files written by <code>session.save()</code> or{" "}
-          <code>pydantic-ai-viz demo --record</code>.
+          <code className="whitespace-nowrap">pydantic-ai-viz demo --record</code>.
         </p>
         {!live && <DropZone pickLabel="choose another file" />}
       </EmptyState>

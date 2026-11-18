@@ -99,6 +99,8 @@ export function UsageTable({ rows, caption }: { rows: UsageRow[]; caption: strin
     }),
     { input_tokens: 0, output_tokens: 0 },
   );
+  const timed = rows.some((row) => row.durationMs !== null);
+  const time = rows.reduce((sum, row) => sum + (row.durationMs ?? 0), 0);
   const cell = (value: number | undefined) => (value === undefined ? "-" : formatCount(value));
   return (
     <div className="overflow-x-auto rounded-control border border-line">
@@ -141,9 +143,7 @@ export function UsageTable({ rows, caption }: { rows: UsageRow[]; caption: strin
             </th>
             <td className={num}>{formatCount(total.input_tokens)}</td>
             <td className={num}>{formatCount(total.output_tokens)}</td>
-            <td className={`${num} text-muted`}>
-              {formatCount(total.input_tokens + total.output_tokens)} tok
-            </td>
+            <td className={`${num} text-muted`}>{timed ? formatDuration(time) : "-"}</td>
           </tr>
         </tfoot>
       </table>

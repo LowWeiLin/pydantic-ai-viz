@@ -174,14 +174,13 @@ export function SchemaTable({
             <th scope="col" className={th}>
               Type
             </th>
-            <th scope="col" className={th}>
-              Description
-            </th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.path} className="border-line border-b align-top last:border-b-0">
+              {/* The description sits under the name: a third column leaves it a few words
+                  per line in a narrow inspector. */}
               <th scope="row" className="px-2 py-1.5 text-left font-normal">
                 <span
                   className="font-mono text-fg"
@@ -195,16 +194,21 @@ export function SchemaTable({
                 >
                   {row.required ? "required" : "optional"}
                 </span>
-              </th>
-              <td className="px-2 py-1.5 font-mono text-tool">{row.type}</td>
-              <td className="px-2 py-1.5 text-muted">
-                {row.description}
+                {row.description && (
+                  <span className="mt-0.5 block text-muted" style={{ paddingLeft: row.depth * 12 }}>
+                    {row.description}
+                  </span>
+                )}
                 {row.notes.length > 0 && (
-                  <span className="block font-mono text-faint text-meta">
+                  <span
+                    className="mt-0.5 block font-mono text-faint text-meta"
+                    style={{ paddingLeft: row.depth * 12 }}
+                  >
                     {row.notes.join(" · ")}
                   </span>
                 )}
-              </td>
+              </th>
+              <td className="w-[42%] break-words px-2 py-1.5 font-mono text-tool">{row.type}</td>
             </tr>
           ))}
         </tbody>
