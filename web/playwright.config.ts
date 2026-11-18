@@ -5,9 +5,11 @@ const port = Number(process.env.PVIZ_E2E_PORT ?? 4319);
 /**
  * The specs drive the BUILT viewer (`pnpm build` first) through `e2e/server.mjs`.
  *
- * - `viewer`: behaviour and accessibility over the committed fixtures.
+ * - `viewer`: behaviour and accessibility over the committed fixtures, plus `real.spec.ts` over
+ *   the real demo recordings when PVIZ_RECORDINGS_DIR is set.
  * - `screenshots`: the docs images. Reads recordings from PVIZ_RECORDINGS_DIR (the real demo
  *   recordings) and falls back to the fixtures; see `e2e/screenshots.spec.ts` for where it writes.
+ * - `live`: the viewer served by the real Python server at PVIZ_LIVE_URL; skipped without it.
  */
 export default defineConfig({
   testDir: "e2e",
@@ -25,7 +27,12 @@ export default defineConfig({
   projects: [
     {
       name: "viewer",
-      testIgnore: /screenshots\.spec\.ts/,
+      testIgnore: /(screenshots|live)\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } },
+    },
+    {
+      name: "live",
+      testMatch: /live\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } },
     },
     {

@@ -68,8 +68,16 @@ export async function openRun(page: Page, name: string, traceId: string, span?: 
 
 /** Stops the replay at the end of the run: every span visible, nothing moving. */
 export async function skipToEnd(page: Page) {
-  await page.getByRole("button", { name: "Skip to end" }).click();
-  await expect(page.getByRole("button", { name: "Replay", exact: true })).toBeVisible();
+  const replay = page.getByRole("button", { name: "Replay", exact: true });
+  // A run of a few milliseconds (a recording made with no delays) has already replayed to its
+  // end before anything can be clicked, and "Skip to end" is then disabled.
+  if (!(await replay.isVisible())) {
+    await page
+      .getByRole("button", { name: "Skip to end" })
+      .click({ timeout: 2_000 })
+      .catch(() => undefined);
+  }
+  await expect(replay).toBeVisible();
 }
 
 /** Pauses at the start of the run, then steps forward over `boundaries` span boundaries. */
