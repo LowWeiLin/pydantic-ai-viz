@@ -802,5 +802,10 @@ def test_blueprint_is_pure() -> None:
     assert first.source == "static"
 
 
+def test_blueprint_rejects_other_objects() -> None:
+    with pytest.raises(TypeError, match=r"expects a pydantic_ai.Agent or a pydantic_graph.Graph, got int"):
+        blueprint(42)  # pyright: ignore[reportArgumentType]
+
+
 def test_public_exports() -> None:
     assert {"blueprint", "AgentBlueprint", "GraphBlueprint", "__version__"} <= set(pydantic_ai_viz.__all__)

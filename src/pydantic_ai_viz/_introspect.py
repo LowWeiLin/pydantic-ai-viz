@@ -1,4 +1,4 @@
-"""Static introspection: ``Agent`` -> ``AgentBlueprint``.
+"""Static introspection: ``Agent`` -> ``AgentBlueprint``, ``Graph`` -> ``GraphBlueprint``.
 
 Nothing here runs a model, resolves a dynamic prompt, builds a ``RunContext`` or
 enters a toolset, so it is safe for agents built with ``defer_model_check=True``
@@ -32,6 +32,7 @@ from pydantic_ai.toolsets import (
     WrapperToolset,
 )
 from pydantic_core import to_jsonable_python
+from pydantic_graph import Decision, EndNode, Fork, Graph, Join, StartNode, Step
 
 from . import _compat
 from ._models import (
@@ -39,6 +40,9 @@ from ._models import (
     AgentSettings,
     CapabilityInfo,
     Delegate,
+    GraphBlueprint,
+    GraphEdge,
+    GraphNode,
     Instruction,
     ModelInfo,
     OutputInfo,
@@ -47,6 +51,7 @@ from ._models import (
 )
 
 AnyAgent: TypeAlias = "Agent[Any, Any]"
+AnyGraph: TypeAlias = "Graph[Any, Any, Any, Any]"
 ToolKind: TypeAlias = Literal["function", "output", "external", "unapproved"]
 ToolsetKind: TypeAlias = Literal["agent", "function", "mcp", "dynamic", "other"]
 
@@ -512,37 +517,156 @@ def introspect_agent(
     )
 
 
+# ------------------------------------------------------------------- graphs
+
+
+def _node_kind(node: object) -> str:
+    if isinstance(node, StartNode):
+        return "start"
+    if isinstance(node, EndNode):
+        return "end"
+    if isinstance(node, Step):
+        return "step"
+    if isinstance(node, Join):
+        return "join"
+    if isinstance(node, Fork):
+        return "map" if cast("Fork[Any, Any]", node).is_map else "broadcast"
+    if isinstance(node, Decision):
+        return "decision"
+    return type(node).__name__.lower()
+
+
+def _path_edges(source: str, path: Any) -> list[GraphEdge]:
+    edges: list[GraphEdge] = []
+    label: str | None = None
+    for item in path.items:
+        destination: Any = getattr(item, "destination_id", None)
+        if destination is not None:
+            edges.append(GraphEdge(source=source, target=str(destination), label=label))
+        elif type(item).__name__ == "LabelMarker":
+            label = str(item.label)
+    return edges
+
+
+def walk_graph(graph: AnyGraph) -> tuple[list[GraphNode], list[GraphEdge]]:
+    """Nodes and edges from the public ``Graph`` fields only.
+
+    Mirrors ``pydantic_graph.graph_builder.build_mermaid_graph``: plain edges come
+    from ``edges_by_source``, decision edges from ``Decision.branches[i].path``, and
+    edges are listed in node order.
+    """
+    nodes: list[GraphNode] = []
+    by_source: dict[str, list[GraphEdge]] = {}
+    graph_nodes = cast("dict[str, Any]", graph.nodes)
+    for node_id, node in graph_nodes.items():
+        kind = _node_kind(node)
+        label: Any = getattr(node, "label", None) if kind == "step" else None
+        note: Any = getattr(node, "note", None) if kind == "decision" else None
+        nodes.append(
+            GraphNode(
+                id=str(node_id),
+                kind=kind,
+                label=label if isinstance(label, str) else None,
+                note=note if isinstance(note, str) else None,
+            )
+        )
+    for source, paths in cast("dict[str, list[Any]]", graph.edges_by_source).items():
+        for path in paths:
+            by_source.setdefault(str(source), []).extend(_path_edges(str(source), path))
+    for node_id, node in graph_nodes.items():
+        if isinstance(node, Decision):
+            for branch in cast("Decision[Any, Any, Any]", node).branches:
+                by_source.setdefault(str(node_id), []).extend(_path_edges(str(node_id), branch.path))
+    return nodes, [edge for node in nodes for edge in by_source.get(node.id, [])]
+
+
+def _graph_structure(graph: AnyGraph, warnings: list[str]) -> tuple[list[GraphNode], list[GraphEdge]]:
+    build = _compat.load_build_mermaid_graph()
+    if build is None:
+        _compat.add_warning(
+            warnings, "build_mermaid_graph unavailable (pydantic-graph internals changed); used the public graph fields"
+        )
+    else:
+        try:
+            mermaid: Any = build(graph.nodes, graph.edges_by_source)
+            nodes = [GraphNode(id=str(n.id), kind=str(n.kind), label=n.label, note=n.note) for n in mermaid.nodes]
+            edges = [GraphEdge(source=str(e.start_id), target=str(e.end_id), label=e.label) for e in mermaid.edges]
+            return nodes, edges
+        except Exception as exc:
+            _compat.add_warning(
+                warnings, f"build_mermaid_graph failed ({type(exc).__name__}: {exc}); used the public graph fields"
+            )
+    try:
+        return walk_graph(graph)
+    except Exception as exc:
+        _compat.add_warning(warnings, f"graph structure unavailable ({type(exc).__name__}: {exc})")
+        return [], []
+
+
+def introspect_graph(graph: AnyGraph, *, id: str, label: str | None = None) -> GraphBlueprint:
+    """Build the static blueprint of a pydantic-graph ``Graph``.
+
+    Args:
+        graph: The graph to describe. It is not run.
+        id: Blueprint id allocated by the caller (``"g1"``, ``"g2"``, ...).
+        label: Fallback display name used when ``graph.name`` is ``None``.
+    """
+    warnings: list[str] = []
+    nodes, edges = _graph_structure(graph, warnings)
+    mermaid: str | None = None
+    try:
+        mermaid = str(graph.render(direction="LR"))
+    except Exception as exc:
+        _compat.add_warning(warnings, f"mermaid diagram unavailable ({type(exc).__name__}: {exc})")
+    name: Any = graph.name
+    return GraphBlueprint(
+        id=id,
+        name=name if isinstance(name, str) else None,
+        label=(name if isinstance(name, str) and name else None) or label or f"graph-{_ordinal(id)}",
+        state_type=_optional_type_label(graph.state_type),
+        input_type=_optional_type_label(graph.input_type),
+        output_type=_optional_type_label(graph.output_type),
+        nodes=nodes,
+        edges=edges,
+        mermaid=mermaid,
+        warnings=warnings,
+    )
+
+
 # -------------------------------------------------------------------- public
 
 
-def blueprint(target: AnyAgent) -> AgentBlueprint:
-    """Describe an agent without running it.
+def blueprint(target: AnyAgent | AnyGraph) -> AgentBlueprint | GraphBlueprint:
+    """Describe an agent or a graph without running it.
 
     Pure: no model call, no server, no session, nothing global is touched. The
     result is a pydantic model; ``.model_dump(mode="json")`` gives the wire form.
 
-    The blueprint's ``id`` is ``"a1"``. Sub-agents found by the static delegation
-    heuristic are referenced from ``delegates`` as ``"a2"``, ``"a3"``, ... in
-    discovery order; a tool that calls its own agent points at ``"a1"``.
+    The blueprint's ``id`` is ``"a1"`` (agent) or ``"g1"`` (graph). Sub-agents found
+    by the static delegation heuristic are referenced from ``delegates`` as ``"a2"``,
+    ``"a3"``, ... in discovery order; a tool that calls its own agent points at
+    ``"a1"``.
 
     Args:
-        target: A ``pydantic_ai.Agent``.
+        target: A ``pydantic_ai.Agent`` or a ``pydantic_graph.Graph``.
 
     Returns:
-        An ``AgentBlueprint``. Anything that could not be read from the installed
-        pydantic-ai version is listed in ``warnings``.
+        An ``AgentBlueprint`` or a ``GraphBlueprint``. Anything that could not be
+        read from the installed pydantic-ai version is listed in ``warnings``.
 
     Raises:
-        TypeError: If ``target`` is not an agent.
+        TypeError: If ``target`` is neither an agent nor a graph.
     """
-    if not isinstance(target, Agent):  # pyright: ignore[reportUnnecessaryIsInstance]
-        raise TypeError(f"blueprint() expects a pydantic_ai.Agent, got {type(target).__name__}")
-    agents = agent_closure(target)
+    if isinstance(target, Agent):
+        agents = agent_closure(target)
 
-    def delegate_id(agent: AnyAgent) -> str | None:
-        for index, known in enumerate(agents):
-            if known is agent:
-                return f"a{index + 1}"
-        return None
+        def delegate_id(agent: AnyAgent) -> str | None:
+            for index, known in enumerate(agents):
+                if known is agent:
+                    return f"a{index + 1}"
+            return None
 
-    return introspect_agent(target, id="a1", delegate_id=delegate_id)
+        return introspect_agent(target, id="a1", delegate_id=delegate_id)
+    if isinstance(target, Graph):  # pyright: ignore[reportUnnecessaryIsInstance]
+        return introspect_graph(target, id="g1")
+    raise TypeError(f"blueprint() expects a pydantic_ai.Agent or a pydantic_graph.Graph, got {type(target).__name__}")
