@@ -3,7 +3,7 @@
 ```text
 pydantic-ai-viz demo [NAME] [--list] [--speed X] [--port N] [--no-open]
                      [--record OUT.pviz.jsonl] [--export OUT.html]
-pydantic-ai-viz view TARGET... [--export OUT.html] [--port N] [--no-open]
+pydantic-ai-viz view TARGET... [--import] [--export OUT.html] [--port N] [--no-open]
 pydantic-ai-viz run  [--stream] [--no-content] [--record OUT.pviz.jsonl] [--export OUT.html]
                      [--port N] [--no-open] SCRIPT [ARGS...]
 pydantic-ai-viz open FILE.pviz.jsonl
@@ -14,7 +14,7 @@ pydantic-ai-viz --version
 | Command | In one line |
 |---|---|
 | [`demo`](#demo) | Play a bundled, offline demo |
-| [`view`](#view) | Draw the blueprint of your agents and graphs without running them |
+| [`view`](#view) | Draw the blueprint of agents and graphs from their source code, without running it |
 | [`run`](#run) | Run a script and watch its agent runs live |
 | [`open`](#open) | Open a recording in the browser |
 | [`export`](#export) | Convert a recording to a single HTML file |
@@ -53,27 +53,50 @@ pydantic-ai-viz demo pipeline --speed 0 --export pipeline.html
 ## view { #view }
 
 ```text
-pydantic-ai-viz view TARGET... [--export OUT.html] [--port N] [--no-open]
+pydantic-ai-viz view TARGET... [--import] [--export OUT.html] [--port N] [--no-open]
 ```
 
-Draw blueprints. The targets are imported or loaded to find the agent and graph objects, but **no agent is run and no model is called**.
+Draw blueprints by **reading source files**. The code is parsed, never imported or executed: nothing in it runs, and nothing it imports has to be installed. What the source spells out is shown as a value; what it computes at run time is shown as the expression that computes it. [How static analysis works](../concepts/how-static-analysis-works.md) explains what can and cannot be read this way.
 
 | Argument | Description |
 |---|---|
 | `TARGET...` | One or more [targets](#targets). |
+| `--import` | Import the targets and read the live objects instead of the source. **This executes the target code**; see [below](#view-import). |
 | `--export OUT.html` | Write a blueprint-only HTML file and exit, without starting a server. |
 | `--port N` | Port for the server. Default `8765`. If it is busy, a free port is used. |
 | `--no-open` | Do not open a browser. |
 
 ```bash
-pydantic-ai-viz view my_app.agents:support_agent
-pydantic-ai-viz view my_app.agents my_app.pipeline:graph
-pydantic-ai-viz view agents.py --export blueprint.html
+pydantic-ai-viz view agents.py
+pydantic-ai-viz view my_app/agents.py:support_agent
+pydantic-ai-viz view my_app/agents.py my_app/pipeline.py --export blueprint.html
 ```
+
+`view` reports on stderr what it read, for example `Read 1 file without running any code: 2 agents, 0 graphs`, followed by the number of warnings when the source left something open. A file that had to be skipped (not valid Python, unreadable, too large) is named there too and in the viewer.
 
 ### Targets { #targets }
 
 | Form | Meaning |
+|---|---|
+| `path/to/file.py` | Every agent and graph in that file, including those made inside functions and classes |
+| `path/to/file.py:name` | The agent or graph assigned to `name` at the top level of that file, and the agents it delegates to |
+
+- Several files given together are read together: an agent in one file that delegates to an agent imported from another is linked to it.
+- An agent without a `name` is labelled with the variable it is assigned to.
+- A target that cannot be read is a usage error (exit code 2): a file that does not exist, a `name` no agent or graph is assigned to, or a module name without `--import`. So is source in which no agent or graph is found.
+
+### Importing instead: `--import` { #view-import }
+
+```bash
+pydantic-ai-viz view --import my_app.agents:support_agent
+pydantic-ai-viz view --import my_app.agents my_app.pipeline:graph
+```
+
+With `--import`, the targets are loaded and the live `Agent` and `Graph` objects are read. No agent is run and no model is called, but **the code of the target is executed** as any import executes it, so use `--import` only on code you trust. Its dependencies must be installed.
+
+Use it when the source does not say enough: models and tools computed at run time, a graph assembled in a loop, or when you want Pydantic AI's defaults shown.
+
+| Form (with `--import`) | Meaning |
 |---|---|
 | `pkg.module:attr` | The agent or graph named `attr` in the importable module `pkg.module` |
 | `pkg.module` | Every agent and graph defined at the top level of that module |
@@ -82,7 +105,6 @@ pydantic-ai-viz view agents.py --export blueprint.html
 
 - A module target is imported, so it must be importable from where you run the command: same environment, same working directory or `PYTHONPATH`.
 - A file target is executed to find its objects, with `__name__` set to something other than `"__main__"`, so an `if __name__ == "__main__":` block does not run. Code at the top level of the file does run.
-- An agent without a `name` is labelled with its variable name.
 - A target that cannot be found is a usage error (exit code 2).
 
 ## run { #run }

@@ -41,8 +41,8 @@ with pviz.serve(agent, open_browser=True) as session:
 Or leave your code alone and use the CLI:
 
 ```bash
-# Draw the blueprint. Nothing is run and no model is called.
-pydantic-ai-viz view my_app.agents:support_agent
+# Draw the blueprint from the source code. The file is not imported and nothing in it runs.
+pydantic-ai-viz view my_app/agents.py
 
 # Run a script and watch its agent runs live.
 pydantic-ai-viz run my_script.py
@@ -50,7 +50,7 @@ pydantic-ai-viz run my_script.py
 
 ## What you get
 
-- **Blueprint.** The agent as a diagram: model, instructions, toolsets, tools with their JSON schemas, output type and delegation to other agents. Drawn from the agent object, before anything runs.
+- **Blueprint.** The agent as a diagram: model, instructions, toolsets, tools with their JSON schemas, output type and delegation to other agents. Drawn from your source code, which is read and never executed, or from the agent object, before anything runs.
 - **Live runs.** Model requests, tool calls, retries and sub-agent runs light up on the blueprint and stack up in a span timeline as they happen.
 - **Inspector.** Click any span to read the conversation, tool arguments and results, token usage and the raw span attributes.
 - **Graphs.** `pydantic-graph` graphs get the same treatment: nodes, decisions and edges, with the active node highlighted during a run.

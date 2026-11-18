@@ -71,9 +71,9 @@ Then:
 pydantic-ai-viz view quickstart.py
 ```
 
-The viewer shows the `helper` agent, its model, the `add` tool with its parameter schema, and a text output. `view` reads the `Agent` object and stops there: it does not run the agent and does not call the model. (It loads the file to find the agent, but the `if __name__ == "__main__":` block does not run.)
+The viewer shows the `helper` agent, its model, the `add` tool with its parameter schema, and a text output. `view` reads the source of `quickstart.py` and stops there: the file is not imported and none of it runs, so no agent is run and no model is called.
 
-A target can also be an import path: `pydantic-ai-viz view my_app.agents:support_agent`, or `pydantic-ai-viz view my_app.agents` for every agent and graph in that module. More in [Visualize an agent](guides/visualize-an-agent.md).
+A target can also name one agent in a file: `pydantic-ai-viz view my_app/agents.py:support_agent`. More in [Visualize an agent](guides/visualize-an-agent.md), and in [How static analysis works](concepts/how-static-analysis-works.md).
 
 ## 3. Watch a run live
 

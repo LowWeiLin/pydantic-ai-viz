@@ -46,7 +46,7 @@ pviz.export_html(support_agent, "blueprint.html")  # blueprint only, no runs
 pydantic-ai-viz run --record out.pviz.jsonl --export out.html my_script.py
 
 # Blueprint only
-pydantic-ai-viz view my_app.agents --export blueprint.html
+pydantic-ai-viz view my_app/agents.py --export blueprint.html
 
 # Record a bundled demo without starting a server
 pydantic-ai-viz demo support --speed 0 --record support.pviz.jsonl

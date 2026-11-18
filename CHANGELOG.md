@@ -16,8 +16,9 @@ pydantic-ai-viz is an unofficial community project. It is not affiliated with or
 
 ### Added
 
-- Agent blueprints: model, instructions and system prompts, toolsets, tools with JSON schemas, output mode and schema, retries, capabilities and delegation edges, read from an `Agent` without running it.
+- Agent blueprints: model, instructions and system prompts, toolsets, tools with JSON schemas, output mode and schema, retries, capabilities and delegation edges, read from source code or from an `Agent` object without running it.
 - Graph blueprints for `pydantic-graph` graphs: nodes, edges, decision labels and notes, and copyable Mermaid.
+- Static analysis: `pydantic-ai-viz view FILE` and `pydantic_ai_viz.analyze(...)` read agents and graphs out of Python source files with the standard `ast` module. The files are never imported or executed, so their dependencies need not be installed and code that has not been reviewed can be looked at safely. A value the source computes at run time is shown as the expression that computes it and named in the blueprint's warnings; nothing is guessed. Everything found carries its file and line. Graphs made with `GraphBuilder` are read, including `BaseNode` classes whose edges come from return annotations, and so is the older `Graph(nodes=[...])` form.
 - Live capture of agent runs in the current process through an OpenTelemetry span processor, with no changes to the code that calls the agent.
 - Observed blueprints for agents that were never registered, built from their runs, and delegation edges confirmed by runs.
 - Opt-in token streaming overlay (`stream=True`).
@@ -25,10 +26,10 @@ pydantic-ai-viz is an unofficial community project. It is not affiliated with or
 - Local viewer server: standard library only, bound to loopback, Server-Sent Events with resume. An open viewer starts over by itself when the program it watches is restarted on the same port.
 - One-file viewer: blueprint canvas with a run overlay, span timeline, inspector, playback with scrubbing, light and dark themes, and keyboard navigation.
 - Recordings (`.pviz.jsonl`) and single-file HTML exports.
-- Command line: `demo`, `view`, `run`, `open` and `export`. `run --record` and `run --export` also write their files when the script is stopped with Ctrl+C.
+- Command line: `demo`, `view`, `run`, `open` and `export`. `view` reads source code; `view --import` imports the targets and reads the live objects instead, which executes their code. `run --record` and `run --export` also write their files when the script is stopped with Ctrl+C.
 - Three offline demos (`support`, `research`, `pipeline`) that need no API key.
-- Python API: `serve`, `record`, `blueprint`, `export_html`, `run_graph` and `Session`.
-- Wire format `pviz` version 1, with a JSON Schema in `schema/pviz.schema.json`.
+- Python API: `serve`, `record`, `analyze`, `blueprint`, `export_html`, `run_graph` and `Session`.
+- Wire format `pviz` version 1, with a JSON Schema in `schema/pviz.schema.json`. Every blueprint fact says whether it was read from code, read from a live object or observed in a run, and a session says whether runs can appear in it.
 - Privacy controls: `include_content=False` (`run --no-content`) keeps prompts, tool arguments and tool results out of the log, the stream, recordings and exports. Token streaming is switched off in such a session, because token deltas are content.
 - The server refuses requests whose `Host` header is not `localhost` or a loopback address, and sends no CORS headers.
 - Blueprint fields that depend on private Pydantic AI attributes degrade to a warning in the viewer when an attribute is missing.

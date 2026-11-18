@@ -8,10 +8,10 @@ pydantic-ai-viz draws [`pydantic-graph`](https://ai.pydantic.dev/graph/) graphs 
 
 ## Draw a graph
 
-A graph is a target like an agent is:
+A file that builds a graph is a target like one that defines an agent. It is read, not run:
 
 ```bash
-pydantic-ai-viz view my_app.pipeline:graph
+pydantic-ai-viz view my_app/pipeline.py
 ```
 
 ```python

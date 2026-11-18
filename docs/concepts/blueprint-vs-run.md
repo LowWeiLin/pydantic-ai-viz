@@ -5,18 +5,22 @@ pydantic-ai-viz shows two different kinds of information on one canvas, and it i
 | | Blueprint | Run |
 |---|---|---|
 | Answers | What *is* this agent? | What did it *do*? |
-| Source | The `Agent` or `Graph` object | OpenTelemetry spans emitted while it executes |
+| Source | Your source code, or the `Agent` or `Graph` object | OpenTelemetry spans emitted while it executes |
 | Needs a model call | No | Yes (a `TestModel` counts) |
-| Available | As soon as the object exists | While and after it runs |
+| Available | As soon as the code is written | While and after it runs |
 | Covers | Everything the agent could do | The one path this run took |
 
 A blueprint with no runs is an architecture diagram. A run with no blueprint is a trace. Put together, the run is drawn *on* the blueprint: you see which of the available tools were called, which were not, and where the time went.
 
-## Two ways to get a blueprint
+## Three ways to get a blueprint
 
-### Static: read from the object
+### Read from source code
 
-When you pass an agent to `serve`, `record`, `view` or `blueprint`, it is introspected. Nothing is executed. The result has `source: "object"` and is as complete as introspection allows: every tool with its schemas, static instructions, the names of dynamic instruction functions, output type and schema, retry limits, capabilities.
+`pydantic-ai-viz view file.py` and `pviz.analyze("file.py")` parse the file and describe the agents and graphs written in it. The file is never imported or executed. The result has `source: "code"`, says where each thing is defined, and shows a value the code computes at run time as the expression that computes it. See [How static analysis works](how-static-analysis-works.md).
+
+### Read from the object
+
+When you pass an agent to `serve`, `record` or `blueprint` (or use `view --import`), the live object is introspected. No agent is run. The result has `source: "object"` and is as complete as introspection allows: every tool with its schemas, static instructions, the names of dynamic instruction functions, output type and schema, retry limits, capabilities.
 
 ### Observed: pieced together from runs
 

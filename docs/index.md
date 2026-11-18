@@ -29,10 +29,10 @@ See what your [Pydantic AI](https://ai.pydantic.dev/) agents **are** (the bluepr
 === "Draw your agent"
 
     ```bash
-    pydantic-ai-viz view my_app.agents:support_agent
+    pydantic-ai-viz view my_app/agents.py
     ```
 
-    Draws the agent's blueprint: model, instructions, tools with their schemas, output type and the agents it delegates to. Nothing is run and no model is called.
+    Draws the blueprint of every agent in the file: model, instructions, tools with their schemas, output type and the agents it delegates to. The file is read, not imported: nothing in it runs, its dependencies need not be installed, and no model is called.
 
 === "Watch your script"
 

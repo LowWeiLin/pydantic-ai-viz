@@ -1,6 +1,6 @@
 # Visualize an agent
 
-A **blueprint** is a picture of what an agent *is*: its model, instructions, tools, output type and the agents it hands work to. It is read from the `Agent` object. Nothing is run, no model is called, and no API key is needed, so you can draw an agent that is configured for a provider you have no credentials for.
+A **blueprint** is a picture of what an agent *is*: its model, instructions, tools, output type and the agents it hands work to. From the command line it is read from your source code, which is never executed; from Python it can also be read from the `Agent` object. Either way no agent is run, no model is called, and no API key is needed, so you can draw an agent that is configured for a provider you have no credentials for.
 
 <figure class="screenshot" markdown="span">
   ![The blueprint of the triage agent: agent card, tools grouped by toolset, output node and a delegation edge to the refunds agent](../assets/screenshots/blueprint.png)
@@ -12,31 +12,39 @@ A **blueprint** is a picture of what an agent *is*: its model, instructions, too
 pydantic-ai-viz view TARGET...
 ```
 
-A target names an agent, a graph, or a place to look for them:
+A target is a Python file, or one agent or graph in it:
 
 | Target | What is drawn |
 |---|---|
-| `my_app.agents:support_agent` | The object `support_agent` in the module `my_app.agents` |
-| `my_app.agents` | Every agent and graph defined at the top level of that module |
-| `path/to/file.py` | Every agent and graph defined at the top level of that file |
-| `path/to/file.py:support_agent` | That one object from the file |
+| `path/to/file.py` | Every agent and graph in that file |
+| `path/to/file.py:support_agent` | The agent assigned to `support_agent`, and the agents it delegates to |
 
-You can pass several targets. Module targets are imported, so run the command from the environment and directory where `import my_app.agents` works. File targets are loaded in a way that skips their `if __name__ == "__main__":` block, so a script that runs its agent at the bottom is safe to view.
+You can pass several files. `view` **reads the source and never runs it**: the file is not imported, so it does not matter whether its dependencies are installed, and a script that calls its agent at the bottom is safe to view. What the source computes at run time, such as `Agent(get_model())`, is shown as the expression, with a warning on the agent card. [How static analysis works](../concepts/how-static-analysis-works.md) has the details.
 
 `view` serves the viewer and opens your browser. To write a file instead:
 
 ```bash
-pydantic-ai-viz view my_app.agents --export blueprint.html
+pydantic-ai-viz view my_app/agents.py --export blueprint.html
 ```
+
+When the source does not say enough, `pydantic-ai-viz view --import my_app.agents:support_agent` imports the module and reads the live objects instead. That executes the module's code, so use it only on code you trust; see the [CLI reference](../reference/cli.md#view-import).
 
 That produces a single HTML file containing only blueprints, which is safe to attach to a design document: it holds no run data. All flags are in the [CLI reference](../reference/cli.md#view).
 
 ## From Python
 
-[`blueprint`](../reference/python-api.md#blueprint) returns the same structure as data. It starts no server and no session:
+[`analyze`](../reference/python-api.md#analyze) reads source files the way `view` does and returns the blueprints as data:
 
 ```python
 import pydantic_ai_viz as pviz
+
+found = pviz.analyze("my_app/agents.py")
+print([agent.label for agent in found.agents])
+```
+
+[`blueprint`](../reference/python-api.md#blueprint) returns the same structure from a live object, which you have imported yourself. It starts no server and no session:
+
+```python
 from my_app.agents import support_agent
 
 bp = pviz.blueprint(support_agent)
@@ -88,13 +96,13 @@ The inspector on the right shows the details for whatever is selected. For an ag
 
 ## What a blueprint cannot show
 
-A blueprint is drawn without running your code, so some things are out of reach by design:
+A blueprint is drawn without running an agent, so some things are out of reach by design. (A blueprint read from source has a few more gaps, each marked with a warning: see [what cannot be read](../concepts/how-static-analysis-works.md#what-cannot-be-read-and-how-you-can-tell).)
 
 - **The text of dynamic instructions.** A function decorated with `@agent.instructions` or `@agent.system_prompt` is listed by name, marked dynamic. Its output depends on the run; you see the resolved text on each run's model requests.
 - **Tools of MCP and dynamic toolsets,** as described above.
 - **Delegation that is not visible in the tool's code.** The static check looks at the names a tool function refers to. It finds `await refunds_agent.run(...)` when `refunds_agent` is a module-level or enclosing-scope variable. It does not find an agent reached through `ctx.deps`, an attribute, or a helper function. Those edges appear, solid, the first time the delegation runs.
 
-A handful of fields (instructions, system prompts, retry limits, output mode, native tools) have no public accessor in Pydantic AI and are read from private attributes. If a Pydantic AI release changes one, that field is left empty and a warning appears on the agent card. Nothing else is affected. The [compatibility page](../reference/compatibility.md#fields-read-from-private-attributes) lists them.
+When a blueprint is read from a live object, a handful of fields (instructions, system prompts, retry limits, output mode, native tools) have no public accessor in Pydantic AI and are read from private attributes. If a Pydantic AI release changes one, that field is left empty and a warning appears on the agent card. Nothing else is affected. The [compatibility page](../reference/compatibility.md#fields-read-from-private-attributes) lists them.
 
 ## Next
 

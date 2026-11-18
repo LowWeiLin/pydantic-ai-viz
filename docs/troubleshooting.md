@@ -83,7 +83,7 @@ Because the listener stays on an agent for the life of the process, an agent tha
 
 ## Agents with `defer_model_check=True`, or with no model
 
-These are fine to **draw**. `view` and `blueprint` never call the model, never resolve a model string and never import a provider package, so this works without the OpenAI package or an API key:
+These are fine to **draw**. `view`, `analyze` and `blueprint` never call the model, never resolve a model string and never import a provider package, so this works without the OpenAI package or an API key:
 
 ```python
 agent = Agent("openai:gpt-5.2", defer_model_check=True)
@@ -103,12 +103,21 @@ with pviz.serve(agent, open_browser=True) as session:
     session.wait()
 ```
 
-Note that without `defer_model_check=True`, `Agent("openai:gpt-5.2")` raises `ImportError` at construction when the provider package is missing. That happens when your module is imported, before `view` gets to look at anything.
+Note that without `defer_model_check=True`, `Agent("openai:gpt-5.2")` raises `ImportError` at construction when the provider package is missing. That happens when your module is imported, so it affects `view --import` and your own code, but not plain `view`, which reads the source and imports nothing.
 
 ## `view` cannot find my agent
 
-- `pydantic-ai-viz view my_app.agents:support_agent` imports `my_app.agents`. Run the command from the directory and environment where `python -c "import my_app.agents"` works.
-- Only agents and graphs bound to a **top-level name** of the module or file are found. An agent created inside a function or stored in a dict is not. Name it explicitly (`module:attr`) if it is an attribute, or pass the object to `pviz.serve(...)` or `pviz.export_html(...)` in Python.
+`view` reads source files; it does not import them.
+
+- Give it the path of a `.py` file: `pydantic-ai-viz view my_app/agents.py`. A module name such as `my_app.agents` needs `--import`.
+- An agent is found where the source calls Pydantic AI's `Agent(...)`. An agent that comes out of a library function, or out of a class that subclasses `Agent`, is not visible in the source. Use `--import`, or pass the object to `pviz.serve(...)` or `pviz.export_html(...)` in Python.
+- `file.py:name` selects a name assigned at the **top level** of the file. Without `:name`, agents made inside functions and classes are drawn too.
+- The message "no agents or graphs found in the source" means exactly that. If a file was skipped, the line before it says why.
+
+With `--import`:
+
+- `pydantic-ai-viz view --import my_app.agents:support_agent` imports `my_app.agents`. Run the command from the directory and environment where `python -c "import my_app.agents"` works.
+- Only agents and graphs bound to a **top-level name** of the module or file are found. An agent created inside a function or stored in a dict is not. Name it explicitly (`module:attr`) if it is an attribute.
 - A file target runs the file's top-level code but not its `if __name__ == "__main__":` block. An agent created only inside that block is not found.
 - A target that calls `sys.exit()` in its top-level code (argument parsing outside the `__main__` block is the usual cause) cannot be loaded, and `view` says so. Move the exit, or the code that leads to it, into the `__main__` block.
 
