@@ -15,6 +15,7 @@ export function usePlaybackTime(): number {
  */
 export function usePlaybackDriver(bounds: Bounds | null): void {
   const playing = useViewer((state) => state.playback.mode === "playing");
+  const atEnd = useViewer((state) => (state.source.kind === "live" ? "live" : "pause"));
   const start = bounds?.start;
   const end = bounds?.end;
 
@@ -26,12 +27,14 @@ export function usePlaybackDriver(bounds: Bounds | null): void {
       // A background tab can hand back a huge gap; never jump more than a quarter second.
       const elapsed = Math.min(250, now - last);
       last = now;
-      useViewer.getState().updatePlayback((playback) => tick(playback, elapsed, { start, end }));
+      useViewer
+        .getState()
+        .updatePlayback((playback) => tick(playback, elapsed, { start, end }, atEnd));
       frame = requestAnimationFrame(loop);
     };
     frame = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frame);
-  }, [playing, start, end]);
+  }, [playing, start, end, atEnd]);
 }
 
 /**

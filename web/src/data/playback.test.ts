@@ -38,6 +38,15 @@ describe("playback", () => {
     expect(tick(at(1950, "playing", 4), 100, bounds)).toEqual(at(2000, "paused", 4));
   });
 
+  test("in a live session a clock that catches up with the end re-pins to now", () => {
+    // The end of a run in flight is the latest event received, so a playing clock reaches it in
+    // any gap between two events. Pausing there would freeze the view of a run that goes on.
+    const caughtUp = tick(at(1950, "playing", 4), 100, bounds, "live");
+    expect(caughtUp.mode).toBe("live");
+    expect(effectiveTime(caughtUp)).toBe(Number.POSITIVE_INFINITY);
+    expect(tick(at(1000, "playing", 2), 100, bounds, "live")).toEqual(at(1200, "playing", 2));
+  });
+
   test("tick leaves paused and live clocks alone", () => {
     const paused = at(1500);
     expect(tick(paused, 100, bounds)).toBe(paused);

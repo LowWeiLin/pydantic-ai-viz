@@ -62,10 +62,21 @@ export function goLive(playback: Playback): Playback {
   return playback.mode === "live" ? playback : { ...playback, mode: "live" };
 }
 
-/** Advances a playing clock by `elapsedMs` of wall time. Other modes are returned unchanged. */
-export function tick(playback: Playback, elapsedMs: number, bounds: Bounds): Playback {
+/**
+ * Advances a playing clock by `elapsedMs` of wall time. Other modes are returned unchanged.
+ *
+ * At the end of the range a recording pauses. A live session passes `atEnd: "live"` and
+ * re-pins to now instead: there the end is only the latest event received so far.
+ */
+export function tick(
+  playback: Playback,
+  elapsedMs: number,
+  bounds: Bounds,
+  atEnd: "pause" | "live" = "pause",
+): Playback {
   if (playback.mode !== "playing" || elapsedMs <= 0) return playback;
   const t = playback.t + elapsedMs * playback.speed;
+  if (t >= bounds.end && atEnd === "live") return { ...playback, mode: "live" };
   if (t >= bounds.end) return { ...playback, mode: "paused", t: bounds.end };
   return { ...playback, t: Math.max(t, bounds.start) };
 }

@@ -539,6 +539,23 @@ test.describe("live", () => {
     await expect(rows(page)).toHaveCount(HELD_SPANS);
   });
 
+  test("a paused live run that is played again catches up and is live again", async ({ page }) => {
+    await page.goto("/live-hold-56/");
+    await page.waitForURL(/#\/runs\//);
+    await expect(rows(page)).toHaveCount(HELD_SPANS);
+    const liveButton = page.getByRole("button", { name: "Live" });
+    await page.locator("header h1").click();
+    await page.keyboard.press("Space");
+    await expect(page.getByRole("button", { name: "Replay", exact: true })).toBeVisible();
+    await expect(liveButton).toHaveAttribute("aria-pressed", "false");
+    await page.keyboard.press("Space");
+    // The clock reaches the latest event received. The run is still going, so the view must
+    // not stop there as a recording does: it is pinned to now again and follows what comes.
+    await expect(liveButton).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+    await expect(rows(page)).toHaveCount(HELD_SPANS);
+  });
+
   test("a lost connection shows a banner and keeps what was received", async ({ page }) => {
     await page.goto("/live-hold-56/");
     await page.waitForURL(/#\/runs\//);
