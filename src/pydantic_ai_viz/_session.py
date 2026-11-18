@@ -228,6 +228,7 @@ class _RegisteredAgent:
 class _RegisteredGraph:
     graph: AnyGraph
     id: str
+    label: str
 
 
 @dataclass(slots=True)
@@ -440,15 +441,22 @@ class Session:
             blueprint = blueprint.model_copy(update={"name": None, "warnings": [*blueprint.warnings, warning]})
         return blueprint
 
-    def _register_graph(self, graph: AnyGraph, label: str | None) -> str:
+    def _register_graph(self, graph: AnyGraph, label: str | None) -> _RegisteredGraph:
         known = self._graphs.get(id(graph))
         if known is not None:
-            return known.id
+            return known
         self._graph_count += 1
-        entry = _RegisteredGraph(graph, f"g{self._graph_count}")
+        blueprint = introspect_graph(graph, id=f"g{self._graph_count}", label=label)
+        entry = _RegisteredGraph(graph, blueprint.id, blueprint.label)
         self._graphs[id(graph)] = entry
-        self._emit_graph(introspect_graph(graph, id=entry.id, label=label))
-        return entry.id
+        self._emit_graph(blueprint)
+        return entry
+
+    def _graph_for_run(self, graph: AnyGraph) -> tuple[str, str]:
+        """Blueprint id and display name of ``graph``, registering it first if needed (for ``run_graph``)."""
+        with self._lock:
+            entry = self._register_graph(graph, None)
+            return entry.id, entry.label
 
     def _emit_agent(self, blueprint: AgentBlueprint) -> None:
         self._agent_blueprints[blueprint.id] = blueprint
