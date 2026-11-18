@@ -8,6 +8,12 @@ The wire format has its own version number (`pviz`, currently `1`), recorded in 
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-18
+
+The first release. It needs Python 3.11 or newer and Pydantic AI 2.60 or newer (`pydantic-ai-slim>=2.60,<3`, `opentelemetry-sdk>=1.30`). The test suite was run against Pydantic AI 2.60.0 and 2.70.0; the [compatibility page](https://lowweilin.github.io/pydantic-ai-viz/reference/compatibility/) lists every combination that was tested and explains why 2.59 and older are not supported.
+
+pydantic-ai-viz is an unofficial community project. It is not affiliated with or endorsed by Pydantic.
+
 ### Added
 
 - Agent blueprints: model, instructions and system prompts, toolsets, tools with JSON schemas, output mode and schema, retries, capabilities and delegation edges, read from an `Agent` without running it.
@@ -23,5 +29,10 @@ The wire format has its own version number (`pviz`, currently `1`), recorded in 
 - Three offline demos (`support`, `research`, `pipeline`) that need no API key.
 - Python API: `serve`, `record`, `blueprint`, `export_html`, `run_graph` and `Session`.
 - Wire format `pviz` version 1, with a JSON Schema in `schema/pviz.schema.json`.
+- Privacy controls: `include_content=False` (`run --no-content`) keeps prompts, tool arguments and tool results out of the log, the stream, recordings and exports. Token streaming is switched off in such a session, because token deltas are content.
+- The server refuses requests whose `Host` header is not a loopback name, and sends no CORS headers.
+- Blueprint fields that depend on private Pydantic AI attributes degrade to a warning in the viewer when an attribute is missing.
+- Documentation site, and a hosted demo that replays recordings of the three demos in the browser.
 
-[Unreleased]: https://github.com/LowWeiLin/pydantic-ai-viz/commits/main
+[Unreleased]: https://github.com/LowWeiLin/pydantic-ai-viz/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/LowWeiLin/pydantic-ai-viz/releases/tag/v0.1.0
