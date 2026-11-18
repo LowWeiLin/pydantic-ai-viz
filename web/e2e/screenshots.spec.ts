@@ -72,8 +72,10 @@ function blueprintId(recording: Recording, agentName: string | null): string {
 
 /**
  * How many "step forward" presses from the start reach the busiest moment of a run: the span
- * boundary with the most spans running at once (the first such one that has a model request
- * streaming, when there is one). Boundaries are the run's distinct span start and end times.
+ * boundary with the most spans running at once, a streaming model request breaking ties.
+ * Of equally busy moments the last one wins: at the first, the parallel spans have only just
+ * started and their bars have no length yet. Boundaries are the run's distinct span start and
+ * end times.
  */
 function busiestBoundary(recording: Recording, traceId: string): number {
   const spans = recording.spans.filter((span) => span.trace_id === traceId);
@@ -90,7 +92,7 @@ function busiestBoundary(recording: Recording, traceId: string): number {
       (span) => span.start_ms <= t && (span.end_ms === null || span.end_ms > t),
     );
     const score = running.length * 2 + (running.some((s) => s.kind === "model_request") ? 1 : 0);
-    if (score > bestScore) {
+    if (score >= bestScore) {
       best = index;
       bestScore = score;
     }
@@ -127,10 +129,17 @@ for (const scheme of ["dark", "light"] as const) {
       const run = agentRun(recording);
       await openRun(page, recording, run.trace_id);
       await skipToEnd(page);
-      await canvasNode(page, /^Tool .*retried/)
-        .first()
-        .click();
-      await expect(page.getByRole("treeitem", { selected: true })).toBeVisible();
+      // The retried attempt itself, not the call that succeeded after it (which is what a
+      // click on the tool node selects).
+      const retried = recording.spans.find(
+        (span) => span.trace_id === run.trace_id && span.kind === "tool_call" && span.data.retry,
+      );
+      if (!retried) throw new Error(`${recording.file} has no retried tool call`);
+      await page.locator(`[role="treeitem"][data-span="${retried.span_id}"]`).click();
+      await expect(canvasNode(page, /^Tool .*retried/).first()).toBeVisible();
+      const inspector = page.getByRole("complementary", { name: "Span details" });
+      await inspector.getByRole("tab", { name: "Error / Retry" }).click();
+      await expect(inspector).toContainText("retries");
       await shoot(page, `hero-${scheme}.png`);
     });
   });
