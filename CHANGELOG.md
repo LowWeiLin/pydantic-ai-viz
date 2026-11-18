@@ -22,15 +22,15 @@ pydantic-ai-viz is an unofficial community project. It is not affiliated with or
 - Observed blueprints for agents that were never registered, built from their runs, and delegation edges confirmed by runs.
 - Opt-in token streaming overlay (`stream=True`).
 - Live graph runs through `pydantic_ai_viz.run_graph`.
-- Local viewer server: standard library only, bound to loopback, Server-Sent Events with resume.
+- Local viewer server: standard library only, bound to loopback, Server-Sent Events with resume. An open viewer starts over by itself when the program it watches is restarted on the same port.
 - One-file viewer: blueprint canvas with a run overlay, span timeline, inspector, playback with scrubbing, light and dark themes, and keyboard navigation.
 - Recordings (`.pviz.jsonl`) and single-file HTML exports.
-- Command line: `demo`, `view`, `run`, `open` and `export`.
+- Command line: `demo`, `view`, `run`, `open` and `export`. `run --record` and `run --export` also write their files when the script is stopped with Ctrl+C.
 - Three offline demos (`support`, `research`, `pipeline`) that need no API key.
 - Python API: `serve`, `record`, `blueprint`, `export_html`, `run_graph` and `Session`.
 - Wire format `pviz` version 1, with a JSON Schema in `schema/pviz.schema.json`.
 - Privacy controls: `include_content=False` (`run --no-content`) keeps prompts, tool arguments and tool results out of the log, the stream, recordings and exports. Token streaming is switched off in such a session, because token deltas are content.
-- The server refuses requests whose `Host` header is not a loopback name, and sends no CORS headers.
+- The server refuses requests whose `Host` header is not `localhost` or a loopback address, and sends no CORS headers.
 - Blueprint fields that depend on private Pydantic AI attributes degrade to a warning in the viewer when an attribute is missing.
 - Documentation site, and a hosted demo that replays recordings of the three demos in the browser.
 
