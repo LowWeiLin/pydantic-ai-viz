@@ -10,6 +10,9 @@ name: Docs
 #   Settings > Pages > Build and deployment, set Source to "GitHub Actions".
 #   Until that is done the deploy job fails ("Get Pages site failed") and the
 #   documentation URL answers 404.
+#
+# While the repository is private the site is built but not deployed, so a
+#   plan without Pages for private repositories does not fail every push.
 
 on:
   push:
@@ -74,13 +77,13 @@ jobs:
           test -f site/schema/pviz.schema.json
 
       - uses: actions/upload-pages-artifact@v5
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !github.event.repository.private
         with:
           path: site
 
   deploy:
     name: Deploy to GitHub Pages
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !github.event.repository.private
     needs: build
     runs-on: ubuntu-latest
     permissions:
