@@ -269,6 +269,17 @@ describe("CopyButton, EmptyState, Tabs, Dialog", () => {
     expect(screen.getByText("the result")).toBeInTheDocument();
   });
 
+  test("no tab sticks out of the strip: it scrolls sideways only", () => {
+    // The strip scrolls when the tabs do not fit, so anything taller than it would give it a
+    // vertical scrollbar. A tab that reached below the strip to cover its border did that.
+    render(<Tabs label="Span details" items={[{ id: "a", label: "A", content: null }]} />);
+    const strip = screen.getByRole("tablist");
+    expect(strip.className).not.toMatch(/border-b/);
+    for (const tab of within(strip).getAllByRole("tab")) {
+      expect(tab.className).not.toMatch(/(^|\s)-m[by]?-/);
+    }
+  });
+
   test("a dialog is labelled and closes from its button", async () => {
     const user = userEvent.setup();
     const onOpenChange = vi.fn();

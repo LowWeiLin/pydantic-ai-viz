@@ -20,6 +20,11 @@ export type TabItem = { id: string; label: string; content: ReactNode };
 /**
  * A tab strip with its panels. Uncontrolled unless `value` is given. Arrow keys move between
  * tabs (Radix), and each panel is focusable so keyboard users can scroll it.
+ *
+ * The strip scrolls sideways when the tabs do not fit, which makes it a scroll container in
+ * both directions. So nothing in it may stick out vertically, not even by the pixel a tab's
+ * underline would need to cover a border: the hairline under the strip is a shadow inside the
+ * strip's own box, and each tab draws its underline over it.
  */
 export function Tabs({
   items,
@@ -46,15 +51,17 @@ export function Tabs({
     >
       <RadixTabs.List
         aria-label={label}
-        className="flex shrink-0 gap-4 overflow-x-auto border-line border-b px-3"
+        className="flex shrink-0 gap-1 overflow-x-auto px-1.5 shadow-[inset_0_-1px_0_var(--border)]"
       >
         {items.map((item) => (
           <RadixTabs.Trigger
             key={item.id}
             value={item.id}
             className={cx(
-              "-mb-px h-8 shrink-0 border-transparent border-b-2 text-muted text-ui",
-              "transition-colors duration-150 ease-out hover:text-fg",
+              // The padding is room for the focus ring, which is drawn inside the tab: outside
+              // it, the strip would clip it.
+              "h-8 shrink-0 border-transparent border-b-2 px-1.5 text-muted text-ui",
+              "transition-colors duration-150 ease-out hover:text-fg focus-visible:outline-offset-[-2px]",
               "data-[state=active]:border-accent data-[state=active]:font-medium data-[state=active]:text-fg",
             )}
           >
