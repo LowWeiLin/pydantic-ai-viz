@@ -93,7 +93,8 @@ artifacts = ["src/pydantic_ai_viz/_static/viewer.html"]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["web"]
+# tests/fixtures/static holds source files the static analyser reads: some are deliberately broken or odd.
+extend-exclude = ["web", "tests/fixtures/static"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "C4", "PT", "D"]
@@ -112,7 +113,8 @@ convention = "google"
 [tool.pyright]
 include = ["src", "tests", "scripts", "examples"]
 # with_logfire.py imports logfire, which is not a dependency of this project.
-exclude = ["**/node_modules", "**/__pycache__", "**/.*", "examples/with_logfire.py"]
+# tests/fixtures/static is input for the static analyser, not code of this project.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "examples/with_logfire.py", "tests/fixtures/static"]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
 strict = ["src"]

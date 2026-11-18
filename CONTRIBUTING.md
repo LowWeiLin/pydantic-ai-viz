@@ -9,6 +9,7 @@ For anything larger than a bug fix, please [open an issue](https://github.com/Lo
 | Path | What lives there |
 |---|---|
 | `src/pydantic_ai_viz/` | The Python package: introspection, capture, session, server, export, CLI |
+| `src/pydantic_ai_viz/_analyze/` | Static analysis: blueprints read from source files that are never imported or run |
 | `src/pydantic_ai_viz/demos/` | The offline demos |
 | `tests/` | Python tests (`tests/demos/` for the demos, `tests/integration/` for cross-language checks) |
 | `web/` | The viewer: React, TypeScript, Vite. It builds to one file, `web/dist/viewer.html` |
@@ -151,7 +152,7 @@ Commit the changed PNG files in their own commit (`docs: update screenshots`).
 The project uses [Conventional Commits](https://www.conventionalcommits.org/). The subject line is imperative, at most 72 characters, in the form `type(scope): summary`. Add a short body when the reason for the change is not obvious from the subject.
 
 - **Types:** `feat`, `fix`, `docs`, `test`, `refactor`, `build`, `ci`, `chore`.
-- **Scopes:** `core`, `introspect`, `capture`, `server`, `cli`, `web`, `demos`, `docs`, `ci`. The scope is optional.
+- **Scopes:** `core`, `introspect`, `static`, `capture`, `server`, `cli`, `web`, `demos`, `docs`, `ci`. The scope is optional.
 
 ```text
 fix(capture): keep tool spans when the parent run was evicted

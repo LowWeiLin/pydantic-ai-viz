@@ -1,0 +1,999 @@
+"""Agent blueprints from source: ``Agent(...)`` constructions and everything hung on them.
+
+An agent is every call of Pydantic AI's ``Agent`` found in the analysed files. Its
+tools, instruction functions and toolsets are found by tracing the receiver of a
+decorator or of a registration call (``@agent.tool``, ``toolset.add_function(f)``)
+back to the construction it belongs to.
+
+What the source spells out is reported as a value. What it computes is reported
+as the text that computes it, with a warning that says why it is not a value.
+Nothing is filled in from the installed Pydantic AI: a setting the source does
+not mention stays ``None`` here, although the library has a default for it.
+"""
+
+from __future__ import annotations
+
+import ast
+from dataclasses import dataclass, field
+from typing import Any, Literal, TypeAlias, cast
+
+from .. import _compat
+from .._models import (
+    AgentBlueprint,
+    AgentSettings,
+    CapabilityInfo,
+    Delegate,
+    Instruction,
+    ModelInfo,
+    OutputInfo,
+    SourceLocation,
+    Tool,
+    Toolset,
+)
+from ._docstring import describe
+from ._resolve import Definition, Expression, External, Project, Resolved, Resolver
+from ._schema import SchemaBuilder
+from ._source import CallSite, Module, Scope, clip_expression, unwrap
+from ._values import NotLiteral, fstring_template, literal, string
+
+ToolKind: TypeAlias = Literal["function", "output", "external", "unapproved"]
+PromptKind: TypeAlias = Literal["instructions", "system_prompt"]
+
+AGENT_TOOLSET_ID = "<agent>"
+RUN_METHODS = frozenset({"run", "run_sync", "run_stream", "run_stream_sync", "run_stream_events", "iter"})
+"""Methods of ``Agent`` that start a run; calling one inside a tool is delegation."""
+
+_WRAPPER_METHODS: dict[str, str] = {
+    "prefixed": "PrefixedToolset",
+    "filtered": "FilteredToolset",
+    "renamed": "RenamedToolset",
+    "prepared": "PreparedToolset",
+    "approval_required": "ApprovalRequiredToolset",
+    "defer_loading": "DeferredLoadingToolset",
+    "with_metadata": "SetMetadataToolset",
+    "include_return_schemas": "IncludeReturnSchemasToolset",
+}
+_WRAPPER_CLASSES = frozenset(_WRAPPER_METHODS.values())
+_OUTPUT_MODES: dict[str, str] = {
+    "ToolOutput": "tool",
+    "NativeOutput": "native",
+    "PromptedOutput": "prompted",
+    "TextOutput": "text",
+}
+_OFFLINE_MODELS: dict[str, str] = {"TestModel": "test", "FunctionModel": "function"}
+_MAX_LIST_ITEMS = 500
+_MAX_EXPANSION_DEPTH = 6
+
+
+def brief(text: str) -> str:
+    """Source text short enough to quote inside a warning."""
+    return clip_expression(text, 80)
+
+
+def location(module: Module, node: ast.AST) -> SourceLocation:
+    line: int = getattr(node, "lineno", 1)
+    return SourceLocation(file=module.rel, line=max(line, 1))
+
+
+@dataclass(slots=True, eq=False)
+class _ToolSpec:
+    """A tool as registered: which function, and what the registration overrides."""
+
+    name: str
+    function: Definition | None
+    where: SourceLocation
+    takes_ctx: bool | None = None
+    description: str | None = None
+    max_retries: int | None = None
+    kind: ToolKind = "function"
+    external: str | None = None
+    """Dotted name of a function that is defined outside the analysed files."""
+
+
+@dataclass(slots=True, eq=False)
+class _ToolsetSite:
+    """A ``FunctionToolset(...)`` construction and the tools registered on it."""
+
+    site: CallSite
+    tools: list[_ToolSpec] = field(default_factory=list[_ToolSpec])
+
+
+@dataclass(slots=True, eq=False)
+class _AgentSite:
+    """An ``Agent(...)`` construction and what decorators and calls add to it."""
+
+    site: CallSite
+    tools: list[_ToolSpec] = field(default_factory=list[_ToolSpec])
+    instructions: list[Instruction] = field(default_factory=list[Instruction])
+    system_prompts: list[Instruction] = field(default_factory=list[Instruction])
+    toolset_functions: list[Definition] = field(default_factory=list[Definition])
+
+    @property
+    def module(self) -> Module:
+        return self.site.scope.module
+
+
+@dataclass(slots=True)
+class _ToolsetEntry:
+    """One toolset of an agent, before it is given its id."""
+
+    kind: Literal["agent", "function", "mcp", "dynamic", "other"]
+    label: str
+    opaque: bool
+    toolset_id: str | None = None
+    wrappers: list[str] = field(default_factory=list[str])
+    expression: str | None = None
+    where: SourceLocation | None = None
+    tools: list[_ToolSpec] = field(default_factory=list[_ToolSpec])
+    prefixes: list[str] = field(default_factory=list[str])
+    """Prefixes applied by ``.prefixed(...)`` wrappers, innermost first."""
+
+
+class AgentExtractor:
+    """Finds every agent in a project and describes it."""
+
+    def __init__(self, project: Project, resolver: Resolver) -> None:
+        self.project = project
+        self.resolver = resolver
+        self.agents: dict[int, _AgentSite] = {}
+        """``id(ast.Call)`` -> the agent constructed there, in discovery order."""
+        self.toolsets: dict[int, _ToolsetSite] = {}
+
+    # -------------------------------------------------------------- driver
+
+    def find(self) -> None:
+        """Locate the agents and toolsets, then attach what decorators and calls register on them."""
+        for module in self.project.modules:
+            for site in sorted(module.calls, key=lambda item: (item.node.lineno, item.node.col_offset)):
+                callee = self.resolver.callee(site.node, site.scope)
+                if isinstance(callee, External):
+                    if callee.is_library("Agent"):
+                        self.agents[id(site.node)] = _AgentSite(site)
+                    elif callee.is_library("FunctionToolset"):
+                        self.toolsets[id(site.node)] = _ToolsetSite(site)
+        for module in self.project.modules:
+            self._registrations(module)
+
+    def blueprints(self) -> list[AgentBlueprint]:
+        ids = {key: f"a{index}" for index, key in enumerate(self.agents, start=1)}
+        return [_AgentBuilder(self, agent, ids).build() for agent in self.agents.values()]
+
+    def agent_at(self, node: ast.expr, scope: Scope, line: int | None = None) -> _AgentSite | None:
+        """The agent an expression stands for, if it can be traced to one construction."""
+        target = self.resolver.resolve(node, scope, line)
+        if isinstance(target, Expression) and isinstance(target.node, ast.Call):
+            return self.agents.get(id(target.node))
+        return None
+
+    def agent_id(self, node: ast.expr, scope: Scope, line: int | None = None) -> str | None:
+        """Blueprint id of the agent an expression stands for."""
+        found = self.agent_at(node, scope, line)
+        if found is None:
+            return None
+        return f"a{list(self.agents).index(id(found.site.node)) + 1}"
+
+    def _receiver(self, node: ast.expr, scope: Scope, line: int) -> _AgentSite | _ToolsetSite | None:
+        target = self.resolver.resolve(node, scope, line)
+        if isinstance(target, Expression) and isinstance(target.node, ast.Call):
+            key = id(target.node)
+            return self.agents.get(key) or self.toolsets.get(key)
+        return None
+
+    # ------------------------------------------------------- registrations
+
+    def _registrations(self, module: Module) -> None:
+        """Apply ``@x.tool`` decorators and ``x.tool(f)`` statements in the order they appear."""
+        events: list[tuple[int, ast.expr, Scope, Definition | None]] = []
+        for decorated in module.decorated:
+            definition = Definition(decorated.node, decorated.scope)
+            for decorator in decorated.node.decorator_list:
+                events.append((decorated.node.lineno, decorator, decorated.scope, definition))
+        for site in module.calls:
+            if site.statement:
+                events.append((site.node.lineno, site.node, site.scope, None))
+        for line, expression, scope, definition in sorted(events, key=lambda event: event[0]):
+            self._register(expression, scope, line, definition)
+
+    def _register(self, expression: ast.expr, scope: Scope, line: int, decorated: Definition | None) -> None:
+        call = expression if isinstance(expression, ast.Call) else None
+        method = call.func if call is not None else expression
+        if decorated is None and call is None:
+            return
+        if not isinstance(method, ast.Attribute):
+            return
+        receiver = self._receiver(method.value, scope, line)
+        if receiver is None:
+            return
+        keywords = {} if call is None else {item.arg: item.value for item in call.keywords if item.arg is not None}
+        function = decorated
+        if function is None and call is not None:
+            # The call form: ``agent.tool(fetch)``, ``toolset.add_function(fetch, retries=2)``.
+            if not call.args or isinstance(call.args[0], ast.Starred):
+                return
+            if method.attr == "add_tool":
+                spec = self.tool_of(call.args[0], scope, line)
+                if spec is not None and isinstance(receiver, _ToolsetSite):
+                    receiver.tools.append(spec)
+                return
+            target = self.resolver.resolve(call.args[0], scope, line)
+            if not isinstance(target, Definition) or isinstance(target.node, ast.ClassDef):
+                return
+            function = target
+        elif call is not None and call.args:
+            return  # ``@agent.tool(something)`` is not a registration form
+        if function is None or isinstance(function.node, ast.ClassDef):
+            return
+        where = location(function.module, function.node)
+        name = method.attr
+        if name in ("tool", "tool_plain", "add_function"):
+            takes_ctx: bool | None = {"tool": True, "tool_plain": False}.get(name)
+            if name == "add_function":
+                takes_ctx = self._bool(keywords.get("takes_ctx"), scope, line)
+                if takes_ctx is None:
+                    takes_ctx = self._takes_ctx(function)
+            spec = _ToolSpec(function.node.name, function, where, takes_ctx=takes_ctx)
+            self._overrides(spec, keywords, scope, line)
+            receiver.tools.append(spec)
+        elif isinstance(receiver, _AgentSite):
+            if name == "instructions" or name == "system_prompt":
+                prompt = Instruction(
+                    kind=name,
+                    dynamic=True,
+                    text=None,
+                    function=function.qualified_name,
+                    expression=None,
+                    location=where,
+                )
+                (receiver.instructions if name == "instructions" else receiver.system_prompts).append(prompt)
+            elif name == "toolset":
+                receiver.toolset_functions.append(function)
+
+    def _overrides(self, spec: _ToolSpec, keywords: dict[str, ast.expr], scope: Scope, line: int) -> None:
+        """Apply the keyword arguments of a registration that change how the tool is presented."""
+        name = keywords.get("name")
+        if name is not None:
+            spec.name = string(self.resolver, name, scope, line) or spec.name
+        description = keywords.get("description")
+        if description is not None:
+            spec.description = string(self.resolver, description, scope, line)
+        for key in ("retries", "max_retries"):
+            if key in keywords:
+                value = self._literal(keywords[key], scope, line)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    spec.max_retries = value
+        if self._bool(keywords.get("requires_approval"), scope, line):
+            spec.kind = "unapproved"
+
+    def _literal(self, node: ast.expr, scope: Scope, line: int) -> Any:
+        try:
+            return literal(self.resolver, node, scope, line)
+        except NotLiteral:
+            return None
+
+    def _bool(self, node: ast.expr | None, scope: Scope, line: int) -> bool | None:
+        value = None if node is None else self._literal(node, scope, line)
+        return value if isinstance(value, bool) else None
+
+    def _takes_ctx(self, function: Definition) -> bool:
+        """Whether a function's first parameter is annotated ``RunContext``, as Pydantic AI checks it."""
+        node = function.node
+        assert not isinstance(node, ast.ClassDef)
+        parameters = [*node.args.posonlyargs, *node.args.args][self.receiver_count(function) :]
+        if not parameters or parameters[0].annotation is None:
+            return False
+        annotation = parameters[0].annotation
+        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+            return annotation.value.replace(" ", "").split("[")[0].rpartition(".")[2] == "RunContext"
+        if isinstance(annotation, ast.Subscript):
+            annotation = annotation.value
+        target = self.resolver.resolve(annotation, function.scope, node.lineno)
+        return isinstance(target, External) and target.is_library("RunContext")
+
+    @staticmethod
+    def receiver_count(function: Definition) -> int:
+        """1 when the function is a method whose first parameter is ``self`` or ``cls``, else 0."""
+        return 1 if function.body.receiver is not None else 0
+
+    def tool_of(self, node: ast.expr, scope: Scope, line: int, depth: int = 0) -> _ToolSpec | None:
+        """A tool from an entry of ``tools=[...]``: a function, or a ``Tool(function, ...)``."""
+        target: Resolved = self.resolver.resolve(node, scope, line)
+        if isinstance(target, Definition) and not isinstance(target.node, ast.ClassDef):
+            where = location(target.module, target.node)
+            return _ToolSpec(target.node.name, target, where, takes_ctx=self._takes_ctx(target))
+        if isinstance(target, External):
+            return _ToolSpec(target.last, None, location(scope.module, node), external=target.name)
+        if isinstance(target, Expression) and isinstance(target.node, ast.Call) and depth < 2:
+            call = target.node
+            callee = self.resolver.callee(call, target.scope, target.line)
+            if isinstance(callee, External) and callee.is_library("Tool"):
+                keywords = {item.arg: item.value for item in call.keywords if item.arg is not None}
+                inner = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
+                inner = inner or keywords.get("function")
+                if inner is None:
+                    return None
+                spec = self.tool_of(inner, target.scope, target.line, depth + 1)
+                if spec is None:
+                    return None
+                takes_ctx = self._bool(keywords.get("takes_ctx"), target.scope, target.line)
+                if takes_ctx is not None:
+                    spec.takes_ctx = takes_ctx
+                self._overrides(spec, keywords, target.scope, target.line)
+                return spec
+        return None
+
+    def items(self, node: ast.expr, scope: Scope, line: int, depth: int = 0) -> list[Expression] | None:
+        """The entries of a list written in source, with ``*name`` entries expanded; ``None`` if it is not one."""
+        target = self.resolver.resolve(node, scope, line)
+        if not isinstance(target, Expression) or not isinstance(target.node, ast.List | ast.Tuple | ast.Set):
+            return None
+        if depth > _MAX_EXPANSION_DEPTH or len(target.node.elts) > _MAX_LIST_ITEMS:
+            return None
+        found: list[Expression] = []
+        for item in target.node.elts:
+            if isinstance(item, ast.Starred):
+                inner = self.items(item.value, target.scope, target.line, depth + 1)
+                if inner is None:
+                    return None
+                found.extend(inner)
+            else:
+                found.append(Expression(item, target.scope, target.line))
+        return found if len(found) <= _MAX_LIST_ITEMS else None
+
+
+class _AgentBuilder:
+    """Turns one ``_AgentSite`` into an ``AgentBlueprint``."""
+
+    def __init__(self, extractor: AgentExtractor, agent: _AgentSite, ids: dict[int, str]) -> None:
+        self.extractor = extractor
+        self.resolver = extractor.resolver
+        self.agent = agent
+        self.ids = ids
+        self.call = agent.site.node
+        self.scope = agent.site.scope
+        self.module = agent.module
+        self.line = self.call.lineno
+        self.warnings: list[str] = []
+        self.arguments: dict[str, ast.expr] = {}
+        if self.call.args and not isinstance(self.call.args[0], ast.Starred):
+            self.arguments["model"] = self.call.args[0]
+        for keyword in self.call.keywords:
+            if keyword.arg is None:
+                self.warn(
+                    f"arguments passed as `**{brief(self.module.text(keyword.value))}` cannot be read from source"
+                )
+            else:
+                self.arguments[keyword.arg] = keyword.value
+        if any(isinstance(argument, ast.Starred) for argument in self.call.args):
+            self.warn("arguments passed with `*` cannot be read from source")
+
+    def warn(self, message: str) -> None:
+        _compat.add_warning(self.warnings, message)
+
+    def text(self, node: ast.AST) -> str:
+        return self.module.text(node)
+
+    def literal(self, node: ast.expr) -> Any:
+        """The value an argument spells out; ``NotLiteral`` propagates."""
+        return literal(self.resolver, node, self.scope, self.line)
+
+    # --------------------------------------------------------------- build
+
+    def build(self) -> AgentBlueprint:
+        blueprint_id = self.ids[id(self.call)]
+        name = self._text_argument("name")
+        toolsets, tools, delegates = self._toolsets()
+        return AgentBlueprint(
+            id=blueprint_id,
+            name=name,
+            label=name or self.agent.site.bound_to or f"agent-{blueprint_id[1:]}",
+            description=self._text_argument("description"),
+            source="code",
+            location=location(self.module, self.call),
+            model=self._model(),
+            deps_type=self._deps_type(),
+            instructions=self._instructions(),
+            toolsets=toolsets,
+            tools=tools,
+            native_tools=[],
+            output=self._output(),
+            capabilities=self._capabilities(),
+            settings=self._settings(),
+            delegates=delegates,
+            warnings=self.warnings,
+        )
+
+    def _text_argument(self, key: str) -> str | None:
+        node = self.arguments.get(key)
+        if node is None or (isinstance(node, ast.Constant) and node.value is None):
+            return None
+        value = string(self.resolver, node, self.scope, self.line)
+        if value is None:
+            self.warn(f"the {key} is computed by `{brief(self.text(node))}`, so it is only known when the code runs")
+        return value or None
+
+    def _model(self) -> ModelInfo | None:
+        node = self.arguments.get("model")
+        if node is None or (isinstance(node, ast.Constant) and node.value is None):
+            return None
+        value = string(self.resolver, node, self.scope, self.line)
+        if value is not None:
+            provider, separator, name = value.partition(":")
+            if not separator:
+                provider, name = None, value
+            offline = provider in _compat.OFFLINE_PROVIDERS
+            return ModelInfo(id=value, name=name, provider=provider, offline=offline, expression=None)
+        text = self.text(node)
+        provider = None
+        target = self.resolver.resolve(node, self.scope, self.line)
+        if isinstance(target, Expression) and isinstance(target.node, ast.Call):
+            callee = self.resolver.callee(target.node, target.scope, target.line)
+            if isinstance(callee, External) and callee.is_library(*_OFFLINE_MODELS):
+                provider = _OFFLINE_MODELS[callee.last]
+        if provider is None:
+            self.warn(f"the model is set by `{brief(text)}`, so it is only known when the code runs")
+        return ModelInfo(id=None, name=text, provider=provider, offline=provider is not None, expression=text)
+
+    def _deps_type(self) -> str | None:
+        node = self.arguments.get("deps_type")
+        if node is None:
+            return None
+        target = self.resolver.resolve(node, self.scope, self.line)
+        if isinstance(target, External):
+            return (
+                None if target.name in ("builtins.object", "builtins.None") else target.name.removeprefix("builtins.")
+            )
+        if isinstance(target, Definition):
+            return target.qualified_name
+        if isinstance(node, ast.Constant) and node.value is None:
+            return None
+        return self.text(node)
+
+    # -------------------------------------------------------- instructions
+
+    def _instructions(self) -> list[Instruction]:
+        """In the order Pydantic AI keeps them: instructions, then system prompts; arguments before decorators."""
+        return [
+            *self._prompts("instructions"),
+            *self.agent.instructions,
+            *self._prompts("system_prompt"),
+            *self.agent.system_prompts,
+        ]
+
+    def _prompts(self, kind: PromptKind) -> list[Instruction]:
+        node = self.arguments.get(kind)
+        if node is None:
+            return []
+        entries = self.extractor.items(node, self.scope, self.line)
+        if entries is None:
+            entries = [Expression(node, self.scope, self.line)]
+        prompts = (self._prompt(kind, entry) for entry in entries)
+        return [prompt for prompt in prompts if prompt is not None]
+
+    def _prompt(self, kind: PromptKind, entry: Expression) -> Instruction | None:
+        node = entry.node
+        where = location(self.module, node)
+        if isinstance(node, ast.Constant) and node.value is None:
+            return None
+        value = string(self.resolver, node, entry.scope, entry.line)
+        if value is not None:
+            return Instruction(kind=kind, dynamic=False, text=value, function=None, expression=None, location=where)
+        target = self.resolver.resolve(node, entry.scope, entry.line)
+        if isinstance(target, Definition) and not isinstance(target.node, ast.ClassDef):
+            return Instruction(
+                kind=kind,
+                dynamic=True,
+                text=None,
+                function=target.qualified_name,
+                expression=None,
+                location=location(target.module, target.node),
+            )
+        if isinstance(target, Expression) and isinstance(target.node, ast.JoinedStr):
+            template = fstring_template(target.node)
+            return Instruction(kind=kind, dynamic=True, text=template, function=None, expression=None, location=where)
+        text = self.text(node)
+        what = "instructions" if kind == "instructions" else "system prompts"
+        if isinstance(target, External):
+            self.warn(
+                f"one of the {what} is `{brief(text)}` ({target.name}), which is defined outside the analysed "
+                "source; whether it is text or a function is not known"
+            )
+        elif not isinstance(node, ast.Lambda):
+            self.warn(f"one of the {what} is the expression `{brief(text)}`; its text is only known at run time")
+        return Instruction(kind=kind, dynamic=True, text=None, function=None, expression=text, location=where)
+
+    # -------------------------------------------------------------- output
+
+    def _output(self) -> OutputInfo:
+        node = self.arguments.get("output_type")
+        if node is None:
+            return OutputInfo(
+                mode="text",
+                allows_text=True,
+                type_name="str",
+                json_schema={"type": "string"},
+                tool_names=[],
+                location=None,
+            )
+        builder = SchemaBuilder(self.resolver)
+        modes: list[str] = []
+        labels: list[str] = []
+        schemas: list[dict[str, Any]] = []
+        self._output_member(Expression(node, self.scope, self.line), builder, modes, labels, schemas, 0)
+        if not modes or "tool" in modes:
+            mode = "tool" if modes else "unknown"
+        else:
+            mode = modes[0] if len(set(modes)) == 1 else "auto"
+        unique: list[dict[str, Any]] = []
+        for schema in schemas:
+            if schema not in unique:
+                unique.append(schema)
+        document: dict[str, Any] | None = None
+        if unique:
+            document = builder.document(unique[0] if len(unique) == 1 else {"anyOf": unique})
+        if builder.unresolved:
+            names = ", ".join(f"`{name}`" for name in builder.unresolved)
+            self.warn(
+                f"the output schema is incomplete: {names} could not be resolved from the analysed source"
+                if document is not None and set(document) != {"x-python-type"}
+                else f"the output type {names} is defined outside the analysed source, so its schema is not shown"
+            )
+        if document is not None and set(document) == {"x-python-type"}:
+            document = None
+        where = builder.locations[0] if builder.locations else None
+        return OutputInfo(
+            mode=mode,
+            allows_text=True if mode == "text" else None,
+            type_name=" | ".join(labels) or None,
+            json_schema=document,
+            tool_names=[],
+            location=None if where is None else location(where.module, where.node),
+        )
+
+    def _output_member(
+        self,
+        entry: Expression,
+        builder: SchemaBuilder,
+        modes: list[str],
+        labels: list[str],
+        schemas: list[dict[str, Any]],
+        depth: int,
+    ) -> None:
+        """Read one output spec: a type, a function, a marker such as ``ToolOutput(...)``, or a list of them."""
+        node = entry.node
+        target = self.resolver.resolve(node, entry.scope, entry.line)
+        if depth < 4 and isinstance(target, Expression):
+            inner = target.node
+            if isinstance(inner, ast.List | ast.Tuple) and not any(
+                isinstance(item, ast.Starred) for item in inner.elts
+            ):
+                for item in inner.elts[:_MAX_LIST_ITEMS]:
+                    self._output_member(
+                        Expression(item, target.scope, target.line), builder, modes, labels, schemas, depth + 1
+                    )
+                return
+            if isinstance(inner, ast.Call):
+                callee = self.resolver.callee(inner, target.scope, target.line)
+                if isinstance(callee, External) and callee.is_library(*_OUTPUT_MODES):
+                    wrapped = inner.args[0] if inner.args and not isinstance(inner.args[0], ast.Starred) else None
+                    if wrapped is not None and callee.last == "TextOutput":
+                        # The model answers in text, and the function turns that text into the output.
+                        function = self.resolver.resolve(wrapped, target.scope, target.line)
+                        named = isinstance(function, Definition)
+                        labels.append(function.node.name if named else target.module.text(wrapped))
+                        modes.append("text")
+                        schemas.append({"type": "string"})
+                        return
+                    if wrapped is not None:
+                        before = len(modes)
+                        self._output_member(
+                            Expression(wrapped, target.scope, target.line), builder, modes, labels, schemas, depth + 1
+                        )
+                        modes[before:] = [_OUTPUT_MODES[callee.last]] * (len(modes) - before)
+                        return
+        if isinstance(target, Definition) and not isinstance(target.node, ast.ClassDef):
+            # An output function: the model calls it like a tool, and its result is the output.
+            labels.append(target.node.name)
+            modes.append("auto")
+            return
+        if isinstance(target, External) and target.name == "builtins.str":
+            labels.append("str")
+            modes.append("text")
+            schemas.append({"type": "string"})
+            return
+        # A name for a type expression (``Answer = Person | Point``) is shown as what it stands for.
+        shown = target if isinstance(target, Expression) and isinstance(node, ast.Name) else entry
+        labels.append(shown.module.text(shown.node))
+        modes.append("auto")
+        schemas.append(builder.annotation(node, entry.scope, entry.line))
+
+    # -------------------------------------------------------- capabilities
+
+    def _capabilities(self) -> list[CapabilityInfo]:
+        node = self.arguments.get("capabilities")
+        if node is None or (isinstance(node, ast.Constant) and node.value is None):
+            return []
+        entries = self.extractor.items(node, self.scope, self.line)
+        if entries is None:
+            self.warn(
+                f"the capabilities are built by `{brief(self.text(node))}`; they are only known when the code runs"
+            )
+            return []
+        found: list[CapabilityInfo] = []
+        for entry in entries:
+            name = self._class_name(entry)
+            if name is None:
+                name = entry.module.text(entry.node)
+                self.warn(f"a capability is built by `{brief(name)}`; its type is only known when the code runs")
+            found.append(CapabilityInfo(name=name, builtin=name in _compat.BUILTIN_CAPABILITIES))
+        return found
+
+    def _class_name(self, entry: Expression) -> str | None:
+        """The class an expression constructs (or is), when that can be read."""
+        target = self.resolver.resolve(entry.node, entry.scope, entry.line)
+        if isinstance(target, Expression) and isinstance(target.node, ast.Call):
+            target = self.resolver.callee(target.node, target.scope, target.line)
+        if isinstance(target, External):
+            return target.last if target.last[:1].isupper() else None
+        if isinstance(target, Definition) and isinstance(target.node, ast.ClassDef):
+            return target.node.name
+        return None
+
+    # ------------------------------------------------------------ settings
+
+    def _settings(self) -> AgentSettings:
+        expressions: dict[str, str] = {}
+        tool_retries, output_retries = self._retries(expressions)
+        end_strategy = self._setting("end_strategy", str, expressions)
+        timeout = self._setting("tool_timeout", int | float, expressions)
+        return AgentSettings(
+            model_settings=self._model_settings(expressions),
+            end_strategy=end_strategy,
+            tool_retries=tool_retries,
+            output_retries=output_retries,
+            tool_timeout=None if timeout is None else float(timeout),
+            expressions=expressions,
+        )
+
+    def _setting(self, key: str, kind: Any, expressions: dict[str, str]) -> Any:
+        node = self.arguments.get(key)
+        if node is None or (isinstance(node, ast.Constant) and node.value is None):
+            return None
+        try:
+            value = self.literal(node)
+        except NotLiteral:
+            value = None
+        if value is None or isinstance(value, bool) or not isinstance(value, kind):
+            expressions[key] = self.text(node)
+            return None
+        return value
+
+    def _retries(self, expressions: dict[str, str]) -> tuple[int | None, int | None]:
+        node = self.arguments.get("retries")
+        if node is None or (isinstance(node, ast.Constant) and node.value is None):
+            return None, None
+        try:
+            value = self.literal(node)
+        except NotLiteral:
+            value = None
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value, value
+        if isinstance(value, dict):
+            budgets = cast("dict[str, Any]", value)
+            tools, output = budgets.get("tools"), budgets.get("output")
+            return (tools if isinstance(tools, int) else None, output if isinstance(output, int) else None)
+        text = self.text(node)
+        expressions["tool_retries"] = expressions["output_retries"] = text
+        return None, None
+
+    def _model_settings(self, expressions: dict[str, str]) -> dict[str, Any] | None:
+        node = self.arguments.get("model_settings")
+        if node is None or (isinstance(node, ast.Constant) and node.value is None):
+            return None
+        target = self.resolver.resolve(node, self.scope, self.line)
+        pairs: list[tuple[str, Expression]] | None = None
+        if isinstance(target, Expression):
+            inner = target.node
+            if isinstance(inner, ast.Dict):
+                pairs = []
+                for key, value in zip(inner.keys, inner.values, strict=True):
+                    name = None if key is None else string(self.resolver, key, target.scope, target.line)
+                    if name is None:
+                        pairs = None
+                        break
+                    pairs.append((name, Expression(value, target.scope, target.line)))
+            elif isinstance(inner, ast.Call) and not inner.args:
+                callee = self.resolver.callee(inner, target.scope, target.line)
+                is_settings = isinstance(callee, External) and callee.last.endswith("Settings")
+                if is_settings and all(keyword.arg is not None for keyword in inner.keywords):
+                    pairs = [
+                        (keyword.arg, Expression(keyword.value, target.scope, target.line))
+                        for keyword in inner.keywords
+                        if keyword.arg is not None
+                    ]
+        if pairs is None:
+            expressions["model_settings"] = self.text(node)
+            return None
+        settings: dict[str, Any] = {}
+        for name, value in pairs:
+            try:
+                settings[name] = literal(self.resolver, value.node, value.scope, value.line)
+            except NotLiteral:
+                expressions[f"model_settings.{name}"] = value.module.text(value.node)
+        return settings
+
+    # ------------------------------------------------------------ toolsets
+
+    def _toolsets(self) -> tuple[list[Toolset], list[Tool], list[Delegate]]:
+        entries: list[_ToolsetEntry] = []
+        own = self._own_tools()
+        if own:
+            entries.append(
+                _ToolsetEntry(kind="agent", label="Agent tools", opaque=False, toolset_id=AGENT_TOOLSET_ID, tools=own)
+            )
+        node = self.arguments.get("toolsets")
+        if node is not None and not (isinstance(node, ast.Constant) and node.value is None):
+            listed = self.extractor.items(node, self.scope, self.line)
+            if listed is None:
+                text = self.text(node)
+                self.warn(f"the toolsets are built by `{brief(text)}`; they are only known when the code runs")
+                entries.append(
+                    _ToolsetEntry(
+                        kind="other", label=text, opaque=True, expression=text, where=location(self.module, node)
+                    )
+                )
+            else:
+                for item in listed:
+                    entries.extend(self._toolset(item, 0))
+        for function in self.agent.toolset_functions:
+            entries.append(
+                _ToolsetEntry(
+                    kind="dynamic",
+                    label=function.node.name,
+                    opaque=True,
+                    where=location(function.module, function.node),
+                )
+            )
+
+        toolsets: list[Toolset] = []
+        tools: list[Tool] = []
+        delegates: list[Delegate] = []
+        for index, entry in enumerate(entries):
+            toolset = Toolset(
+                id=f"ts{index}",
+                toolset_id=entry.toolset_id,
+                label=entry.label,
+                kind=entry.kind,
+                wrappers=entry.wrappers,
+                opaque=entry.opaque,
+                expression=entry.expression,
+                location=entry.where,
+            )
+            toolsets.append(toolset)
+            for spec in entry.tools:
+                name = spec.name
+                for prefix in entry.prefixes:
+                    name = f"{prefix}_{name}"
+                tools.append(self._tool(spec, name, toolset.id))
+                for agent_id in self._delegations(spec):
+                    delegate = Delegate(tool_name=name, agent_id=agent_id, evidence="code")
+                    if delegate not in delegates:
+                        delegates.append(delegate)
+        return toolsets, tools, delegates
+
+    def _own_tools(self) -> list[_ToolSpec]:
+        """The agent's own tools: the ``tools=[...]`` argument first, then registrations in source order."""
+        own: list[_ToolSpec] = []
+        node = self.arguments.get("tools")
+        if node is not None:
+            listed = self.extractor.items(node, self.scope, self.line)
+            if listed is None:
+                self.warn(f"the tools are built by `{brief(self.text(node))}`; they are only known when the code runs")
+            for item in listed or []:
+                spec = self.extractor.tool_of(item.node, item.scope, item.line)
+                if spec is None:
+                    text = item.module.text(item.node)
+                    self.warn(f"a tool is built by `{brief(text)}`; it cannot be described without running the code")
+                else:
+                    own.append(spec)
+        return [*own, *self.agent.tools]
+
+    def _toolset(self, entry: Expression, depth: int) -> list[_ToolsetEntry]:
+        """Describe one entry of ``toolsets=[...]``, looking through wrappers to the toolset inside."""
+        text = entry.module.text(entry.node)
+        wrappers: list[str] = []
+        prefixes: list[str] = []
+        current: Resolved = self.resolver.resolve(entry.node, entry.scope, entry.line)
+        for _ in range(16):
+            if not isinstance(current, Expression) or not isinstance(current.node, ast.Call):
+                break
+            call = current.node
+            function = call.func
+            inner: ast.expr | None = None
+            if isinstance(function, ast.Attribute) and function.attr in _WRAPPER_METHODS:
+                # ``toolset.prefixed("kb")``: a method that returns a wrapper around the receiver.
+                wrappers.append(_WRAPPER_METHODS[function.attr])
+                if function.attr == "prefixed":
+                    prefixes.append(self._prefix(call, current))
+                inner = function.value
+            else:
+                callee = self.resolver.callee(call, current.scope, current.line)
+                if isinstance(callee, External) and callee.is_library(*_WRAPPER_CLASSES):
+                    wrappers.append(callee.last)
+                    if callee.last == "PrefixedToolset":
+                        prefixes.append(self._prefix(call, current, positional=1))
+                    inner = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
+                    if inner is None:
+                        inner = next((item.value for item in call.keywords if item.arg == "wrapped"), None)
+            if inner is None:
+                break
+            current = self.resolver.resolve(inner, current.scope, current.line)
+        prefixes.reverse()  # collected from the outside in; applied from the inside out
+        if any(not prefix for prefix in prefixes):
+            self.warn(f"a tool name prefix in `{brief(text)}` is computed; the tool names shown may lack it")
+            prefixes = [prefix for prefix in prefixes if prefix]
+
+        where = location(entry.module, entry.node)
+        result = _ToolsetEntry(kind="other", label=text, opaque=True, wrappers=wrappers, where=where, prefixes=prefixes)
+        if isinstance(current, Expression) and isinstance(current.node, ast.Call):
+            call = current.node
+            site = self.extractor.toolsets.get(id(call))
+            callee = self.resolver.callee(call, current.scope, current.line)
+            toolset_id = self._keyword_string(call, "id", current)
+            result.toolset_id = toolset_id
+            result.where = location(current.module, call)
+            if site is not None:
+                result.kind, result.opaque = "function", False
+                result.label = "FunctionToolset" + (f" {toolset_id!r}" if toolset_id else "")
+                result.tools = [*self._constructor_tools(call, current), *site.tools]
+                return [result]
+            if isinstance(callee, External) and callee.is_library("CombinedToolset") and depth < 4 and call.args:
+                children = self.extractor.items(call.args[0], current.scope, current.line)
+                if children is not None:
+                    combined: list[_ToolsetEntry] = []
+                    for child in children:
+                        for nested in self._toolset(child, depth + 1):
+                            nested.wrappers = [*wrappers, *nested.wrappers]
+                            nested.prefixes = [*nested.prefixes, *prefixes]
+                            combined.append(nested)
+                    return combined
+            name = self._class_name(current)
+            if name is not None:
+                result.label = name + (f" {toolset_id!r}" if toolset_id else "")
+                if "MCP" in name or (isinstance(callee, External) and callee.name.startswith("pydantic_ai.mcp")):
+                    result.kind = "mcp"
+                elif name == "DynamicToolset":
+                    result.kind = "dynamic"
+                else:
+                    result.expression = current.module.text(call)
+                return [result]
+        elif isinstance(current, Definition) and not isinstance(current.node, ast.ClassDef):
+            # A function that builds the toolset for each run.
+            result.kind, result.label = "dynamic", current.node.name
+            result.where = location(current.module, current.node)
+            return [result]
+        result.expression = text
+        self.warn(f"a toolset is built by `{brief(text)}`; its tools are only known when the code runs")
+        return [result]
+
+    def _prefix(self, call: ast.Call, context: Expression, positional: int = 0) -> str:
+        """The literal prefix of a ``prefixed(...)`` wrapper, or ``""`` when it is computed."""
+        node: ast.expr | None = None
+        if len(call.args) > positional and not isinstance(call.args[positional], ast.Starred):
+            node = call.args[positional]
+        node = node or next((item.value for item in call.keywords if item.arg == "prefix"), None)
+        if node is None:
+            return ""
+        return string(self.resolver, node, context.scope, context.line) or ""
+
+    def _keyword_string(self, call: ast.Call, key: str, context: Expression) -> str | None:
+        node = next((item.value for item in call.keywords if item.arg == key), None)
+        return None if node is None else string(self.resolver, node, context.scope, context.line)
+
+    def _constructor_tools(self, call: ast.Call, context: Expression) -> list[_ToolSpec]:
+        """Tools passed to ``FunctionToolset([...])`` or ``FunctionToolset(tools=[...])``."""
+        node: ast.expr | None = None
+        if call.args and not isinstance(call.args[0], ast.Starred):
+            node = call.args[0]
+        node = node or next((item.value for item in call.keywords if item.arg == "tools"), None)
+        if node is None:
+            return []
+        listed = self.extractor.items(node, context.scope, context.line)
+        if listed is None:
+            self.warn(
+                f"the tools of a toolset are built by `{brief(context.module.text(node))}`; "
+                "they are only known when the code runs"
+            )
+            return []
+        found: list[_ToolSpec] = []
+        for item in listed:
+            spec = self.extractor.tool_of(item.node, item.scope, item.line)
+            if spec is not None:
+                found.append(spec)
+        return found
+
+    # --------------------------------------------------------------- tools
+
+    def _tool(self, spec: _ToolSpec, name: str, toolset: str) -> Tool:
+        function = spec.function
+        if function is None:
+            self.warn(
+                f"the tool `{name}` is `{spec.external}`, which is defined outside the analysed source, "
+                "so its description and parameters are not shown"
+            )
+            return Tool(
+                name=name,
+                toolset=toolset,
+                description=spec.description,
+                parameters_schema=None,
+                return_schema=None,
+                kind=spec.kind,
+                takes_ctx=spec.takes_ctx,
+                is_async=None,
+                max_retries=spec.max_retries,
+                function=spec.external,
+                origin="code",
+                location=spec.where,
+            )
+        node = function.node
+        assert not isinstance(node, ast.ClassDef)
+        description, parameter_descriptions = describe(
+            ast.get_docstring(node, clean=False), has_return_annotation=node.returns is not None
+        )
+        builder = SchemaBuilder(self.resolver)
+        skip = self.extractor.receiver_count(function) + (1 if spec.takes_ctx else 0)
+        schema = builder.parameters(function, skip=skip, descriptions=parameter_descriptions)
+        if builder.unresolved:
+            names = ", ".join(f"`{item}`" for item in builder.unresolved)
+            self.warn(
+                f"the parameters of the tool `{name}` are incomplete: {names} could not be resolved "
+                "from the analysed source"
+            )
+        return Tool(
+            name=name,
+            toolset=toolset,
+            description=spec.description if spec.description is not None else description,
+            parameters_schema=schema,
+            return_schema=self._return_schema(function),
+            kind=spec.kind,
+            takes_ctx=spec.takes_ctx,
+            is_async=isinstance(node, ast.AsyncFunctionDef),
+            max_retries=spec.max_retries,
+            function=function.qualified_name,
+            origin="code",
+            location=spec.where,
+        )
+
+    def _return_schema(self, function: Definition) -> dict[str, Any] | None:
+        """The schema of a tool's declared return type; ``None`` when that type cannot be resolved."""
+        node = function.node
+        assert not isinstance(node, ast.ClassDef)
+        if node.returns is None:
+            return {}  # no declared type: anything, which is also what Pydantic AI reports
+        builder = SchemaBuilder(self.resolver)
+        schema = builder.annotation(node.returns, function.scope, node.lineno)
+        return None if builder.unresolved else builder.document(schema)
+
+    def _delegations(self, spec: _ToolSpec) -> list[str]:
+        """Ids of the agents a tool's body runs: ``other.run(...)``, or ``other`` handed to a helper."""
+        function = spec.function
+        if function is None:
+            return []
+        body = function.body
+        found: list[str] = []
+        for node in ast.walk(function.node):
+            if not isinstance(node, ast.Call):
+                continue
+            candidates: list[ast.expr] = []
+            if isinstance(node.func, ast.Attribute) and node.func.attr in RUN_METHODS:
+                candidates.append(node.func.value)
+            candidates.extend(argument for argument in node.args if isinstance(argument, ast.Name | ast.Attribute))
+            candidates.extend(
+                keyword.value for keyword in node.keywords if isinstance(keyword.value, ast.Name | ast.Attribute)
+            )
+            for candidate in candidates:
+                agent = self.extractor.agent_at(unwrap(candidate), body, node.lineno)
+                if agent is not None:
+                    agent_id = self.ids[id(agent.site.node)]
+                    if agent_id not in found:
+                        found.append(agent_id)
+        return found
