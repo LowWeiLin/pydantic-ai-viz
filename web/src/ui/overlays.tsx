@@ -6,7 +6,7 @@ import * as RadixDialog from "@radix-ui/react-dialog";
 import * as RadixPopover from "@radix-ui/react-popover";
 import * as RadixTabs from "@radix-ui/react-tabs";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
-import type { ReactElement, ReactNode } from "react";
+import { type ReactElement, type ReactNode, useRef } from "react";
 import { IconButton } from "./Button";
 import { cx } from "./tone";
 
@@ -131,12 +131,23 @@ export function Dialog({
   description?: string;
   children: ReactNode;
 }) {
+  // Radix returns the focus to its own trigger. This dialog has none: it is opened by a button
+  // elsewhere or by a key, so what had the focus is remembered here and gets it back.
+  const opener = useRef<HTMLElement | null>(null);
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="fixed inset-0 z-40 animate-fade-in bg-scrim" />
         <RadixDialog.Content
           {...(description ? {} : { "aria-describedby": undefined })}
+          onOpenAutoFocus={() => {
+            const active = document.activeElement;
+            opener.current = active instanceof HTMLElement ? active : null;
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            opener.current?.focus();
+          }}
           className={cx(
             floating,
             "-translate-x-1/2 fixed top-[14vh] left-1/2 flex max-h-[72vh] w-[min(520px,calc(100vw-32px))] flex-col",

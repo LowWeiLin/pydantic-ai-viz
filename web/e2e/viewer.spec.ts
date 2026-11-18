@@ -463,6 +463,13 @@ test.describe("navigation", () => {
       await expect(dialog.getByText("Fit the canvas")).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(dialog).toBeHidden();
+      // Opened from its button, it hands the focus back to that button when it closes.
+      const button = page.getByRole("button", { name: "Keyboard shortcuts" });
+      await button.click();
+      await expect(dialog).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(dialog).toBeHidden();
+      await expect(button).toBeFocused();
     });
 
     await test.step("the span tree is one tab stop with arrow keys", async () => {

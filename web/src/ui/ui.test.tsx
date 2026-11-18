@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, test, vi } from "vitest";
 import { Chip, StatusDot } from "./Badge";
 import { CopyButton } from "./CopyButton";
@@ -280,7 +281,34 @@ describe("CopyButton, EmptyState, Tabs, Dialog", () => {
     await user.click(screen.getByRole("button", { name: "Close" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+
+  test("closing a dialog puts the focus back where it was", async () => {
+    const user = userEvent.setup();
+    render(<Opener />);
+    const opener = screen.getByRole("button", { name: "Show shortcuts" });
+    await user.click(opener);
+    expect(screen.getByRole("dialog")).toContainElement(document.activeElement as HTMLElement);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // Not on <body>: a keyboard user would be sent back to the top of the page.
+    expect(opener).toHaveFocus();
+  });
 });
+
+/** A dialog opened by a button that is not a Radix trigger, like the one in the top bar. */
+function Opener() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Show shortcuts
+      </button>
+      <Dialog open={open} onOpenChange={setOpen} title="Keyboard shortcuts">
+        <p>body</p>
+      </Dialog>
+    </>
+  );
+}
 
 /** A scroll area that follows its newest line. */
 function Log({ lines, active = true }: { lines: number; active?: boolean }) {
