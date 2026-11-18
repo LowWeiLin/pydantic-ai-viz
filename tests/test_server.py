@@ -551,12 +551,26 @@ def test_the_default_host_does_not_warn(recwarn: pytest.WarningsRecorder) -> Non
 
 
 @pytest.mark.parametrize(
-    ("host", "url_host"), [("0.0.0.0", "127.0.0.1"), ("::", "127.0.0.1"), ("::1", "[::1]"), ("localhost", "localhost")]
+    ("host", "url_host"), [("0.0.0.0", "127.0.0.1"), ("::", "[::1]"), ("::1", "[::1]"), ("localhost", "localhost")]
 )
 def test_the_url_is_one_a_local_browser_can_open(monkeypatch: pytest.MonkeyPatch, host: str, url_host: str) -> None:
     server = ViewerServer(Session(instrument=False), host, 0)
     monkeypatch.setattr(ViewerServer, "port", 4321)
     assert server.url == f"http://{url_host}:4321"
+
+
+def test_a_server_on_the_ipv6_wildcard_answers_at_its_own_url() -> None:
+    # An IPv6 socket may or may not also take IPv4 connections (on Windows it does not), so the
+    # address reported for "::" has to be the IPv6 loopback.
+    try:
+        with pytest.warns(UserWarning, match="not a loopback address"):
+            session = serve(port=0, host="::", instrument=False)
+    except OSError:
+        pytest.skip("IPv6 is not available here")
+    with session:
+        assert session.url is not None
+        assert session.url.startswith("http://[::1]:")
+        assert get(session, "/api/v1/health").status == 200
 
 
 # -------------------------------------------------------------------- rerun

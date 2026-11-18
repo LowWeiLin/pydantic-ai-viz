@@ -288,7 +288,9 @@ class ViewerServer:
     @property
     def url(self) -> str:
         """Where a browser on this machine reaches the viewer."""
-        host = DEFAULT_HOST if self.host in _WILDCARD_HOSTS else self.host
+        # A wildcard is not an address to connect to. The loopback of the same family is: an IPv6
+        # socket does not take IPv4 connections everywhere (not on Windows), so "::" maps to "::1".
+        host = "::1" if self.host == "::" else DEFAULT_HOST if self.host in _WILDCARD_HOSTS else self.host
         return f"http://{f'[{host}]' if ':' in host else host}:{self.port}"
 
     def page(self) -> str:
