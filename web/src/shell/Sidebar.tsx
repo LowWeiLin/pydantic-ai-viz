@@ -196,7 +196,7 @@ export function Sidebar({ route }: { route: Route }) {
   return (
     <aside
       aria-label="Blueprints and runs"
-      className="flex w-60 shrink-0 flex-col border-line border-r bg-surface max-md:w-48"
+      className="flex w-60 shrink-0 flex-col border-line border-r bg-surface max-xl:w-52 max-md:w-48"
     >
       <BlueprintList route={route} />
       <div className="mx-3 mt-2 border-line border-t" />
@@ -210,7 +210,7 @@ export function SidebarSkeleton() {
   return (
     <aside
       aria-hidden="true"
-      className="flex w-60 shrink-0 flex-col gap-2 border-line border-r bg-surface p-3 max-md:w-48"
+      className="flex w-60 shrink-0 flex-col gap-2 border-line border-r bg-surface p-3 max-xl:w-52 max-md:w-48"
     >
       <Skeleton className="h-3 w-20" />
       <Skeleton className="h-6 w-full" />

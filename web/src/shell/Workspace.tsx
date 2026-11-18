@@ -2,7 +2,8 @@
  * The three-slot layout every data screen uses:
  *
  *   +--------------------------+------------+
- *   | main (canvas)            | inspector  |   inspector: resizable, collapsible
+ *   | main (canvas)            | inspector  |   inspector: resizable, collapsible; a drawer
+ *   |                          |            |   over the canvas in a window under 1024 px
  *   +--------------------------+------------+
  *   | dock (timeline)                       |   dock: run view only
  *   +---------------------------------------+
@@ -15,7 +16,8 @@ import { Tooltip } from "../ui/overlays";
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH = 720;
-const DEFAULT_WIDTH = 360;
+/** Narrower in a small window, where the canvas needs the room more. */
+const defaultWidth = (): number => (window.innerWidth < 1280 ? 300 : 360);
 const WIDTH_KEY = "pviz.inspector.width";
 const COLLAPSED_KEY = "pviz.inspector.collapsed";
 
@@ -50,9 +52,12 @@ export function Workspace({
 }) {
   const [width, setWidth] = useState(() => {
     const stored = Number(readStored(WIDTH_KEY));
-    return stored > 0 ? clampWidth(stored) : DEFAULT_WIDTH;
+    return stored > 0 ? clampWidth(stored) : defaultWidth();
   });
-  const [collapsed, setCollapsed] = useState(() => readStored(COLLAPSED_KEY) === "1");
+  // Below 1024 px the inspector is a drawer over the canvas, closed until asked for.
+  const [collapsed, setCollapsed] = useState(
+    () => (readStored(COLLAPSED_KEY) ?? (window.innerWidth < 1024 ? "1" : "0")) === "1",
+  );
   const drag = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const resize = (next: number): void => {
@@ -93,8 +98,8 @@ export function Workspace({
   const showInspector = inspector !== undefined && !collapsed;
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {/* Below 1024px the inspector moves under the main area instead of squeezing it. */}
-      <div className="flex min-h-0 flex-1 max-lg:flex-col">
+      {/* Below 1024px the inspector slides over the main area instead of squeezing it. */}
+      <div className="relative flex min-h-0 flex-1">
         <main className="relative min-h-0 min-w-0 flex-1 overflow-auto">
           {main}
           {inspector !== undefined && (
@@ -135,7 +140,7 @@ export function Workspace({
             <aside
               aria-label={inspectorLabel}
               style={{ width }}
-              className="flex min-h-0 shrink-0 animate-fade-in flex-col overflow-hidden bg-surface max-lg:h-[44%] max-lg:w-full! max-lg:border-line max-lg:border-t"
+              className="flex min-h-0 shrink-0 animate-fade-in flex-col overflow-hidden bg-surface max-lg:absolute max-lg:top-11 max-lg:right-0 max-lg:bottom-0 max-lg:z-20 max-lg:w-[min(360px,90%)]! max-lg:border-line max-lg:border-t max-lg:border-l max-lg:shadow-float"
             >
               {inspector}
             </aside>
@@ -145,7 +150,7 @@ export function Workspace({
       {dock !== undefined && (
         <section
           aria-label="Timeline"
-          className="flex h-[34vh] max-h-[420px] min-h-40 shrink-0 flex-col border-line border-t bg-surface"
+          className="flex h-[31vh] max-h-[420px] min-h-40 shrink-0 flex-col border-line border-t bg-surface"
         >
           {dock}
         </section>

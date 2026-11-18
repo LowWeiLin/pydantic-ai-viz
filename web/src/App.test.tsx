@@ -545,10 +545,11 @@ describe("shell behaviour", () => {
       </TooltipProvider>,
     );
     const separator = screen.getByRole("separator", { name: "Resize inspector" });
-    expect(separator).toHaveAttribute("aria-valuenow", "360");
+    // jsdom's window is 1024 px wide: the inspector starts at its small-window width.
+    expect(separator).toHaveAttribute("aria-valuenow", "300");
     separator.focus();
     await user.keyboard("{ArrowLeft}");
-    expect(separator).toHaveAttribute("aria-valuenow", "376");
+    expect(separator).toHaveAttribute("aria-valuenow", "316");
     await user.keyboard("{End}");
     expect(separator).toHaveAttribute("aria-valuenow", "280");
     expect(window.localStorage.getItem("pviz.inspector.width")).toBe("280");
