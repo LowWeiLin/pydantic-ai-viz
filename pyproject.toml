@@ -99,7 +99,9 @@ convention = "google"
 "src/pydantic_ai_viz/demos/**" = ["D"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts", "examples"]
+# with_logfire.py imports logfire, which is not a dependency of this project.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "examples/with_logfire.py"]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
 strict = ["src"]

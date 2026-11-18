@@ -23,7 +23,7 @@ def render() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description="Write schema/pviz.schema.json from the wire models.")
     parser.add_argument("--check", action="store_true", help="do not write; fail if the committed file differs")
     args = parser.parse_args(argv)
 
