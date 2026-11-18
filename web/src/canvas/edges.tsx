@@ -3,7 +3,8 @@
  * - a moving dash: the target is running now;
  * - dashed delegation: found in code only, or not yet reached in a replay; solid: seen in a
  *   run (the label says which).
- * Loops and delegation cycles are drawn as an arc underneath the nodes, not through them.
+ * A delegation runs down a lane beside the tools into the sub-agent's row. Loops and delegation
+ * cycles are drawn as an arc underneath the nodes, not through them.
  */
 import {
   BaseEdge,
@@ -25,6 +26,8 @@ export type FlowEdgeData = {
   label: string | null;
   /** Dashed when the edge is a guess from code rather than something a run showed. */
   dashed: boolean;
+  /** Delegation to a row underneath: the x of the vertical lane the edge runs down. */
+  lane?: number | null;
 };
 
 /** How far below the lower endpoint a loop arc dips. */
@@ -42,6 +45,38 @@ export function arcPath(
   // The curve's midpoint (t = 0.5) of a cubic with both control points at `low`.
   const labelY = (sourceY + targetY) / 8 + (low * 6) / 8;
   return [path, (sourceX + targetX) / 2, labelY];
+}
+
+const CORNER = 8;
+/** How far above the card a lane that is not over its inlet turns towards it. */
+const JOG = 12;
+/** How far above the card the label sits on the lane. */
+const LANE_LABEL = 26;
+
+/**
+ * A delegation to a row underneath: right out of the tool, down a lane, into the top of the
+ * sub-agent's card. A lane that is not over the card's inlet jogs across just above the card.
+ */
+export function lanePath(
+  sourceX: number,
+  sourceY: number,
+  targetX: number,
+  targetY: number,
+  lane: number,
+): [path: string, labelX: number, labelY: number] {
+  const r = CORNER;
+  const down = `M ${sourceX},${sourceY} H ${lane - r} Q ${lane},${sourceY} ${lane},${sourceY + r}`;
+  // The measured inlet can be a pixel off the lane the layout computed; a jog needs room for
+  // two corners anyway.
+  if (Math.abs(lane - targetX) < 3 * r) {
+    return [`${down} V ${targetY}`, lane, targetY - LANE_LABEL + 4];
+  }
+  const jog = targetY - JOG;
+  const side = lane > targetX ? -1 : 1;
+  const path =
+    `${down} V ${jog - r} Q ${lane},${jog} ${lane + side * r},${jog} ` +
+    `H ${targetX - side * r} Q ${targetX},${jog} ${targetX},${jog + r} V ${targetY}`;
+  return [path, lane, targetY - LANE_LABEL];
 }
 
 /** The arrowhead for an edge in a given state. xyflow needs the colour as a string. */
@@ -89,16 +124,19 @@ function PathEdge(props: EdgeProps<Edge<FlowEdgeData>>) {
   const { data } = props;
   const state = data?.state ?? "idle";
   const tone = data?.tone ?? "var(--accent)";
+  const lane = data?.lane ?? null;
   const [path, labelX, labelY] = data?.back
     ? arcPath(props.sourceX, props.sourceY, props.targetX, props.targetY)
-    : getBezierPath({
-        sourceX: props.sourceX,
-        sourceY: props.sourceY,
-        targetX: props.targetX,
-        targetY: props.targetY,
-        sourcePosition: props.sourcePosition,
-        targetPosition: props.targetPosition,
-      });
+    : lane !== null
+      ? lanePath(props.sourceX, props.sourceY, props.targetX, props.targetY, lane)
+      : getBezierPath({
+          sourceX: props.sourceX,
+          sourceY: props.sourceY,
+          targetX: props.targetX,
+          targetY: props.targetY,
+          sourcePosition: props.sourcePosition,
+          targetPosition: props.targetPosition,
+        });
   return (
     <>
       <BaseEdge

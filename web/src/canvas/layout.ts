@@ -1,7 +1,8 @@
 /**
- * Canvas layout: pure functions from a canvas model to boxes and edges. dagre ranks the blocks
- * left to right; rows inside a toolset are stacked here. Every node has a fixed size that
- * follows from its content, so the result is deterministic and needs no DOM measurement.
+ * Canvas layout: pure functions from a canvas model to boxes and edges. The agent canvas is a
+ * staircase of agent rows computed here; dagre ranks a graph's nodes left to right. Every node
+ * has a fixed size that follows from its content, so the result is deterministic and needs no
+ * DOM measurement.
  *
  * Layout depends on structure only (which nodes and edges exist), never on run activity:
  * `agentLayoutKey` and `graphLayoutKey` say when it has to be computed again.
@@ -16,18 +17,35 @@ export const SIZE = {
   agentHeight: 104,
   /** Extra height for a two-line description. */
   agentDescription: 40,
-  groupWidth: 208,
+  groupWidth: 224,
   groupHeader: 30,
   groupPadding: 8,
-  rowWidth: 192,
+  rowWidth: 208,
   rowHeight: 34,
   rowGap: 6,
-  outputWidth: 208,
+  outputWidth: 224,
   outputHeight: 58,
 } as const;
 
 const RANK_GAP = 64;
 const NODE_GAP = 24;
+const GRAPH_RANK_GAP = 40;
+/** Between the blocks of one agent's column, and between one agent's row and the next. */
+const COLUMN_GAP = 12;
+const CLUSTER_GAP = 44;
+/** Where a delegation edge enters a sub-agent's card, from the card's left edge. */
+export const DELEGATION_INLET = 212;
+/**
+ * How far right of its parent a sub-agent's card starts: far enough that the lane down to its
+ * inlet runs 20 px clear of the parent's column.
+ */
+const INDENT = SIZE.agentWidth + RANK_GAP + SIZE.groupWidth + 20 - DELEGATION_INLET;
+/**
+ * Lanes to an agent's second and later sub-agents run through the gap between the cards and
+ * the columns of the rows above: this far right of the card, and this far apart.
+ */
+const LANE_OFFSET = 14;
+const LANE_STEP = 10;
 
 export type AgentNodeKind = "agent" | "toolset" | "tool" | "placeholder" | "output";
 
@@ -57,8 +75,16 @@ export type LayoutEdge = {
   ref: string;
   /** For delegation edges: the agent delegated to. */
   toAgentId: string | null;
-  /** The target sits left of the source (a delegation cycle): drawn as an arc underneath. */
+  /**
+   * Delegation only: the target is not a row under this agent (a cycle, or an agent already
+   * placed under another one), so the edge is drawn as an arc instead of a lane.
+   */
   back: boolean;
+  /**
+   * Delegation that is not `back`: the x of the vertical lane the edge runs down. When it is
+   * not the x where the edge enters the card, the edge jogs left just above the card.
+   */
+  lane: number | null;
 };
 
 export type AgentLayout = { nodes: LayoutNode[]; edges: LayoutEdge[] };
@@ -162,7 +188,8 @@ function newGraph() {
   g.setGraph({
     rankdir: "LR",
     nodesep: NODE_GAP,
-    ranksep: RANK_GAP,
+    // A chain of steps is wide and the canvas is not: just enough room for an arrow.
+    ranksep: GRAPH_RANK_GAP,
     marginx: 0,
     marginy: 0,
   });
@@ -170,46 +197,81 @@ function newGraph() {
   return g;
 }
 
+/** Stacks an agent's column (toolsets, then its output) and returns its height. */
+function clusterHeight(agent: CanvasAgent): number {
+  const groups = toolGroups(agent);
+  const column =
+    groups.reduce(
+      (sum, group) => sum + groupHeight(group.placeholder ? 1 : group.tools.length) + COLUMN_GAP,
+      0,
+    ) + SIZE.outputHeight;
+  return Math.max(agentHeight(agent), column);
+}
+
+/**
+ * Lays the delegation closure out as a staircase, with no ranking pass:
+ *
+ *   [agent] -> [toolsets, output]
+ *                     |  (from the delegating tool, down a lane beside the column)
+ *                     v
+ *              [sub-agent] -> [toolsets, output]
+ *
+ * Each agent is a row: its card, then one column with its toolsets and its output. An agent it
+ * delegates to goes in a row underneath, one step to the right. A side-by-side chain would be
+ * twice as wide, and the canvas is wider than it is tall only until the timeline dock opens.
+ *
+ * The rows are a depth-first walk from the subject, so each agent appears once, under the
+ * first agent that reaches it, and all sub-agents of one agent share an indent. A delegation to an agent that is already placed somewhere else
+ * (a cycle, or a second path) is marked `back` and drawn as an arc.
+ */
 export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
-  const g = newGraph();
   const nodes: LayoutNode[] = [];
   const edges: LayoutEdge[] = [];
-  /** Tool node id by "agent tool" for delegation sources. */
-  const toolNodes = new Map<string, { id: string; group: string }>();
-  const present = new Set(model.agents.map((agent) => agent.blueprint.id));
+  const agents = new Map(model.agents.map((agent) => [agent.blueprint.id, agent]));
+  const shown = model.delegations.filter(
+    (d) => agents.has(d.fromAgentId) && agents.has(d.toAgentId),
+  );
 
-  for (const agent of model.agents) {
+  /** The agent each agent sits under; the subject and unreachable agents have none. */
+  const parent = new Map<string, string | null>();
+  /** Lane x of the delegation edges into each placed sub-agent. */
+  const lanes = new Map<string, number>();
+  let cursor = 0;
+
+  const place = (agent: CanvasAgent, x: number, under: string | null): void => {
     const agentId = agent.blueprint.id;
+    parent.set(agentId, under);
+    const top = cursor;
     const card = agentNodeId(agentId);
-    g.setNode(card, { width: SIZE.agentWidth, height: agentHeight(agent) });
     nodes.push({
       id: card,
       kind: "agent",
       agentId,
       ref: "",
-      x: 0,
-      y: 0,
+      x,
+      y: top,
       width: SIZE.agentWidth,
       height: agentHeight(agent),
       parentId: null,
     });
 
+    const columnX = x + SIZE.agentWidth + RANK_GAP;
+    let y = top;
     for (const group of toolGroups(agent)) {
       const box = toolsetNodeId(agentId, group.toolsetId);
       const rows = group.placeholder ? 1 : group.tools.length;
-      g.setNode(box, { width: SIZE.groupWidth, height: groupHeight(rows) });
-      g.setEdge(card, box, { weight: 2 }, box);
       nodes.push({
         id: box,
         kind: "toolset",
         agentId,
         ref: group.toolsetId,
-        x: 0,
-        y: 0,
+        x: columnX,
+        y,
         width: SIZE.groupWidth,
         height: groupHeight(rows),
         parentId: null,
       });
+      y += groupHeight(rows) + COLUMN_GAP;
       const row = (index: number) => ({
         x: (SIZE.groupWidth - SIZE.rowWidth) / 2,
         y: SIZE.groupHeader + index * (SIZE.rowHeight + SIZE.rowGap),
@@ -228,7 +290,6 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
       }
       for (const [index, name] of group.tools.entries()) {
         const id = toolNodeId(agentId, name);
-        toolNodes.set(`${agentId} ${name}`, { id, group: box });
         nodes.push({ id, kind: "tool", agentId, ref: name, ...row(index) });
         edges.push({
           id: `flow:${agentId}:${name}`,
@@ -239,20 +300,19 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
           ref: name,
           toAgentId: null,
           back: false,
+          lane: null,
         });
       }
     }
 
     const output = outputNodeId(agentId);
-    g.setNode(output, { width: SIZE.outputWidth, height: SIZE.outputHeight });
-    g.setEdge(card, output, { weight: 2 }, output);
     nodes.push({
       id: output,
       kind: "output",
       agentId,
       ref: "",
-      x: 0,
-      y: 0,
+      x: columnX,
+      y,
       width: SIZE.outputWidth,
       height: SIZE.outputHeight,
       parentId: null,
@@ -266,53 +326,51 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
       ref: "",
       toAgentId: null,
       back: false,
+      lane: null,
     });
+    cursor = top + clusterHeight(agent) + CLUSTER_GAP;
+
+    // Sub-agents share one indent. The lane to the first runs straight into its card; the
+    // lanes to the others pass the rows above between their cards and columns.
+    const childX = x + INDENT;
+    let index = 0;
+    for (const delegation of shown) {
+      if (delegation.fromAgentId !== agentId || parent.has(delegation.toAgentId)) continue;
+      const child = agents.get(delegation.toAgentId);
+      if (!child) continue;
+      lanes.set(
+        child.blueprint.id,
+        index === 0
+          ? childX + DELEGATION_INLET
+          : childX + SIZE.agentWidth + LANE_OFFSET + (index - 1) * LANE_STEP,
+      );
+      index += 1;
+      place(child, childX, agentId);
+    }
+  };
+
+  const subject = agents.get(model.subjectId);
+  if (subject) place(subject, 0, null);
+  for (const agent of model.agents) {
+    if (!parent.has(agent.blueprint.id)) place(agent, 0, null);
   }
 
-  const shown = model.delegations.filter((d) => present.has(d.toAgentId));
-  const cycles = backEdges(
-    [...present],
-    shown.map((d) => [d.fromAgentId, d.toAgentId] as const),
-    [model.subjectId],
-  );
-  for (const [index, delegation] of shown.entries()) {
-    const back = cycles.has(index);
-    const tool = toolNodes.get(`${delegation.fromAgentId} ${delegation.toolName}`);
-    const target = agentNodeId(delegation.toAgentId);
-    const id = `delegation:${delegation.fromAgentId}:${delegation.toolName}:${delegation.toAgentId}`;
-    // dagre ranks the toolset box; the drawn edge starts at the tool row inside it.
-    // An edge that closes a cycle is left out of the ranking and drawn as an arc underneath.
-    if (!back) g.setEdge(tool?.group ?? agentNodeId(delegation.fromAgentId), target, {}, id);
+  const hasTool = new Set(nodes.filter((node) => node.kind === "tool").map((node) => node.id));
+  for (const delegation of shown) {
+    const tool = toolNodeId(delegation.fromAgentId, delegation.toolName);
+    const back = parent.get(delegation.toAgentId) !== delegation.fromAgentId;
     edges.push({
-      id,
+      id: `delegation:${delegation.fromAgentId}:${delegation.toolName}:${delegation.toAgentId}`,
       kind: "delegation",
-      source: tool?.id ?? agentNodeId(delegation.fromAgentId),
-      target,
+      // A delegation through a tool the canvas does not show starts at the agent card.
+      source: hasTool.has(tool) ? tool : agentNodeId(delegation.fromAgentId),
+      target: agentNodeId(delegation.toAgentId),
       agentId: delegation.fromAgentId,
       ref: delegation.toolName,
       toAgentId: delegation.toAgentId,
       back,
+      lane: back ? null : (lanes.get(delegation.toAgentId) ?? null),
     });
-  }
-
-  dagre.layout(g);
-
-  const left = new Map<string, number>();
-  for (const node of nodes) {
-    if (node.parentId !== null) continue;
-    const placed = g.node(node.id);
-    // dagre reports centres; the canvas wants top-left corners.
-    node.x = Math.round((placed?.x ?? 0) - node.width / 2);
-    node.y = Math.round((placed?.y ?? 0) - node.height / 2);
-    left.set(node.id, node.x);
-  }
-  for (const node of nodes) {
-    if (node.parentId !== null) left.set(node.id, (left.get(node.parentId) ?? 0) + node.x);
-  }
-  // Two sibling agents can also delegate "leftwards" without closing a cycle.
-  for (const edge of edges) {
-    if (edge.kind !== "delegation" || edge.back) continue;
-    edge.back = (left.get(edge.target) ?? 0) <= (left.get(edge.source) ?? 0);
   }
   return { nodes, edges };
 }
@@ -378,7 +436,7 @@ export function graphNodeSize(node: {
     return { width: clamp(text * 9 + 84, 132, 260), height: 88 };
   }
   const longest = Math.max(label.length, label === node.id ? 0 : node.id.length * 0.85);
-  return { width: clamp(Math.round(longest * 8) + 56, 136, 240), height: 54 };
+  return { width: clamp(Math.round(longest * 8) + 44, 116, 240), height: 54 };
 }
 
 export function graphLayoutKey(graph: GraphBlueprint, extraNodeIds: readonly string[]): string {

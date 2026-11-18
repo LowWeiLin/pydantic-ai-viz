@@ -6,6 +6,7 @@ import type { AgentBlueprint, Event, GraphBlueprint } from "../wire";
 import {
   agentLayoutKey,
   backEdges,
+  DELEGATION_INLET,
   graphLayoutKey,
   graphNodeLabel,
   graphNodeSize,
@@ -145,16 +146,83 @@ describe("layoutAgentCanvas", () => {
     expect(layoutAgentCanvas(model)).toEqual(layout);
   });
 
-  test("reads left to right: agent, its tools and output, then the agent it delegates to", () => {
+  test("a staircase: tools and output right of the agent, the sub-agent's row underneath", () => {
     const triage = node(agentNodeId("a1"));
     const refunds = node(agentNodeId("a2"));
     const output = node(outputNodeId("a1"));
     const escalate = node(toolNodeId("a1", "escalate_refund"));
     const group = node(escalate.parentId ?? "");
+    expect(triage).toMatchObject({ x: 0, y: 0 });
     expect(output.x).toBeGreaterThanOrEqual(triage.x + triage.width);
-    expect(group.x).toBeGreaterThanOrEqual(triage.x + triage.width);
-    expect(refunds.x).toBeGreaterThanOrEqual(group.x + group.width);
+    expect(group.x).toBe(output.x);
+    // The output closes the column, under the toolsets.
+    expect(output.y).toBeGreaterThanOrEqual(group.y + group.height);
+    // The sub-agent: below everything of triage, one step right, with its own column.
+    expect(refunds.y).toBeGreaterThan(output.y + output.height);
+    expect(refunds.x).toBeGreaterThan(triage.x);
     expect(node(outputNodeId("a2")).x).toBeGreaterThanOrEqual(refunds.x + refunds.width);
+    // Half the width of a side-by-side chain: the picture fits a canvas at a readable zoom.
+    const right = Math.max(...layout.nodes.filter((n) => !n.parentId).map((n) => n.x + n.width));
+    expect(right).toBeLessThanOrEqual(880);
+  });
+
+  test("the delegation lane runs clear of the column and into the sub-agent's inlet", () => {
+    const refunds = node(agentNodeId("a2"));
+    const group = node(node(toolNodeId("a1", "escalate_refund")).parentId ?? "");
+    const delegation = layout.edges.find((edge) => edge.kind === "delegation");
+    expect(delegation?.lane).toBe(refunds.x + DELEGATION_INLET);
+    expect(delegation?.lane).toBeGreaterThan(group.x + group.width);
+    expect(layout.edges.filter((e) => e.kind !== "delegation").every((e) => e.lane === null)).toBe(
+      true,
+    );
+  });
+
+  test("several sub-agents share an indent; later lanes pass between cards and columns", () => {
+    const names = ["b", "c", "d"];
+    const hub = agentBlueprint({
+      id: "hub",
+      toolsets: [toolset("ts0")],
+      tools: [...names.map((name) => tool(`ask_${name}`)), tool("ask_b_again")],
+      delegates: [
+        ...names.map((name) => ({
+          tool_name: `ask_${name}`,
+          agent_id: name,
+          evidence: "static" as const,
+        })),
+        { tool_name: "ask_b_again", agent_id: "b", evidence: "static" as const },
+      ],
+    });
+    const subs = names.map((id) =>
+      agentBlueprint({ id, toolsets: [toolset("ts0")], tools: [tool("work")] }),
+    );
+    const fan = canvasModel(stateWith(hub, ...subs), "hub", null);
+    if (!fan) throw new Error("expected a model");
+    const result = layoutAgentCanvas(fan);
+    const blocks = result.nodes.filter((n) => n.parentId === null);
+    expectNoOverlap(blocks);
+    const card = (id: string) => blocks.find((n) => n.id === agentNodeId(id)) as LayoutNode;
+    expect(new Set(names.map((id) => card(id).x)).size).toBe(1);
+    expect(names.map((id) => card(id).y)).toEqual(
+      [...names.map((id) => card(id).y)].sort((a, b) => a - b),
+    );
+
+    const delegations = result.edges.filter((edge) => edge.kind === "delegation");
+    expect(delegations.every((edge) => !edge.back)).toBe(true);
+    const lane = (to: string) => delegations.filter((e) => e.toAgentId === to).map((e) => e.lane);
+    // Two tools that reach the same agent share its lane.
+    expect(lane("b")).toEqual([card("b").x + DELEGATION_INLET, card("b").x + DELEGATION_INLET]);
+    // No lane runs through a block it passes on the way down.
+    for (const [index, id] of names.entries()) {
+      const x = lane(id)[0] as number;
+      for (const above of blocks) {
+        if (above.agentId === "hub" || above.id === agentNodeId(id)) continue;
+        if (above.y >= card(id).y) continue;
+        expect(x <= above.x || x >= above.x + above.width, `${id} lane through ${above.id}`).toBe(
+          true,
+        );
+      }
+      if (index > 0) expect(x).toBeGreaterThan(lane(names[index - 1] as string)[0] as number);
+    }
   });
 
   test("no two blocks overlap, and tool rows stay inside their toolset box", () => {
@@ -183,7 +251,7 @@ describe("layoutAgentCanvas", () => {
     });
   });
 
-  test("a delegation cycle keeps the subject on the left and draws the way back as an arc", () => {
+  test("a delegation cycle keeps the subject on top and draws the way back as an arc", () => {
     const a = agentBlueprint({
       id: "a1",
       toolsets: [toolset("ts0")],
@@ -201,8 +269,9 @@ describe("layoutAgentCanvas", () => {
       const cyclic = canvasModel(stateWith(a, b), subject, null);
       if (!cyclic) throw new Error("expected a model");
       const result = layoutAgentCanvas(cyclic);
-      const x = (id: string) => result.nodes.find((n) => n.id === agentNodeId(id))?.x ?? 0;
-      expect(x(subject)).toBeLessThan(x(other));
+      const at = (id: string) => result.nodes.find((n) => n.id === agentNodeId(id));
+      expect(at(subject)).toMatchObject({ x: 0, y: 0 });
+      expect(at(other)?.y).toBeGreaterThan(0);
       const back = result.edges.filter((edge) => edge.kind === "delegation").map((e) => e.back);
       expect(back).toEqual([false, true]);
       expectNoOverlap(result.nodes.filter((n) => n.parentId === null));

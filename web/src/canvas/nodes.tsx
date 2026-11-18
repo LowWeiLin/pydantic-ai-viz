@@ -11,7 +11,7 @@ import { Badge, Chip, StatusDot } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
 import { cx, statusMeta, toneClass } from "../ui/tone";
 import type { Toolset } from "../wire";
-import { graphNodeLabel, nodeKind } from "./layout";
+import { DELEGATION_INLET, graphNodeLabel, nodeKind } from "./layout";
 import type { CanvasTarget } from "./targets";
 
 /** How nodes report clicks. Provided by the canvas frame. */
@@ -146,6 +146,14 @@ export function AgentNode({ data }: NodeProps<Node<AgentNodeData, "agent">>) {
       )}
     >
       <Ports loop />
+      {/* Where a delegation from the row above comes in. */}
+      <Handle
+        type="target"
+        position={Position.Top}
+        id="down"
+        isConnectable={false}
+        style={{ left: DELEGATION_INLET }}
+      />
       <Cover
         label={`Agent ${bp.label}${activityPhrase(agent.run, overlay)}`}
         target={{ kind: "agent", agentId: bp.id }}

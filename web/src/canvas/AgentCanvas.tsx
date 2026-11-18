@@ -159,9 +159,9 @@ export function buildAgentFlow(
       source: edge.source,
       target: edge.target,
       sourceHandle: edge.back ? "loop-out" : "out",
-      targetHandle: edge.back ? "loop-in" : "in",
+      targetHandle: edge.back ? "loop-in" : edge.lane !== null ? "down" : "in",
       ...(edge.kind === "flow" ? {} : { markerEnd: edgeMarker(state, tone) }),
-      data: { state, tone, back: edge.back, label, dashed },
+      data: { state, tone, back: edge.back, label, dashed, lane: edge.lane },
     });
   }
   return { nodes, edges };

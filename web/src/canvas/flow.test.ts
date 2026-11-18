@@ -4,7 +4,7 @@ import { canvasModel, graphCanvasModel, type RunView, runs, runView } from "../d
 import { fixtureState } from "../test/factory";
 import type { Span } from "../wire";
 import { buildAgentFlow } from "./AgentCanvas";
-import { arcPath, type FlowEdgeData } from "./edges";
+import { arcPath, type FlowEdgeData, lanePath } from "./edges";
 import { buildGraphFlow } from "./GraphCanvas";
 import { activityPhrase, graphNodeState } from "./nodes";
 import { agentModelSignature, graphModelSignature } from "./signature";
@@ -68,6 +68,12 @@ describe("agent canvas flow", () => {
     const { edges } = agentFlow(null);
     const seen = edgeData(edges, "delegation:a1:escalate_refund:a2");
     expect(seen).toMatchObject({ dashed: false, label: "in a run", state: "done" });
+    // It runs down a lane into the top of the sub-agent's card.
+    expect(seen.lane).toBeGreaterThan(0);
+    expect(edges.find((edge) => edge.id === "delegation:a1:escalate_refund:a2")).toMatchObject({
+      sourceHandle: "out",
+      targetHandle: "down",
+    });
 
     const staticOnly = structuredClone(sample);
     const delegate = staticOnly.agents.a1?.delegates[0];
@@ -272,5 +278,21 @@ describe("words and paths", () => {
     expect(labelX).toBe(200);
     expect(labelY).toBeGreaterThan(120);
     expect(labelY).toBeLessThan(192);
+  });
+
+  test("a delegation lane: straight into the inlet, or a jog just above the card", () => {
+    const [straight, x, y] = lanePath(500, 100, 532, 400, 532);
+    expect(straight).toBe("M 500,100 H 524 Q 532,100 532,108 V 400");
+    expect([x, y]).toEqual([532, 378]);
+    // The inlet React Flow measures can be a pixel off: still one straight lane.
+    expect(lanePath(500, 100, 533.2, 400, 532)[0]).toBe(straight);
+
+    const [jogged, labelX, labelY] = lanePath(500, 100, 532, 400, 574);
+    expect(jogged).toBe(
+      "M 500,100 H 566 Q 574,100 574,108 V 380 Q 574,388 566,388 H 540 Q 532,388 532,396 V 400",
+    );
+    // The label rides the lane, above the jog.
+    expect(labelX).toBe(574);
+    expect(labelY).toBeLessThan(388);
   });
 });
