@@ -19,6 +19,7 @@ from pydantic_ai_viz._analyze import TargetError
 from pydantic_ai_viz._analyze._locate import split_target
 from pydantic_ai_viz._analyze._resolve import Project, Resolver
 from pydantic_ai_viz._analyze._source import Module, parse_module
+from pydantic_ai_viz._models import SourceLocation
 
 TEAM = """
 from pydantic_ai import Agent, RunContext
@@ -73,6 +74,95 @@ def test_several_files_are_analysed_together_and_named_from_their_common_directo
         ("a3", "bystander", "agents/team.py"),
         ("a4", "solo", "other.py"),
     ]
+
+
+def test_files_given_together_are_linked_through_their_imports(tmp_path: Path) -> None:
+    write(tmp_path, "app/__init__.py", "")
+    write(
+        tmp_path,
+        "app/models.py",
+        """
+        from pydantic import BaseModel, Field
+
+        class Verdict(BaseModel):
+            approved: bool
+            reason: str = Field(description="Why.")
+        """,
+    )
+    write(
+        tmp_path,
+        "app/helpers.py",
+        """
+        from pydantic_ai import Agent
+        from .models import Verdict
+
+        reviewer = Agent("openai:gpt-5.2", name="reviewer", output_type=Verdict)
+
+        def word_count(text: str) -> int:
+            \"\"\"Count the words of a text.\"\"\"
+            return len(text.split())
+        """,
+    )
+    write(
+        tmp_path,
+        "app/main.py",
+        """
+        from pydantic_ai import Agent, RunContext
+        from app import helpers
+        from app.helpers import reviewer as second_opinion, word_count
+        from app.models import Verdict
+        from not_given.elsewhere import Mystery
+
+        writer = Agent("openai:gpt-5.2", name="writer", output_type=Verdict | Mystery, tools=[word_count])
+
+        @writer.tool
+        async def ask_reviewer(ctx: RunContext[None], draft: str) -> Verdict:
+            return (await second_opinion.run(draft)).output
+
+        @writer.tool_plain
+        def ask_again(draft: str) -> str:
+            return helpers.reviewer.run_sync(draft).output.reason
+        """,
+    )
+    paths = [tmp_path / "app" / name for name in ("main.py", "helpers.py", "models.py")]
+    found = analyze(*paths)
+    assert found.notices == []
+    writer, reviewer = found.agents
+    assert (writer.location, reviewer.location) == (
+        SourceLocation(file="main.py", line=8),
+        SourceLocation(file="helpers.py", line=5),
+    )
+    # A tool defined in another file, with its docstring and where it is.
+    counted = tool(writer, "word_count")
+    assert (counted.description, counted.function, counted.location) == (
+        "Count the words of a text.",
+        "app.helpers.word_count",
+        SourceLocation(file="helpers.py", line=7),
+    )
+    # Delegation to an agent imported under another name, and through the module.
+    assert [(d.tool_name, d.agent_id) for d in writer.delegates] == [
+        ("ask_reviewer", reviewer.id),
+        ("ask_again", reviewer.id),
+    ]
+    # The output model is resolved across the files; the one from a file that was not given is not.
+    assert reviewer.output.location == SourceLocation(file="models.py", line=4)
+    assert reviewer.output.json_schema == {
+        "properties": {"approved": {"type": "boolean"}, "reason": {"description": "Why.", "type": "string"}},
+        "required": ["approved", "reason"],
+        "title": "Verdict",
+        "type": "object",
+    }
+    assert writer.warnings == [
+        "the output schema is incomplete: `Mystery` could not be resolved from the analysed source"
+    ]
+
+    # Alone, the file still shows its agent; what the other files would have said is named as missing.
+    (alone,) = analyze(paths[0]).agents
+    assert (alone.name, alone.delegates) == ("writer", [])
+    assert [(t.name, t.function, t.parameters_schema) for t in alone.tools if t.name == "word_count"] == [
+        ("word_count", "app.helpers.word_count", None)
+    ]
+    assert len(alone.warnings) == 2
 
 
 def test_a_name_after_the_path_selects_one_agent_and_the_agents_it_delegates_to(tmp_path: Path) -> None:
