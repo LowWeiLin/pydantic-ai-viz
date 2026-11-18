@@ -47,8 +47,9 @@ export function pause(playback: Playback, bounds: Bounds): Playback {
   return { ...playback, mode: "paused", t: playback.mode === "live" ? bounds.end : playback.t };
 }
 
+/** Space bar: anything that moves (a replay, or a live view) pauses; a paused clock plays. */
 export function togglePlay(playback: Playback, bounds: Bounds): Playback {
-  return playback.mode === "playing" ? pause(playback, bounds) : play(playback, bounds);
+  return playback.mode === "paused" ? play(playback, bounds) : pause(playback, bounds);
 }
 
 /** Jumps to a time and holds there. */

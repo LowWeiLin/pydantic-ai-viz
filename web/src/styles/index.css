@@ -184,6 +184,15 @@
     background-size: 20px 20px;
   }
 
+  /* A waterfall bar for a span that is still running: striped, so it differs without colour. */
+  .pviz-bar-running {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      transparent 0 4px,
+      color-mix(in srgb, var(--surface) 55%, transparent) 4px 8px
+    );
+  }
+
   .skeleton {
     border-radius: 6px;
     background: linear-gradient(

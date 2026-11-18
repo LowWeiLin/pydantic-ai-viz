@@ -15,7 +15,7 @@ import { Tooltip } from "../ui/overlays";
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH = 720;
-const DEFAULT_WIDTH = 380;
+const DEFAULT_WIDTH = 360;
 const WIDTH_KEY = "pviz.inspector.width";
 const COLLAPSED_KEY = "pviz.inspector.collapsed";
 

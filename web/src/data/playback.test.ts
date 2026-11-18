@@ -57,6 +57,12 @@ describe("playback", () => {
     expect(togglePlay(at(1500), bounds).mode).toBe("playing");
   });
 
+  test("the space bar pauses a live view where it stands, and plays it again from the start", () => {
+    const frozen = togglePlay(livePlayback, bounds);
+    expect(frozen).toEqual(at(2000));
+    expect(togglePlay(frozen, bounds)).toEqual(at(1000, "playing"));
+  });
+
   test("seek clamps into the range and pauses", () => {
     expect(seek(at(1500, "playing"), 500, bounds)).toEqual(at(1000));
     expect(seek(livePlayback, 99999, bounds)).toEqual(at(2000));

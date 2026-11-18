@@ -9,7 +9,17 @@ import { useViewer } from "./data/store";
 import { ErrorBoundary } from "./shell/ErrorBoundary";
 import { recordingHref } from "./shell/Gallery";
 import { Workspace } from "./shell/Workspace";
-import { fixture, fixtureText, log } from "./test/factory";
+import {
+  agentBlueprint,
+  agentRun,
+  ended,
+  fixture,
+  fixtureText,
+  log,
+  modelRequest,
+  started,
+  TRACE,
+} from "./test/factory";
 import { TooltipProvider } from "./ui/overlays";
 
 const embedded = (name: string): BootPlan => ({ kind: "embedded", events: fixture(name) });
@@ -21,8 +31,44 @@ function stubFetch(handler: (url: string) => Response = () => new Response("", {
   return mock;
 }
 
+type FakeSource = { onopen?: () => void; onerror?: () => void };
+
+/** Replaces EventSource with one the test drives; returns the instances created. */
+function stubEventSource(): FakeSource[] {
+  const sources: FakeSource[] = [];
+  class FakeEventSource {
+    static readonly CLOSED = 2;
+    readyState = 1;
+    onopen?: () => void;
+    onerror?: () => void;
+    onmessage?: (m: { data: string }) => void;
+    constructor() {
+      sources.push(this);
+    }
+    close() {}
+  }
+  vi.stubGlobal("EventSource", FakeEventSource);
+  return sources;
+}
+
+const livePlan: BootPlan = {
+  kind: "live",
+  eventsUrl: "api/v1/events",
+  exportHtmlUrl: "api/v1/export.html",
+  exportJsonlUrl: "api/v1/export.jsonl",
+  rerunUrl: "api/v1/rerun",
+};
+
 function Broken(): never {
   throw new TypeError("span.data is undefined");
+}
+
+/** Opens a run by its hash and waits for its screen (the route change is asynchronous). */
+async function openRun(traceId: string | undefined, name: string): Promise<void> {
+  act(() => {
+    window.location.hash = `#/runs/${traceId}`;
+  });
+  await screen.findByRole("heading", { level: 2, name });
 }
 
 const skipToEnd = async (user: ReturnType<typeof userEvent.setup>) =>
@@ -98,34 +144,8 @@ describe("boot modes and states", () => {
   });
 
   test("live mode: connecting skeleton, then waiting for a run, then reconnecting", async () => {
-    const sources: {
-      onopen?: () => void;
-      onerror?: () => void;
-      onmessage?: (m: { data: string }) => void;
-    }[] = [];
-    class FakeEventSource {
-      static readonly CLOSED = 2;
-      readyState = 1;
-      onopen?: () => void;
-      onerror?: () => void;
-      onmessage?: (m: { data: string }) => void;
-      constructor() {
-        sources.push(this);
-      }
-      close() {}
-    }
-    vi.stubGlobal("EventSource", FakeEventSource);
-    render(
-      <App
-        plan={{
-          kind: "live",
-          eventsUrl: "api/v1/events",
-          exportHtmlUrl: "api/v1/export.html",
-          exportJsonlUrl: "api/v1/export.jsonl",
-          rerunUrl: "api/v1/rerun",
-        }}
-      />,
-    );
+    const sources = stubEventSource();
+    render(<App plan={livePlan} />);
     expect(screen.getByRole("status", { name: "Connecting" })).toBeInTheDocument();
     expect(screen.getByText("Connecting")).toBeInTheDocument();
 
@@ -149,6 +169,64 @@ describe("boot modes and states", () => {
     expect(screen.getByRole("heading", { level: 2, name: "triage" })).toBeInTheDocument();
   });
 
+  test("a live session opens a run as it starts, shows it live, and follows the next one", async () => {
+    const user = userEvent.setup();
+    const sources = stubEventSource();
+    render(<App plan={livePlan} />);
+    act(() => sources.at(-1)?.onopen?.());
+
+    const second = "f".repeat(32);
+    const third = "e".repeat(32);
+    const run = agentRun({ id: "r1", start: 10, end: 50 });
+    const request = modelRequest({ id: "m1", parent: "r1", start: 12, end: 40 });
+    const events = log(
+      [1, { type: "blueprint.agent", agent: agentBlueprint({ id: "a1", name: "triage" }) }],
+      started(run),
+      started(request),
+      ended(request),
+      ended(run),
+      started(agentRun({ id: "r2", trace: second, start: 100 })),
+      started(agentRun({ id: "r3", trace: third, start: 200 })),
+    );
+    const feed = (from: number, to: number) =>
+      act(() => useViewer.getState().ingest(events.slice(from, to)));
+
+    feed(0, 2);
+    await waitFor(() => expect(window.location.hash).toBe("#/agents/a1"));
+    expect(screen.getByText("Waiting for a run")).toBeInTheDocument();
+
+    // The first run starts: the viewer goes to it, pinned to now.
+    feed(2, 4);
+    await waitFor(() => expect(window.location.hash).toBe(`#/runs/${TRACE}`));
+    expect(
+      await screen.findByRole("button", { name: "Agent triage, 1 call, running" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Model m of triage, 1 call, running" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Live" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByRole("treeitem")).toHaveLength(2);
+
+    feed(4, 6);
+    expect(screen.getByRole("button", { name: "Agent triage, 1 call, OK" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Output of triage.*, ready$/ })).toBeInTheDocument();
+
+    // The next run takes over while nothing is selected and the view is pinned.
+    feed(6, 7);
+    await waitFor(() => expect(window.location.hash).toBe(`#/runs/${second}`));
+
+    // Pausing to look around stops the following.
+    await user.click(await screen.findByRole("button", { name: "Pause" }));
+    expect(useViewer.getState().playback.mode).toBe("paused");
+    feed(7, 8);
+    expect(screen.getAllByRole("link", { name: /triage/ }).length).toBeGreaterThanOrEqual(3);
+    expect(window.location.hash).toBe(`#/runs/${second}`);
+
+    await user.click(screen.getByRole("button", { name: "Live" }));
+    expect(useViewer.getState().playback.mode).toBe("live");
+    expect(window.location.hash).toBe(`#/runs/${second}`);
+  });
+
   test("the gallery lists recordings with shareable links", async () => {
     const index = JSON.parse(fixtureText("index.json")) as unknown;
     stubFetch(() => Response.json(index));
@@ -170,42 +248,62 @@ describe("boot modes and states", () => {
 });
 
 describe("screens", () => {
-  test("an agent blueprint lists instructions, tools with schemas, delegation and output", async () => {
+  test("an agent blueprint is a canvas of clickable parts with an inspector beside it", async () => {
     const user = userEvent.setup();
     window.location.hash = "#/agents/a1";
     render(<App plan={embedded("sample.pviz.jsonl")} />);
     expect(screen.getByRole("heading", { level: 2, name: "triage" })).toBeInTheDocument();
-    expect(screen.getByText("offline model")).toBeInTheDocument();
-    expect(screen.getByText(/Computed at run time by/)).toHaveTextContent("customer_context");
-    expect(screen.getByText("FunctionToolset 'kb'")).toBeInTheDocument();
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    expect(within(details).getByRole("heading", { name: "triage" })).toBeInTheDocument();
+    expect(within(details).getByText("offline model")).toBeInTheDocument();
+    expect(within(details).getByText("FunctionToolset 'kb'")).toBeInTheDocument();
+    expect(within(details).getByRole("link", { name: "refunds" })).toHaveAttribute(
+      "href",
+      "#/agents/a2",
+    );
+    expect(within(details).getByText("seen in a run")).toBeInTheDocument();
+    expect(within(details).getByText("PendingMessageDrainCapability")).not.toBeVisible();
 
-    expect(screen.queryByRole("table", { name: "Parameters of get_order" })).not.toBeVisible();
-    await user.click(screen.getByText("get_order"));
-    expect(screen.getByRole("table", { name: "Parameters of get_order" })).toBeVisible();
+    await user.click(within(details).getByRole("tab", { name: "Instructions" }));
+    expect(within(details).getByText(/Computed at run time by/)).toHaveTextContent(
+      "customer_context",
+    );
 
-    const delegate = screen.getByRole("link", { name: "refunds" });
-    expect(delegate).toHaveAttribute("href", "#/agents/a2");
-    expect(screen.getByText("seen in a run")).toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Output of triage" })).toBeInTheDocument();
-    expect(screen.getByText("PendingMessageDrainCapability")).not.toBeVisible();
+    // Every part of the blueprint is a button on the canvas, the sub-agent included.
+    for (const name of ["Agent triage", "Agent refunds", "Tool search_kb", "Tool issue_refund"]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+    await user.click(screen.getByRole("button", { name: "Tool get_order" }));
+    expect(within(details).getByRole("heading", { name: "get_order" })).toBeInTheDocument();
+    await user.click(within(details).getByRole("tab", { name: "Parameters" }));
+    expect(within(details).getByRole("table", { name: "Parameters of get_order" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: /^Output of triage: Resolution/ }));
+    expect(within(details).getByRole("table", { name: "Output of triage" })).toBeVisible();
   });
 
   test("an observed blueprint says so and shows its warning", () => {
     window.location.hash = "#/agents/a1";
     render(<App plan={embedded("failed.pviz.jsonl")} />);
-    expect(screen.getByText("Observed from runs")).toBeInTheDocument();
-    expect(screen.getByText(/Register the agent with serve\(\)/)).toBeInTheDocument();
-    expect(screen.getByText("1 warning")).toBeInTheDocument();
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    expect(screen.getAllByText("Observed from runs").length).toBeGreaterThan(0);
+    expect(within(details).getAllByText(/Register the agent with/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("1 warning").length).toBeGreaterThan(0);
   });
 
-  test("a graph blueprint lists nodes and edges and copies Mermaid", async () => {
+  test("a graph blueprint draws nodes by kind, inspects them and copies Mermaid", async () => {
     const user = userEvent.setup();
     const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
     window.location.hash = "#/graphs/g1";
     render(<App plan={embedded("sample.pviz.jsonl")} />);
     expect(screen.getByRole("heading", { level: 2, name: "pipeline" })).toBeInTheDocument();
-    expect(screen.getByText("approved?")).toBeInTheDocument();
-    expect(screen.getByText("needs work")).toBeInTheDocument();
+    for (const name of ["Start Start", "Step Write draft", "Decision decision", "End End"]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+    await user.click(screen.getByRole("button", { name: "Decision decision" }));
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    expect(within(details).getByText("approved?")).toBeInTheDocument();
+    expect(within(details).getByText("needs work")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Copy Mermaid" }));
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("stateDiagram-v2"));
   });
@@ -215,12 +313,14 @@ describe("screens", () => {
     const sample = fixture("sample.pviz.jsonl");
     render(<App plan={{ kind: "embedded", events: sample }} />);
     const triage = runs(useViewer.getState().data)[1];
-    act(() => {
-      window.location.hash = `#/runs/${triage?.traceId}`;
-    });
+    await openRun(triage?.traceId, "triage");
     const tree = await screen.findByRole("tree", { name: "Spans of this run" });
     await waitFor(() => expect(useViewer.getState().playback.mode).toBe("playing"));
     expect(within(tree).getAllByRole("treeitem").length).toBeLessThan(14);
+    // The canvas shows the run so far: nothing has reached the output yet.
+    expect(
+      screen.getByRole("button", { name: /^Output of triage: Resolution.*not ready yet$/ }),
+    ).toBeInTheDocument();
 
     await skipToEnd(user);
     const rows = within(tree).getAllByRole("treeitem");
@@ -236,6 +336,60 @@ describe("screens", () => {
     expect(screen.getByText("3,109 in / 253 out")).toBeInTheDocument();
     expect(screen.getByText("1 retry")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Replay" })).toBeInTheDocument();
+
+    // The overlay on the canvas: call counts, the retry, the delegated agent and the output.
+    expect(
+      screen.getByRole("button", { name: "Tool get_order, retried once, 2 calls, OK" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tool search_kb, 1 call, OK" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Agent refunds, 1 call, OK" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Output of triage: Resolution.*, ready$/ }),
+    ).toBeInTheDocument();
+  });
+
+  test("clicking a canvas node selects its latest span; the subject switcher changes the canvas", async () => {
+    const user = userEvent.setup();
+    render(<App plan={embedded("sample.pviz.jsonl")} />);
+    const triage = runs(useViewer.getState().data)[1];
+    await openRun(triage?.traceId, "triage");
+    await skipToEnd(user);
+
+    await user.click(screen.getByRole("button", { name: /^Tool get_order/ }));
+    const details = screen.getByRole("complementary", { name: "Span details" });
+    expect(within(details).getByRole("heading", { name: "get_order" })).toBeInTheDocument();
+    expect(window.location.hash).toContain("?span=");
+    // The latest call is the one that succeeded, not the retry.
+    expect(within(details).getByText("OK")).toBeInTheDocument();
+    const selected = screen.getByRole("treeitem", { selected: true });
+    expect(selected).toHaveTextContent(/get_order.*OK/);
+
+    const subjects = screen.getByRole("group", { name: "Canvas subject" });
+    expect(within(subjects).getByRole("button", { name: "triage" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await user.click(within(subjects).getByRole("button", { name: "refunds" }));
+    expect(screen.queryByRole("button", { name: /^Tool get_order/ })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /^Tool issue_refund, 1 call, OK/ }),
+    ).toBeInTheDocument();
+  });
+
+  test("a graph run shows visit counts on the graph, loop included", async () => {
+    const user = userEvent.setup();
+    render(<App plan={embedded("sample.pviz.jsonl")} />);
+    await screen.findByRole("heading", { level: 2, name: "pipeline" });
+    await skipToEnd(user);
+    expect(
+      screen.getByRole("button", { name: "Step Write draft, visited twice, done" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Decision decision, visited twice, done" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Step Publish, visited once, done" }),
+    ).toBeInTheDocument();
   });
 
   test("selecting a span puts it in the URL and opens its details; scrubbing back hides it", async () => {
@@ -243,11 +397,13 @@ describe("screens", () => {
     render(<App plan={embedded("sample.pviz.jsonl")} />);
     const triage = runs(useViewer.getState().data)[1];
     const traceId = triage?.traceId ?? "";
-    act(() => {
-      window.location.hash = `#/runs/${traceId}`;
-    });
+    await openRun(traceId, "triage");
     await skipToEnd(user);
-    expect(screen.getByRole("heading", { name: "Select a span" })).toBeInTheDocument();
+    // With nothing selected the inspector shows the run itself.
+    const run = screen.getByRole("complementary", { name: "Span details" });
+    expect(within(run).getByRole("heading", { name: "triage" })).toBeInTheDocument();
+    expect(within(run).getByRole("list", { name: "Conversation" })).toBeInTheDocument();
+    expect(screen.queryByRole("treeitem", { selected: true })).toBeNull();
 
     const tree = screen.getByRole("tree");
     const retry = within(tree).getAllByRole("treeitem")[2];
@@ -291,7 +447,8 @@ describe("screens", () => {
     await skipToEnd(user);
     const details = screen.getByRole("complementary", { name: "Span details" });
     expect(within(details).getByRole("heading", { name: "issue_refund" })).toBeInTheDocument();
-    expect(within(details).getByText("RF-88213")).toBeInTheDocument();
+    await user.click(within(details).getByRole("tab", { name: "Result" }));
+    expect(within(details).getByText(/RF-88213/)).toBeInTheDocument();
   });
 
   test("a request that is still streaming shows the text so far", async () => {
@@ -388,10 +545,10 @@ describe("shell behaviour", () => {
       </TooltipProvider>,
     );
     const separator = screen.getByRole("separator", { name: "Resize inspector" });
-    expect(separator).toHaveAttribute("aria-valuenow", "380");
+    expect(separator).toHaveAttribute("aria-valuenow", "360");
     separator.focus();
     await user.keyboard("{ArrowLeft}");
-    expect(separator).toHaveAttribute("aria-valuenow", "396");
+    expect(separator).toHaveAttribute("aria-valuenow", "376");
     await user.keyboard("{End}");
     expect(separator).toHaveAttribute("aria-valuenow", "280");
     expect(window.localStorage.getItem("pviz.inspector.width")).toBe("280");

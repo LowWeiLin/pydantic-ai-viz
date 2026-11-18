@@ -1,82 +1,54 @@
-/** Layout pieces shared by the screens. */
+/** Layout pieces shared by the screens and the inspector. */
 import type { ReactNode } from "react";
 import { Icon, type IconName } from "../ui/Icon";
 import { cx, type Tone, toneClass } from "../ui/tone";
 
-export function ScreenHeader({
+/**
+ * The strip above a canvas: what this screen shows, with a few facts and actions. The right
+ * padding keeps clear of the inspector toggle that `Workspace` puts in that corner.
+ */
+export function ScreenBar({
   icon,
   tone,
   kind,
   title,
-  description,
   chips,
   aside,
 }: {
   icon: IconName;
   tone: Tone;
-  /** The small label above the title: "Agent blueprint", "Run". */
+  /** The small label before the title: "Agent blueprint", "Run". */
   kind: string;
   title: string;
-  description?: string | null;
   chips?: ReactNode;
   aside?: ReactNode;
 }) {
   return (
-    <header className="flex flex-wrap items-start gap-x-6 gap-y-3 pr-10">
-      <div className="flex min-w-0 flex-1 items-start gap-3">
-        <span
-          className={cx(
-            toneClass[tone],
-            "tone-soft mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-card border",
-          )}
-        >
-          <Icon name={icon} size={18} />
-        </span>
-        <div className="flex min-w-0 flex-col gap-1">
-          <p className="m-0 font-semibold text-faint text-meta uppercase tracking-[0.06em]">
-            {kind}
-          </p>
-          <h2 className="m-0 truncate font-semibold text-page tracking-[-0.01em]">{title}</h2>
-          {description && <p className="m-0 text-em text-muted">{description}</p>}
-          {chips && <div className="mt-1 flex flex-wrap items-center gap-1.5">{chips}</div>}
-        </div>
+    <header className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-line border-b bg-surface py-1.5 pr-12 pl-3">
+      <span
+        className={cx(
+          toneClass[tone],
+          "tone-soft flex size-7 shrink-0 items-center justify-center rounded-control border",
+        )}
+      >
+        <Icon name={icon} size={16} />
+      </span>
+      <div className="flex min-w-0 flex-col">
+        <p className="m-0 font-semibold text-[10px] text-faint uppercase leading-tight tracking-[0.08em]">
+          {kind}
+        </p>
+        <h2 className="m-0 truncate font-semibold text-em leading-tight">{title}</h2>
       </div>
-      {aside}
+      {chips && <div className="flex flex-wrap items-center gap-1.5">{chips}</div>}
+      {aside && <div className="ml-auto flex items-center gap-2">{aside}</div>}
     </header>
-  );
-}
-
-export function Section({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count?: number;
-  children: ReactNode;
-}) {
-  return (
-    <section className="flex flex-col gap-2">
-      <h3 className="m-0 flex items-baseline gap-2 font-semibold text-title">
-        {title}
-        {count !== undefined && <span className="font-normal text-faint text-ui">{count}</span>}
-      </h3>
-      {children}
-    </section>
-  );
-}
-
-/** A bordered block on the surface colour. Cards are flat: a 1px border, no shadow. */
-export function Card({ children, className }: { children: ReactNode; className?: string }) {
-  return (
-    <div className={cx("rounded-card border border-line bg-surface", className)}>{children}</div>
   );
 }
 
 /** Label and value pairs, e.g. settings. */
 export function Facts({ items }: { items: [label: string, value: ReactNode][] }) {
   return (
-    <dl className="m-0 grid grid-cols-[minmax(110px,auto)_1fr] gap-x-4 gap-y-1.5 text-ui">
+    <dl className="m-0 grid grid-cols-[minmax(96px,auto)_1fr] gap-x-4 gap-y-1.5 text-ui">
       {items.map(([label, value]) => (
         <div key={label} className="contents">
           <dt className="text-faint">{label}</dt>
@@ -98,4 +70,45 @@ export function orDash(value: string | number | null | undefined): ReactNode {
     );
   }
   return value;
+}
+
+/** A segmented control: one choice out of a few, as toggle buttons in a labelled group. */
+export function Segmented<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string; icon?: IconName }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: a fieldset would add a legend line; a labelled group is the toolbar pattern.
+    <div
+      role="group"
+      aria-label={label}
+      className="flex overflow-hidden rounded-control border border-line bg-surface"
+    >
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-pressed={option.value === value}
+          onClick={() => onChange(option.value)}
+          className={cx(
+            "flex h-7 items-center gap-1.5 border-0 border-line border-l px-2.5 text-ui first:border-l-0",
+            "transition-colors duration-150 ease-out focus-visible:outline-offset-[-2px]",
+            option.value === value
+              ? "bg-surface-2 font-medium text-fg"
+              : "bg-surface text-muted hover:bg-surface-2 hover:text-fg",
+          )}
+        >
+          {option.icon && <Icon name={option.icon} size={14} />}
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
 }
