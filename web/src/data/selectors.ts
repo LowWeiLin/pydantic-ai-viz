@@ -1,6 +1,6 @@
 /**
- * Pure read models over the reduced event log. Nothing here mutates or caches; callers memoise
- * on `(data, t)`.
+ * Pure read models over the reduced event log. Nothing here mutates; callers memoise on
+ * `(data, t)`. Only `runs` keeps a cache, keyed by the (immutable) data object.
  *
  * Time travel is a projection, not a re-reduction. At time `t`:
  * - a span is visible if `start_ms <= t`;
@@ -152,8 +152,12 @@ export type RunSummary = {
   usage: Usage;
 };
 
-/** Every run (trace) in the log, newest first. */
-export function runs(data: DataState): RunSummary[] {
+const runsCache = new WeakMap<DataState, readonly RunSummary[]>();
+
+/** Every run (trace) in the log, newest first. Cached per data object: do not mutate. */
+export function runs(data: DataState): readonly RunSummary[] {
+  const cached = runsCache.get(data);
+  if (cached) return cached;
   const out: RunSummary[] = [];
   for (const traceId of data.traceOrder) {
     const spans = traceSpans(data, traceId);
@@ -181,8 +185,10 @@ export function runs(data: DataState): RunSummary[] {
       usage,
     });
   }
-  // Stable sort: equal start times keep arrival order, then the whole list is newest first.
-  return out.sort((a, b) => b.startMs - a.startMs);
+  // Newest first; runs that start at the same instant keep arrival order.
+  out.sort((a, b) => b.startMs - a.startMs);
+  runsCache.set(data, out);
+  return out;
 }
 
 /** `[start, end]` of a run in epoch ms; `end` falls back to the latest event while running. */

@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { ErrorBoundary } from "./shell/ErrorBoundary";
 import "./styles/index.css";
 
 const container = document.getElementById("root");
@@ -8,6 +9,8 @@ if (!container) throw new Error("pydantic-ai-viz: #root element is missing");
 
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );
