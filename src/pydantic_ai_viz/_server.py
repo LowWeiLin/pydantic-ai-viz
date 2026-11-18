@@ -41,6 +41,8 @@ RERUN_URL = "api/v1/rerun"
 _LOOPBACK_NAMES = frozenset({"127.0.0.1", "localhost", "[::1]"})
 _WILDCARD_HOSTS = frozenset({"", "0.0.0.0", "::"})
 _MAX_REQUEST_BODY = 65_536
+_MAX_DISCARD = 1_048_576
+"""How much of a refused request body is still read off the socket, so the refusal arrives."""
 _BACKLOG_CHUNK = 256
 """Events per socket write when a stream starts with a long backlog."""
 
@@ -117,12 +119,23 @@ class _Handler(BaseHTTPRequestHandler):
 
     do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_POST
 
+    def _discard(self, count: int) -> None:
+        """Read ``count`` request bytes and drop them; stops early if the client stops sending."""
+        while count > 0:
+            chunk = self.rfile.read(min(count, 65_536))
+            if not chunk:
+                return
+            count -= len(chunk)
+
     def _dispatch(self) -> None:
         viewer = self.server.viewer
         length = self.headers.get("Content-Length", "")
         if length.isdigit() and int(length) > 0:
-            # Unread request bytes would turn our close into a reset and could lose the response.
+            # Unread request bytes would turn our close into a reset and could lose the response
+            # (on Windows the reset overtakes it), so a refused body is taken off the socket too,
+            # up to a bound that an honest client never reaches.
             if int(length) > _MAX_REQUEST_BODY:
+                self._discard(min(int(length), _MAX_DISCARD))
                 return self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "request body too large"})
             self.rfile.read(int(length))
         if viewer.loopback and _host_name(self.headers.get("Host")) not in _LOOPBACK_NAMES:

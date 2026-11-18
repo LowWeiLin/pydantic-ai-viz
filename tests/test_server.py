@@ -592,9 +592,17 @@ def test_rerun_is_post_only(session: Session, demo: Scenario) -> None:
     assert demo.starts == 0
 
 
-def test_an_oversized_request_body_is_refused(session: Session, demo: Scenario) -> None:
-    response = request(session, "POST", "/api/v1/rerun", body=b"x" * 70_000)
-    assert response.status == 413
+@pytest.mark.parametrize("size", [70_000, 300_000, 3_000_000])
+def test_an_oversized_request_body_is_refused(session: Session, demo: Scenario, size: int) -> None:
+    # The refusal must arrive as a response. If the server closed with the body unread, the
+    # close would be a reset, and on Windows the client then sees an aborted connection.
+    # Past the server's discard bound (the last size) a reset is allowed; a 2xx never is.
+    try:
+        response = request(session, "POST", "/api/v1/rerun", body=b"x" * size)
+    except OSError:
+        assert size > 1_048_576
+    else:
+        assert response.status == 413
     assert demo.starts == 0
 
 
