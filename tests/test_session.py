@@ -4,6 +4,7 @@ import itertools
 import json
 import threading
 import types
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,9 +15,9 @@ from pydantic_graph import GraphBuilder, StepContext
 from scenarios import PROMPT, Deps, build_team
 
 import pydantic_ai_viz
-from pydantic_ai_viz import Session, _compat, record
+from pydantic_ai_viz import Analysis, Session, _compat, analyze, record
 from pydantic_ai_viz._models import parse_envelope
-from pydantic_ai_viz._session import EventLog, active_session
+from pydantic_ai_viz._session import EventLog, active_session, blueprint_session
 
 
 def validate(events: list[dict[str, Any]]) -> None:
@@ -340,6 +341,112 @@ def test_a_name_belongs_to_one_blueprint_only() -> None:
     assert second["warnings"] == [
         "another agent named 'twin' is already registered; runs named 'twin' are shown on that one"
     ]
+
+
+TEAM_SOURCE = """
+from pydantic_ai import Agent, RunContext
+from pydantic_graph import GraphBuilder
+
+helper = Agent("test")
+lead = Agent("test", name="lead", instructions="Lead the work.")
+Agent("test")
+
+
+@lead.tool
+async def ask_helper(ctx: RunContext[None], question: str) -> str:
+    return (await helper.run(question)).output
+
+
+flow = GraphBuilder(name="flow")
+GraphBuilder()
+"""
+
+
+def read_team(directory: Path) -> Analysis:
+    path = directory / "team.py"
+    path.write_text(TEAM_SOURCE, encoding="utf-8")
+    return analyze(path)
+
+
+def test_register_an_analysis_adds_what_was_read_from_source_under_ids_of_the_session(tmp_path: Path) -> None:
+    found = read_team(tmp_path)
+    assert [b.id for b in found.blueprints] == ["a1", "a2", "a3", "g1", "g2"]
+    builder = GraphBuilder(name="live-graph", output_type=int)
+    with record(agent_named("live"), builder.build(validate_graph_structure=False), instrument=False) as session:
+        session.register(found)
+        session.register(found)  # the same analysis again: nothing new
+        events = session.events
+    validate(events)
+    agents = [envelope["agent"] for envelope in events if envelope["type"] == "blueprint.agent"]
+    assert [(a["id"], a["label"], a["name"], a["source"]) for a in agents] == [
+        ("a1", "live", "live", "object"),
+        ("a2", "helper", None, "code"),
+        ("a3", "lead", "lead", "code"),
+        ("a4", "agent-4", None, "code"),  # numbered labels follow the session's ids
+    ]
+    assert agents[2]["delegates"] == [{"tool_name": "ask_helper", "agent_id": "a2", "evidence": "code"}]
+    assert agents[2]["location"] == {"file": "team.py", "line": 6}
+    graphs = [envelope["graph"] for envelope in events if envelope["type"] == "blueprint.graph"]
+    assert [(g["id"], g["label"], g["source"]) for g in graphs] == [
+        ("g1", "live-graph", "object"),
+        ("g2", "flow", "code"),
+        ("g3", "graph-3", "code"),
+    ]
+
+
+def test_a_name_read_from_source_that_is_taken_already_is_given_up_with_a_warning(tmp_path: Path) -> None:
+    with record(agent_named("lead"), read_team(tmp_path), instrument=False) as session:
+        agents = [envelope["agent"] for envelope in session.events if envelope["type"] == "blueprint.agent"]
+    assert [(a["id"], a["name"], a["label"]) for a in agents] == [
+        ("a1", "lead", "lead"),
+        ("a2", None, "helper"),
+        ("a3", None, "lead"),
+        ("a4", None, "agent-4"),
+    ]
+    assert agents[2]["warnings"] == [
+        "another agent named 'lead' is already registered; runs named 'lead' are shown on that one"
+    ]
+
+
+def test_a_blueprint_session_of_an_analysis_is_titled_after_its_file_and_carries_its_notices(tmp_path: Path) -> None:
+    (tmp_path / "broken.py").write_text("def (:\n", encoding="utf-8")
+    read_team(tmp_path)
+    found = analyze(tmp_path / "team.py", tmp_path / "broken.py")
+    with blueprint_session(found) as session:
+        events = session.events
+    validate(events)
+    assert (events[0]["title"], events[0]["mode"]) == ("team", "blueprint")
+    assert len(events[0]["notices"]) == 1
+    assert events[0]["notices"][0].startswith("skipped broken.py: it is not valid Python")
+    assert types_of(events) == ["session.started", *["blueprint.agent"] * 3, *["blueprint.graph"] * 2]
+    assert active_session() is None  # nothing was instrumented
+    with blueprint_session(found, title="Mine") as session:
+        assert session.title == "Mine"
+    with pytest.raises(TypeError, match="got int"):
+        blueprint_session(3)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.anyio
+async def test_runs_are_drawn_on_the_blueprints_read_from_source(tmp_path: Path) -> None:
+    lead = Agent(TestModel(), name="lead")
+    helper = Agent(TestModel())  # no name: Pydantic AI infers "helper" from this variable when it runs
+    with record(read_team(tmp_path)) as session:
+        await lead.run("Go")
+        await helper.run("Go")
+        events = session.events
+    validate(events)
+    latest = {e["agent"]["id"]: e["agent"] for e in events if e["type"] == "blueprint.agent"}
+    # No extra blueprint was made up for the runs: they belong to the ones read from source.
+    assert {key: (a["name"], a["label"], a["source"]) for key, a in latest.items()} == {
+        "a1": ("helper", "helper", "code"),
+        "a2": ("lead", "lead", "code"),
+        "a3": (None, "agent-3", "code"),
+    }
+    runs = [e["span"] for e in events if e["type"] == "span.started" and e["span"]["kind"] == "agent_run"]
+    assert [run["agent_name"] for run in runs] == ["lead", "helper"]
+    # What the source says stays; the tool read from source is still there after the run.
+    assert [(t["name"], t["origin"]) for t in latest["a2"]["tools"]] == [("ask_helper", "code")]
+    assert latest["a2"]["location"] == {"file": "team.py", "line": 6}
 
 
 def test_register_rejects_other_objects() -> None:

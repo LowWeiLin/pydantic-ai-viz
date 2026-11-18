@@ -26,6 +26,7 @@ from pydantic_ai import Agent, InstrumentationSettings
 from pydantic_graph import Graph
 
 from . import _compat, _stream
+from ._analyze import Analysis
 from ._capture import CaptureProcessor
 from ._derive import add_delegate, carry_observed, merge_request, observed_blueprint
 from ._export import write_html, write_jsonl
@@ -34,7 +35,7 @@ from ._models import WIRE_VERSION, AgentBlueprint, GraphBlueprint, SessionMode, 
 from ._normalize import Normalized, WireSpan, clip
 from ._version import __version__
 
-Target: TypeAlias = "AnyAgent | AnyGraph | ModuleType"
+Target: TypeAlias = "AnyAgent | AnyGraph | ModuleType | Analysis"
 Envelope: TypeAlias = dict[str, Any]
 
 DEFAULT_MAX_EVENTS = 50_000
@@ -331,6 +332,7 @@ class Session:
         self._agents: dict[int, _RegisteredAgent] = {}
         self._graphs: dict[int, _RegisteredGraph] = {}
         self._agent_blueprints: dict[str, AgentBlueprint] = {}
+        self._analyses: list[Analysis] = []
         self._agent_count = 0
         self._graph_count = 0
         self._open_tool_calls: dict[str, tuple[str | None, str]] = {}
@@ -398,13 +400,15 @@ class Session:
     # -------------------------------------------------------- registration
 
     def register(self, *targets: Target) -> None:
-        """Add blueprints for agents, graphs, or every agent and graph in a module.
+        """Add blueprints for agents, graphs, every agent and graph in a module, or an `Analysis`.
 
-        Agents reachable through the static delegation heuristic are registered too.
+        Agents that a registered agent's tools refer to are registered too. An
+        `Analysis` (the result of `analyze()`) adds the blueprints it read from
+        source; runs of an agent with the same name are then drawn on them.
         Registering the same object again does nothing.
 
         Raises:
-            TypeError: If a target is not an `Agent`, a `Graph` or a module.
+            TypeError: If a target is not an `Agent`, a `Graph`, a module or an `Analysis`.
         """
         with self._lock:
             for target in targets:
@@ -412,11 +416,13 @@ class Session:
                     self._register_agent(target, {})
                 elif isinstance(target, Graph):
                     self._register_graph(target, None)
-                elif isinstance(target, ModuleType):  # pyright: ignore[reportUnnecessaryIsInstance]
+                elif isinstance(target, ModuleType):
                     self._register_module(target)
+                elif isinstance(target, Analysis):  # pyright: ignore[reportUnnecessaryIsInstance]
+                    self._register_analysis(target)
                 else:
                     raise TypeError(
-                        f"register() expects a pydantic_ai.Agent, a pydantic_graph.Graph or a module, "
+                        f"register() expects a pydantic_ai.Agent, a pydantic_graph.Graph, a module or an Analysis, "
                         f"got {type(target).__name__}"
                     )
 
@@ -429,6 +435,35 @@ class Session:
                 self._register_agent(cast("AnyAgent", value), labels)
             elif isinstance(value, Graph):
                 self._register_graph(cast("AnyGraph", value), name)
+
+    def _register_analysis(self, analysis: Analysis) -> None:
+        """Add blueprints read from source. Their ids are local to the analysis, so they are mapped to ours."""
+        if any(analysis is known for known in self._analyses):
+            return
+        self._analyses.append(analysis)
+        ids: dict[str, str] = {}
+        for blueprint in analysis.agents:
+            # As for a live agent: one already seen running keeps the id of its observed blueprint.
+            observed = self._blueprint_named(blueprint.name, source="observed")
+            ids[blueprint.id] = self._new_agent_id() if observed is None else observed.id
+        for blueprint in analysis.agents:
+            new_id = ids[blueprint.id]
+            delegates = [
+                delegate.model_copy(update={"agent_id": ids[delegate.agent_id]})
+                for delegate in blueprint.delegates
+                if delegate.agent_id in ids
+            ]
+            update: dict[str, Any] = {"id": new_id, "delegates": delegates}
+            if blueprint.label == f"agent-{blueprint.id[1:]}":
+                update["label"] = f"agent-{new_id[1:]}"
+            fresh = self._with_unique_name(blueprint.model_copy(update=update))
+            previous = self._agent_blueprints.get(new_id)
+            self._emit_agent(fresh if previous is None else carry_observed(previous, fresh))
+        for graph in analysis.graphs:
+            self._graph_count += 1
+            new_id = f"g{self._graph_count}"
+            label = f"graph-{self._graph_count}" if graph.label == f"graph-{graph.id[1:]}" else graph.label
+            self._emit_graph(graph.model_copy(update={"id": new_id, "label": label}))
 
     def _register_agent(self, root: AnyAgent, labels: Mapping[int, str]) -> None:
         if id(root) in self._agents:
@@ -470,6 +505,10 @@ class Session:
             return None if known is None else known.id
 
         blueprint = introspect_agent(entry.agent, id=entry.id, label=entry.label, delegate_id=delegate_id)
+        return self._with_unique_name(blueprint)
+
+    def _with_unique_name(self, blueprint: AgentBlueprint) -> AgentBlueprint:
+        """``blueprint``, without its name if another blueprint already holds that name."""
         name = blueprint.name
         holder = self._blueprint_named(name)
         if name is not None and holder is not None and holder.id != blueprint.id:
@@ -555,7 +594,13 @@ class Session:
             # Called as ``self.agent.run(...)`` or ``agents[0].run(...)`` it stays unnamed and its
             # spans carry a placeholder, which says nothing about which agent ran.
             unnamed = self._unnamed_blueprints() if name == _compat.UNNAMED_AGENT_SPAN_NAME else []
-            if len(unnamed) == 1:
+            # An agent read from source without a name is labelled with its variable, and that
+            # variable is the name Pydantic AI infers when the agent first runs.
+            read = [b for b in self._agent_blueprints.values() if b.source == "code" and b.name is None]
+            read = [b for b in read if b.label == name]
+            if len(read) == 1:
+                blueprint = read[0].model_copy(update={"name": name})
+            elif len(unnamed) == 1:
                 # Only one registered agent can be meant, so the runs are its runs.
                 blueprint = unnamed[0].model_copy(update={"name": name})
             else:
@@ -695,9 +740,13 @@ class Session:
         self.close()
 
 
-def _default_title(targets: tuple[Target, ...]) -> str | None:
+def default_title(targets: Sequence[Target]) -> str | None:
+    """A session title from what is shown: the first named target, or the one file an analysis read."""
     for target in targets:
-        name: Any = getattr(target, "__name__" if isinstance(target, ModuleType) else "name", None)
+        if isinstance(target, Analysis):
+            name: Any = Path(target.files[0]).stem if len(target.files) == 1 else None
+        else:
+            name = getattr(target, "__name__" if isinstance(target, ModuleType) else "name", None)
         if isinstance(name, str) and name:
             return name
     return None
@@ -725,8 +774,8 @@ def record(
     ```
 
     Args:
-        *targets: Agents, graphs, or modules whose module-level agents and graphs
-            are all registered.
+        *targets: Agents, graphs, modules whose module-level agents and graphs are
+            all registered, or the result of `analyze()`.
         include_content: Capture prompts, tool arguments and results. With `False`
             the structure of each run is kept and the content is `null`.
         stream: Capture token deltas. This switches model requests of the registered
@@ -743,15 +792,27 @@ def record(
 
     Raises:
         RuntimeError: If `instrument` is true and another instrumenting session is open.
-        TypeError: If a target is not an agent, a graph or a module.
+        TypeError: If a target is not an agent, a graph, a module or an `Analysis`.
     """
     session = Session(
-        title=title or _default_title(targets),
+        title=title or default_title(targets),
         include_content=include_content,
         stream=stream,
         instrument=instrument,
         max_events=max_events,
     )
+    try:
+        session.register(*targets)
+    except BaseException:
+        session.close()
+        raise
+    return session
+
+
+def blueprint_session(*targets: Target, title: str | None = None) -> Session:
+    """A session that only shows what ``targets`` are: nothing is instrumented and no run can appear."""
+    notices = [notice for target in targets if isinstance(target, Analysis) for notice in target.notices]
+    session = Session(title=title or default_title(targets), instrument=False, mode="blueprint", notices=notices)
     try:
         session.register(*targets)
     except BaseException:

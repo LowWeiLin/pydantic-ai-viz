@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic_ai import Agent
 from pydantic_graph import Graph
 
+from ._analyze import Analysis
+
 if TYPE_CHECKING:
     from ._session import Session
 
@@ -158,17 +160,16 @@ def download_name(title: str, extension: str) -> str:
 # ------------------------------------------------------------------- public
 
 
-def blueprint_events(target: Agent[Any, Any] | Graph[Any, Any, Any, Any]) -> list[Envelope]:
+def blueprint_events(target: Agent[Any, Any] | Graph[Any, Any, Any, Any] | Analysis) -> list[Envelope]:
     """The log of a session that only ever registered ``target``: blueprints, no runs."""
-    from ._session import Session
+    from ._session import blueprint_session
 
-    with Session(title=getattr(target, "name", None), instrument=False, mode="blueprint") as session:
-        session.register(target)
+    with blueprint_session(target) as session:
         return session.events
 
 
 def export_html(
-    source: Session | Agent[Any, Any] | Graph[Any, Any, Any, Any] | str | os.PathLike[str],
+    source: Session | Agent[Any, Any] | Graph[Any, Any, Any, Any] | Analysis | str | os.PathLike[str],
     path: str | os.PathLike[str],
 ) -> Path:
     """Write a self-contained HTML file that opens in any browser, with no server.
@@ -182,12 +183,13 @@ def export_html(
 
     pviz.export_html("run.pviz.jsonl", "run.html")  # a recording
     pviz.export_html(agent, "blueprint.html")  # structure only, nothing is run
+    pviz.export_html(pviz.analyze("agents.py"), "blueprint.html")  # read from source, not imported
     ```
 
     Args:
         source: What to export. A `Session` gives everything it has captured so
-            far; a path gives that `.pviz.jsonl` recording; an `Agent` or a `Graph`
-            gives its blueprint only, with no runs.
+            far; a path gives that `.pviz.jsonl` recording; an `Agent`, a `Graph`
+            or an `Analysis` gives blueprints only, with no runs.
         path: Where to write the HTML file. An existing file is replaced.
 
     Returns:
@@ -202,13 +204,14 @@ def export_html(
 
     if isinstance(source, Session):
         events = source.events
-    elif isinstance(source, Agent | Graph):
+    elif isinstance(source, Agent | Graph | Analysis):
         events = blueprint_events(source)  # pyright: ignore[reportUnknownArgumentType]
     elif isinstance(source, str | os.PathLike):  # pyright: ignore[reportUnnecessaryIsInstance]
         events = read_jsonl(source)
     else:
         raise TypeError(
-            "export_html() expects a Session, a recording path, a pydantic_ai.Agent or a pydantic_graph.Graph, "
+            "export_html() expects a Session, a recording path, a pydantic_ai.Agent, a pydantic_graph.Graph "
+            "or an Analysis, "
             f"got {type(source).__name__}"
         )
     return write_html(events, path)

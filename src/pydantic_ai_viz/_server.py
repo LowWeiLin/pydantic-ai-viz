@@ -366,8 +366,8 @@ def serve(
     ```
 
     Args:
-        *targets: Agents, graphs, or modules whose module-level agents and graphs
-            are all registered.
+        *targets: Agents, graphs, modules whose module-level agents and graphs are
+            all registered, or the result of `analyze()`.
         host: Address to bind. The default is reachable from this machine only.
             Any other address serves prompts and tool results to the network with
             no authentication, and a warning says so.
@@ -391,7 +391,7 @@ def serve(
 
     Raises:
         RuntimeError: If `instrument` is true and another instrumenting session is open.
-        TypeError: If a target is not an agent, a graph or a module.
+        TypeError: If a target is not an agent, a graph, a module or an `Analysis`.
         OSError: If the server cannot bind `host` at all.
     """
     session = record(
@@ -402,6 +402,18 @@ def serve(
         title=title,
         max_events=max_events,
     )
+    return serve_session(session, host=host, port=port, open_browser=open_browser, stacklevel=3)
+
+
+def serve_session(
+    session: Session,
+    *,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    open_browser: bool = False,
+    stacklevel: int = 2,
+) -> Session:
+    """Start the viewer for a session that is already open. The session is closed if the server cannot start."""
     try:
         server = ViewerServer(session, host, port)
         server.start()
@@ -414,7 +426,7 @@ def serve(
         warnings.warn(
             f"pydantic-ai-viz is serving on {host!r}, which is not a loopback address: anyone who can reach "
             f"port {server.port} can read the captured prompts and tool results. There is no authentication.",
-            stacklevel=2,
+            stacklevel=stacklevel,
         )
     if open_browser:
         open_in_browser(server.url)

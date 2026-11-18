@@ -9,6 +9,7 @@ import socket
 import threading
 import time
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -18,10 +19,10 @@ from pydantic_ai.models.test import TestModel
 from scenarios import PROMPT, Deps, build_team
 
 import pydantic_ai_viz
-from pydantic_ai_viz import Session, _compat, _server, serve
+from pydantic_ai_viz import Session, _compat, _server, analyze, serve
 from pydantic_ai_viz._models import parse_envelope
-from pydantic_ai_viz._server import ViewerServer, is_loopback, server_of
-from pydantic_ai_viz._session import active_session
+from pydantic_ai_viz._server import ViewerServer, is_loopback, serve_session, server_of
+from pydantic_ai_viz._session import active_session, blueprint_session
 
 pytestmark = pytest.mark.usefixtures("placeholder_viewer")
 
@@ -757,6 +758,49 @@ def test_serve_closes_the_session_when_registration_or_binding_fails(monkeypatch
     assert active_session() is None
     with serve(port=0, instrument=True):  # the failed attempts left no instrumenting session behind
         pass
+
+
+def test_serve_session_starts_the_viewer_for_a_session_that_is_already_open(tmp_path: Path) -> None:
+    source = tmp_path / "agents.py"
+    source.write_text("from pydantic_ai import Agent\nreader = Agent('test', name='reader')\n", encoding="utf-8")
+    opened = blueprint_session(analyze(source))
+    assert opened.url is None
+    session = serve_session(opened, port=0)
+    assert session is opened
+    with session:
+        assert server_of(session) is not None
+        assert get(session, "/api/v1/health").status == 200
+        lines = get(session, "/api/v1/export.jsonl").body.decode("utf-8").split("\n")[:-1]
+        started, reader = (json.loads(line) for line in lines)
+        assert (started["mode"], started["title"]) == ("blueprint", "agents")
+        assert (reader["agent"]["name"], reader["agent"]["source"]) == ("reader", "code")
+    assert session.closed
+    assert active_session() is None
+
+
+def test_serve_session_closes_the_session_when_the_server_cannot_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(self: ViewerServer) -> None:
+        raise OSError("cannot bind")
+
+    monkeypatch.setattr(ViewerServer, "start", refuse)
+    opened = blueprint_session()
+    with pytest.raises(OSError, match="cannot bind"):
+        serve_session(opened, port=0)
+    assert opened.closed
+
+
+def test_serve_takes_an_analysis_and_still_captures_runs(tmp_path: Path) -> None:
+    source = tmp_path / "agents.py"
+    source.write_text("from pydantic_ai import Agent\ngreeter = Agent('test', name='greeter')\n", encoding="utf-8")
+    with serve(analyze(source), port=0) as session:
+        agent_named("greeter").run_sync("Hello")
+        events = session.events
+    assert (events[0]["mode"], events[0]["title"]) == ("capture", "agents")
+    blueprints = [event["agent"] for event in events if event["type"] == "blueprint.agent"]
+    assert {(b["id"], b["name"], b["source"]) for b in blueprints} == {("a1", "greeter", "code")}
+    # The run added the tool the live agent has; what was read from source is still the base.
+    assert [(t["name"], t["origin"]) for t in blueprints[-1]["tools"]] == [("lookup_name", "observed")]
+    assert any(event["type"] == "span.ended" and event["span"]["kind"] == "agent_run" for event in events)
 
 
 def test_only_one_instrumenting_server_at_a_time(session: Session) -> None:

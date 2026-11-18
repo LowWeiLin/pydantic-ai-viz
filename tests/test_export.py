@@ -12,7 +12,7 @@ from pydantic_graph import GraphBuilder, StepContext
 from scenarios import PROMPT, Deps, build_team
 
 import pydantic_ai_viz
-from pydantic_ai_viz import _compat, _export, export_html, record
+from pydantic_ai_viz import _compat, _export, analyze, export_html, record
 from pydantic_ai_viz._models import parse_envelope
 from pydantic_ai_viz._session import active_session
 
@@ -338,6 +338,32 @@ def test_export_html_from_a_bare_graph(tmp_path: Path) -> None:
     assert [event["type"] for event in boot["events"]] == ["session.started", "blueprint.graph"]
     assert boot["events"][1]["graph"]["name"] == "tiny"
     assert [node["id"] for node in boot["events"][1]["graph"]["nodes"]] == ["__start__", "shout", "__end__"]
+
+
+@pytest.mark.usefixtures("placeholder_viewer")
+def test_export_html_from_an_analysis_shows_what_was_read_from_source(tmp_path: Path) -> None:
+    source = tmp_path / "agents.py"
+    source.write_text(
+        "from pydantic_ai import Agent\nreader = Agent(pick_model(), name='reader', instructions='Read.')\n",
+        encoding="utf-8",
+    )
+    before = _compat.instrumentation_default()
+    page = export_html(analyze(source), tmp_path / "blueprint.html")
+    assert active_session() is None
+    assert _compat.instrumentation_default() is before
+
+    boot = boot_of(page.read_text(encoding="utf-8"))
+    for envelope in boot["events"]:
+        parse_envelope(json.dumps(envelope))
+    assert [event["type"] for event in boot["events"]] == ["session.started", "blueprint.agent"]
+    assert (boot["events"][0]["title"], boot["events"][0]["mode"]) == ("agents", "blueprint")
+    reader = boot["events"][1]["agent"]
+    assert (reader["name"], reader["source"], reader["location"]) == (
+        "reader",
+        "code",
+        {"file": "agents.py", "line": 2},
+    )
+    assert reader["model"]["expression"] == "pick_model()"
 
 
 def test_export_html_rejects_other_sources(tmp_path: Path) -> None:
