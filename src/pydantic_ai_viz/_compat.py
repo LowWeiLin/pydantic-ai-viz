@@ -39,6 +39,9 @@ MERMAID_FUNCTION = "build_mermaid_graph"
 AGENT_INSTRUMENT_DEFAULT = "_instrument_default"
 """Private ``Agent`` class attribute holding what ``Agent.instrument_all`` was last given."""
 
+UNNAMED_AGENT_SPAN_NAME = "agent"
+"""What Pydantic AI puts in ``gen_ai.agent.name`` for an agent that has no name."""
+
 BUILTIN_CAPABILITIES = frozenset({"ToolSearch", "PendingMessageDrainCapability", "Instrumentation"})
 """Capabilities pydantic-ai injects on its own; the viewer hides them behind a disclosure."""
 

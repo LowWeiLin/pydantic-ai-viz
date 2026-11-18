@@ -34,7 +34,7 @@ An observed blueprint is accurate, but it is a snapshot of one run. It cannot kn
 A static blueprint is not frozen either. Runs add what introspection could not reach:
 
 - **Tools of opaque toolsets.** An MCP server or a toolset built at run time is one placeholder node until a run shows which tools it provides. Those tools are then added, each marked `origin: "observed"`.
-- **The agent's name.** An agent created without `name=` has none until its first run, when Pydantic AI infers it from the variable name. The blueprint keeps its identity and gains the name.
+- **The agent's name.** An agent created without `name=` has none until its first run, when Pydantic AI infers it from the variable name. The blueprint keeps its identity and gains the name. Inference needs the agent to be called through a plain variable; when it is not, see [Runs do not show up on an agent I registered](../troubleshooting.md#runs-do-not-show-up-on-an-agent-i-registered).
 - **Output details** that could not be read statically.
 
 ## Evidence on delegation edges

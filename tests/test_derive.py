@@ -246,6 +246,70 @@ async def test_registered_unnamed_agent_gets_its_name_on_first_run_with_the_same
     ]
 
 
+async def test_one_registered_unnamed_agent_gets_the_runs_pydantic_ai_could_not_name() -> None:
+    """Called through a list or an attribute, an agent's name cannot be inferred and its spans say "agent"."""
+    held = [Agent(TestModel())]
+    with record(*held) as session:
+        await held[0].run("hi")
+        await held[0].run("again")
+        events = session.events
+    assert held[0].name is None
+    assert [(a["id"], a["name"], a["label"], a["source"]) for a in agent_events(events)] == [
+        ("a1", None, "agent-1", "static"),
+        ("a1", "agent", "agent-1", "static"),
+    ]
+    runs = [e["span"] for e in events if e["type"] == "span.started" and e["span"]["kind"] == "agent_run"]
+    assert [run["agent_name"] for run in runs] == ["agent", "agent"]
+
+
+async def test_several_registered_unnamed_agents_cannot_be_matched_and_say_so() -> None:
+    held = [Agent(TestModel()), Agent(TestModel()), Agent(TestModel(), name="named")]
+    with record(*held) as session:
+        # Not through a loop variable: Pydantic AI would infer the name from it.
+        await held[0].run("hi")
+        await held[1].run("hi")
+        await held[2].run("hi")
+        await held[0].run("again")
+        blueprints = latest(session.events)
+    assert {id: (a["name"], a["source"], a["warnings"]) for id, a in blueprints.items()} == snapshot(
+        {
+            "a1": (
+                None,
+                "static",
+                [
+                    "runs of this agent cannot be matched to it: several registered agents have no name. "
+                    "Pass name= to Agent(...)"
+                ],
+            ),
+            "a2": (
+                None,
+                "static",
+                [
+                    "runs of this agent cannot be matched to it: several registered agents have no name. "
+                    "Pass name= to Agent(...)"
+                ],
+            ),
+            "a3": ("named", "static", []),
+            "a4": (
+                "agent",
+                "observed",
+                ["runs of every agent without a name are shown here. Pass name= to Agent(...) to tell them apart"],
+            ),
+        }
+    )
+
+
+async def test_a_run_named_like_no_registered_agent_is_never_bound_to_an_unnamed_one() -> None:
+    held = [Agent(TestModel())]
+    with record(*held) as session:
+        await Agent(TestModel(), name="stranger").run("hi")
+        blueprints = latest(session.events)
+    assert {id: (a["name"], a["source"]) for id, a in blueprints.items()} == {
+        "a1": (None, "static"),
+        "a2": ("stranger", "observed"),
+    }
+
+
 async def test_delegation_edge_is_upgraded_to_observed() -> None:
     team = build_team()
     with record(team.main) as session:

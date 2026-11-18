@@ -40,6 +40,11 @@ Envelope: TypeAlias = dict[str, Any]
 DEFAULT_MAX_EVENTS = 50_000
 DEFAULT_TITLE = "pydantic-ai-viz"
 
+_UNMATCHED_WARNING = (
+    "runs of this agent cannot be matched to it: several registered agents have no name. Pass name= to Agent(...)"
+)
+_UNNAMED_RUNS_WARNING = "runs of every agent without a name are shown here. Pass name= to Agent(...) to tell them apart"
+
 # ---------------------------------------------------------------- event log
 
 
@@ -529,12 +534,31 @@ class Session:
             if entry.agent.name == name:
                 # A registered agent whose blueprint does not carry this name yet. The usual case is an
                 # agent created without a name: Pydantic AI infers one when it first runs.
-                blueprint = self._introspect(entry)
+                blueprint = carry_observed(self._agent_blueprints[entry.id], self._introspect(entry))
                 break
         else:
-            blueprint = observed_blueprint(self._new_agent_id(), name, description=description, model_name=model_name)
+            # Pydantic AI can only infer a name when the agent is called through a plain variable.
+            # Called as ``self.agent.run(...)`` or ``agents[0].run(...)`` it stays unnamed and its
+            # spans carry a placeholder, which says nothing about which agent ran.
+            unnamed = self._unnamed_blueprints() if name == _compat.UNNAMED_AGENT_SPAN_NAME else []
+            if len(unnamed) == 1:
+                # Only one registered agent can be meant, so the runs are its runs.
+                blueprint = unnamed[0].model_copy(update={"name": name})
+            else:
+                blueprint = observed_blueprint(
+                    self._new_agent_id(), name, description=description, model_name=model_name
+                )
+                if unnamed:
+                    blueprint = blueprint.model_copy(update={"warnings": [_UNNAMED_RUNS_WARNING]})
+                    for static in unnamed:
+                        self._emit_agent(static.model_copy(update={"warnings": [*static.warnings, _UNMATCHED_WARNING]}))
         self._emit_agent(blueprint)
         return blueprint
+
+    def _unnamed_blueprints(self) -> list[AgentBlueprint]:
+        """Blueprints of the registered agents that have no name, as far as anyone can tell."""
+        blueprints = (self._agent_blueprints[entry.id] for entry in self._agents.values() if entry.agent.name is None)
+        return [blueprint for blueprint in blueprints if blueprint.name is None]
 
     def _observe_delegation(self, span: WireSpan, blueprint: AgentBlueprint) -> None:
         """Rule 3: an agent run directly under a tool call means that tool delegates to that agent."""

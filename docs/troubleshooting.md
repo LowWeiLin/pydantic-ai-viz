@@ -115,6 +115,15 @@ Note that without `defer_model_check=True`, `Agent("openai:gpt-5.2")` raises `Im
 
 The agent has no `name`, and the viewer was not given a variable name to fall back on. Pydantic AI infers the name on the agent's first run, after which the label updates. To get a proper label from the start, pass `name=` when you create the agent, or pass the module that defines it as the target.
 
+## Runs do not show up on an agent I registered
+
+Runs are matched to blueprints by agent name. An agent created without `name=` gets a name from Pydantic AI on its first run, but only when it is called through a plain variable, as in `agent.run(...)`. Called through an attribute or a container (`self.agent.run(...)`, `agents[0].run(...)`), it stays unnamed, and its runs are reported under the placeholder name `agent`.
+
+- With **one** unnamed registered agent, those runs are shown on it.
+- With **several**, nothing says which of them ran. The runs are collected on a separate blueprint called `agent`, marked "Observed from runs", and each unnamed blueprint carries a warning.
+
+The fix is to name each agent when you create it: `Agent(model, name="support")`.
+
 ## A blueprint shows a warnings badge
 
 Part of the agent could not be read, most often because a Pydantic AI release changed an internal attribute. The inspector lists what is missing; everything else is unaffected. See [Compatibility](reference/compatibility.md#fields-read-from-private-attributes), and please report it with your `pydantic-ai-slim` version.
