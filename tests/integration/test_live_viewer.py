@@ -8,6 +8,7 @@ them unless ``PVIZ_REQUIRE_BROWSER_TESTS=1`` says they must be there (the CI e2e
 
 from __future__ import annotations
 
+import os
 import shutil
 import socket
 import subprocess
@@ -94,21 +95,33 @@ def test_the_viewer_in_a_browser_follows_the_live_demo(tmp_path: Path) -> None:
     )
     assert node is not None
 
-    with serving(DEMO, cwd=tmp_path) as (url, _):
-        result = subprocess.run(
-            [node, str(playwright), "test", "--project", "live", "--reporter", "list"],
-            cwd=WEB,
-            # Its own port for the fixture server the Playwright config starts, so this can run next to `pnpm e2e`.
-            env=child_env(PVIZ_LIVE_URL=url, PVIZ_E2E_PORT=str(free_port())),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=300,
-            check=False,
-        )
-    output = result.stdout + result.stderr
+    def run_spec(attempt: int) -> tuple[int, str]:
+        spec = [node, str(playwright), "test", "--project", "live", "--reporter", "list", "--retries", "0"]
+        # Each attempt keeps its own traces: the next one does not clear them away.
+        output_dir = f"test-results/live-attempt-{attempt}"
+        with serving(DEMO, cwd=tmp_path) as (url, _):
+            result = subprocess.run(
+                [*spec, "--output", output_dir],
+                cwd=WEB,
+                # Its own port for the fixture server the Playwright config starts, so this can run next to `pnpm e2e`.
+                env=child_env(PVIZ_LIVE_URL=url, PVIZ_E2E_PORT=str(free_port())),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=300,
+                check=False,
+            )
+        return result.returncode, result.stdout + result.stderr
+
+    code, output = run_spec(1)
     if not STRICT and "playwright install" in output:
         need(False, "no Playwright browser is installed (pnpm --dir web exec playwright install chromium)")
-    assert result.returncode == 0, output[-6000:]
+    # The spec needs a demo nobody has watched yet: its first viewer starts the run. So a retry gets
+    # a server of its own here, not Playwright's retry on the used one. One retry on CI, as the
+    # Playwright config gives its other specs.
+    if code != 0 and os.environ.get("CI"):
+        print("the live spec failed, retrying on a fresh server:", output[-6000:], sep="\n")
+        code, output = run_spec(2)
+    assert code == 0, output[-6000:]
     assert "1 passed" in output, output[-6000:]
