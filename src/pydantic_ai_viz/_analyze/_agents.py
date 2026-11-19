@@ -24,6 +24,7 @@ from .._models import (
     AgentSettings,
     CapabilityInfo,
     Delegate,
+    EnvironmentValue,
     Instruction,
     ModelInfo,
     OutputInfo,
@@ -32,10 +33,11 @@ from .._models import (
     Toolset,
 )
 from ._docstring import Style, describe
-from ._resolve import Definition, Expression, External, Project, Resolved, Resolver, receiver_class
+from ._installed import InstalledPydanticAI
+from ._resolve import END_OF_MODULE, Definition, Expression, External, Project, Resolved, Resolver, receiver_class
 from ._schema import NOT_FROM_THE_MODEL, SchemaBuilder, typing_construct
 from ._source import CallSite, Module, Mutation, Scope, clip_expression, unwrap
-from ._values import NotLiteral, format_template, fstring_template, literal, string
+from ._values import EnvironmentRead, NotLiteral, environment, format_template, fstring_template, literal, string
 
 ToolKind: TypeAlias = Literal["function", "output", "external", "unapproved"]
 PromptKind: TypeAlias = Literal["instructions", "system_prompt"]
@@ -80,16 +82,6 @@ _NATIVE_TOOLS: dict[str, str] = {
     "MCPServerTool": "mcp_server",
 }
 """Classes that ``builtin_tools=[...]`` took in earlier Pydantic AI releases -> the kind of native tool each is."""
-_TOOL_FACTORIES: dict[str, str] = {
-    "duckduckgo_search_tool": "duckduckgo_search",
-    "tavily_search_tool": "tavily_search",
-    "exa_search_tool": "exa_search",
-    "exa_find_similar_tool": "exa_find_similar",
-    "exa_get_contents_tool": "exa_get_contents",
-    "exa_answer_tool": "exa_answer",
-    "image_generation_tool": "generate_image",
-}
-"""Functions in ``pydantic_ai.common_tools`` that return a ready-made ``Tool`` -> the name that tool has."""
 _MAX_LIST_ITEMS = 500
 _MAX_VERBATIM_CHARS = 20_000
 """How much of the source of a computed instruction is kept, as written."""
@@ -172,6 +164,13 @@ class _ToolSpec:
     """The docstring convention the registration names; ``None`` when it is inferred."""
     docstring_format_expression: str | None = None
     """The source text of a ``docstring_format=`` that is computed when the code runs."""
+    unread: str | None = None
+    """The source text of the function of a ``Tool(...)`` that cannot be followed: its name is known, its
+    parameters are not."""
+    made_by: str | None = None
+    """Dotted name of the function of Pydantic AI that makes the tool, read from the installed source."""
+    library_version: str | None = None
+    """The version of the installed Pydantic AI the tool was read from, when Pydantic AI defines it."""
 
 
 @dataclass(slots=True, eq=False)
@@ -243,9 +242,11 @@ class _ToolsetEntry:
 class AgentExtractor:
     """Finds every agent in a project and describes it."""
 
-    def __init__(self, project: Project, resolver: Resolver) -> None:
+    def __init__(self, project: Project, resolver: Resolver, installed: InstalledPydanticAI | None = None) -> None:
         self.project = project
         self.resolver = resolver
+        self.installed = installed
+        """Pydantic AI's own source, for the tools it defines; ``None`` reads none of it."""
         self.agents: dict[tuple[int, int], _AgentSite] = {}
         """``_AgentSite.key`` -> the agent, in discovery order."""
         self.instances: dict[int, list[_AgentSite]] = {}
@@ -915,25 +916,60 @@ class AgentExtractor:
         if isinstance(target, Expression) and isinstance(target.node, ast.Call) and depth < 2:
             call = target.node
             callee = self.resolver.callee(call, target.scope, target.line)
-            if isinstance(callee, External) and callee.is_library(*_TOOL_FACTORIES):
-                # ``duckduckgo_search_tool()``: a tool the library makes, known by the name the library gives it.
-                where = location(target.module, call)
-                return _ToolSpec(_TOOL_FACTORIES[callee.last], None, where, external=callee.name)
             if isinstance(callee, External) and callee.is_library("Tool"):
                 keywords = {item.arg: item.value for item in call.keywords if item.arg is not None}
                 inner = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
                 inner = inner or keywords.get("function")
                 if inner is None:
                     return None
-                spec = self.tool_of(inner, target.scope, target.line, depth + 1)
+                self.resolver.resolve(inner, target.scope, target.line)
+                # A function assigned in more than one place: which one the tool runs is decided at run time.
+                spec = None if self.resolver.reassigned() else self.tool_of(inner, target.scope, target.line, depth + 1)
                 if spec is None:
-                    return None
+                    named = keywords.get("name")
+                    name = None if named is None else string(self.resolver, named, target.scope, target.line)
+                    if name is None:
+                        return None
+                    # The tool is named in the source; what it takes is only known when the code runs.
+                    where = location(target.module, call)
+                    spec = _ToolSpec(name, None, where, unread=target.module.text(inner))
                 takes_ctx = self._bool(keywords.get("takes_ctx"), target.scope, target.line)
                 if takes_ctx is not None:
                     spec.takes_ctx = takes_ctx
                 self._overrides(spec, keywords, target.scope, target.line)
                 return spec
+            if isinstance(callee, External) and depth == 0:
+                return self._installed_tool(callee, location(target.module, call))
         return None
+
+    def _installed_tool(self, callee: External, where: SourceLocation) -> _ToolSpec | None:
+        """A tool that a function of Pydantic AI makes, such as a factory of ``common_tools``, read from its source.
+
+        The function's one ``return`` is read like a ``Tool(...)`` in the project, in the file of
+        Pydantic AI that defines it. The tool must be named there; its location is the call.
+        """
+        if self.installed is None or not callee.name.startswith("pydantic_ai.") or callee.last[:1].isupper():
+            return None
+        function = self.installed.function(callee.name, self.resolver)
+        if function is None or len(function.body.returns) != 1:
+            return None
+        returned = function.body.returns[0]
+        target = self.resolver.resolve(returned, function.body, END_OF_MODULE)
+        if not isinstance(target, Expression) or not isinstance(target.node, ast.Call):
+            return None
+        made = self.resolver.callee(target.node, target.scope, target.line)
+        named = next((item.value for item in target.node.keywords if item.arg == "name"), None)
+        if not isinstance(made, External) or not made.is_library("Tool") or named is None:
+            return None
+        if string(self.resolver, named, target.scope, target.line) is None:
+            return None  # named by an argument of the call: not something to read off the page
+        spec = self.tool_of(returned, function.body, END_OF_MODULE, 1)
+        if spec is None:
+            return None
+        spec.where = where
+        spec.made_by = callee.name
+        spec.library_version = self.installed.version
+        return spec
 
     def _method_tool(self, target: Expression) -> _ToolSpec | None:
         """A tool that is a method of an object made in the analysed source: ``db.query`` with ``db = Database()``."""
@@ -1266,7 +1302,9 @@ class _AgentBuilder:
             if not separator:
                 provider, name = None, value
             offline = provider in _compat.OFFLINE_PROVIDERS
-            return ModelInfo(id=value, name=name, provider=provider, offline=offline, expression=None)
+            return ModelInfo(
+                id=value, name=name, provider=provider, offline=offline, expression=None, model_class=None, env=None
+            )
         text = self.text(node)
         name: str | None = None
         provider = None
@@ -1276,6 +1314,13 @@ class _AgentBuilder:
         if isinstance(unwrap(node), ast.Name | ast.Attribute) and isinstance(target, Expression):
             # ``Agent(model)``: what ``model`` was assigned says more than its name does.
             text = target.module.text(target.node)
+        read = environment(self.resolver, node, *self.where(node))
+        if read is not None:
+            # ``os.getenv("MODEL", "openai:gpt-5.2")``: the environment decides; the default is only a default.
+            self.warn(f"the model comes from {_environment_words(read)}")
+            return ModelInfo(
+                id=None, name=text, provider=None, offline=False, expression=text, model_class=None, env=_env(read)
+            )
         if isinstance(target, Expression) and isinstance(target.node, ast.JoinedStr):
             # ``f"openai:{settings.model}"``: the provider is spelled out, the name is computed.
             written, separator, rest = fstring_template(target.node).partition(":")
@@ -1287,21 +1332,57 @@ class _AgentBuilder:
                     f"the provider `{written}` is what the source gives"
                 )
                 offline = written in _compat.OFFLINE_PROVIDERS
-                return ModelInfo(id=None, name=rest, provider=written, offline=offline, expression=text)
+                return ModelInfo(
+                    id=None,
+                    name=rest,
+                    provider=written,
+                    offline=offline,
+                    expression=text,
+                    model_class=None,
+                    env=None,
+                )
+        model_class: str | None = None
         if isinstance(target, Expression) and isinstance(target.node, ast.Call):
             callee = self.resolver.callee(target.node, target.scope, target.line)
             if isinstance(callee, External) and callee.is_library(*_OFFLINE_MODELS):
                 provider = _OFFLINE_MODELS[callee.last]
+                model_class = callee.last
             elif isinstance(callee, External) and callee.name.startswith("pydantic_ai.models."):
                 # One of Pydantic AI's model classes: ``OpenAIChatModel("gpt-5.2", provider=...)`` names its model.
+                model_class = callee.last if callee.last[:1].isupper() else None
                 call = target.node
                 spelled = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
                 spelled = spelled or next((item.value for item in call.keywords if item.arg == "model_name"), None)
                 if spelled is not None:
                     name = string(self.resolver, spelled, target.scope, target.line)
+                read = (
+                    None
+                    if spelled is None or name is not None
+                    else environment(self.resolver, spelled, target.scope, target.line)
+                )
+                if read is not None and model_class is not None:
+                    # ``OpenAIChatModel(os.getenv("MODEL", "gpt-5.2"))``, perhaps from a helper function.
+                    self.warn(f"the model name of `{model_class}` comes from {_environment_words(read)}")
+                    return ModelInfo(
+                        id=None,
+                        name=text,
+                        provider=None,
+                        offline=False,
+                        expression=text,
+                        model_class=model_class,
+                        env=_env(read),
+                    )
         if provider is None and name is None:
             self.warn(f"the model is set by `{brief(text)}`, so it is only known when the code runs")
-        return ModelInfo(id=None, name=name or text, provider=provider, offline=provider is not None, expression=text)
+        return ModelInfo(
+            id=None,
+            name=name or text,
+            provider=provider,
+            offline=provider is not None,
+            expression=text,
+            model_class=model_class,
+            env=None,
+        )
 
     def _deps_type(self) -> str | None:
         node = self.arguments.get("deps_type")
@@ -1363,16 +1444,13 @@ class _AgentBuilder:
         what = "instructions" if kind == "instructions" else "system prompts"
         if isinstance(target, Expression):
             # ``f"Today is {today()}."`` or ``PROMPT.format(date=today())``: the text, placeholders left in.
+            # It is shown whole, as the template it is, so it needs no warning.
             template = (
-                fstring_template(target.node)
+                fstring_template(target.node, self._reader(target))
                 if isinstance(target.node, ast.JoinedStr)
                 else format_template(self.resolver, target.node, target.scope, target.line)
             )
             if template is not None:
-                self.warn(
-                    f"one of the {what} is the template `{brief(template)}`; what is in braces is filled in "
-                    "when the code runs"
-                )
                 return Instruction(
                     kind=kind, dynamic=True, text=template, function=None, expression=None, location=where
                 )
@@ -1389,6 +1467,14 @@ class _AgentBuilder:
         elif not isinstance(node, ast.Lambda):
             self.warn(f"one of the {what} is the expression `{brief(text)}`; its text is only known when the code runs")
         return Instruction(kind=kind, dynamic=True, text=None, function=None, expression=text, location=where)
+
+    def _reader(self, context: Expression) -> Any:
+        """What ``literal`` reads of an expression in ``context``; raises ``NotLiteral`` as it does."""
+
+        def read(node: ast.expr) -> Any:
+            return literal(self.resolver, node, context.scope, context.line)
+
+        return read
 
     # -------------------------------------------------------------- output
 
@@ -2023,10 +2109,22 @@ class _AgentBuilder:
     def _tool(self, spec: _ToolSpec, name: str, toolset: str) -> Tool:
         function = spec.function
         if function is None:
-            self.warn(
-                f"the tool `{name}` is `{spec.external}`, which is defined outside the analysed source, "
-                "so its description and parameters are not shown"
-            )
+            if spec.made_by is not None:
+                self.warn(
+                    f"the tool `{name}` is made by `{spec.made_by}`; its name and description are read from the "
+                    f"installed Pydantic AI {spec.library_version}, and its parameters are only known when the code "
+                    "runs"
+                )
+            elif spec.unread is not None:
+                self.warn(
+                    f"the parameters of the tool `{name}` are those of `{brief(spec.unread)}`, "
+                    "so they are only known when the code runs"
+                )
+            else:
+                self.warn(
+                    f"the tool `{name}` is `{spec.external}`, which is defined outside the analysed source, "
+                    "so its description and parameters are not shown"
+                )
             return Tool(
                 name=name,
                 toolset=toolset,
@@ -2037,9 +2135,10 @@ class _AgentBuilder:
                 takes_ctx=spec.takes_ctx,
                 is_async=None,
                 max_retries=spec.max_retries,
-                function=spec.external,
+                function=spec.external or spec.made_by,
                 origin="code",
                 location=spec.where,
+                library_version=spec.library_version,
             )
         node = function.node
         assert not isinstance(node, ast.ClassDef)
@@ -2078,6 +2177,7 @@ class _AgentBuilder:
             function=function.qualified_name,
             origin="code",
             location=spec.where,
+            library_version=spec.library_version,
         )
 
     def _return_schema(self, function: Definition) -> dict[str, Any] | None:
@@ -2237,3 +2337,13 @@ class _AgentBuilder:
             if agent is not None and agent not in agents:
                 agents.append(agent)
         return agents
+
+
+def _env(read: EnvironmentRead) -> EnvironmentValue:
+    return EnvironmentValue(variable=read.variable, default=read.default)
+
+
+def _environment_words(read: EnvironmentRead) -> str:
+    """``the environment variable `MODEL` when the code runs; the source's default is `gpt-5.2```."""
+    default = "the source gives no default" if read.default is None else f"the source's default is `{read.default}`"
+    return f"the environment variable `{read.variable}` when the code runs; {default}"

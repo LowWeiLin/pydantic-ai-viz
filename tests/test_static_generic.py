@@ -84,8 +84,12 @@ def test_whatever_reads_a_value_at_run_time_gets_the_same_message_and_no_default
         settings = Agent(Settings().model, name="settings")
         """,
     )
+    # The environment is said to be the environment, with the default as a default (test_static_stdlib.py).
+    environment = agent(found, "environment").model
+    assert environment is not None
+    assert environment.env is not None
+    assert (environment.id, environment.provider, environment.env.default) == (None, None, "openai:gpt-5.2")
     for label, expression in (
-        ("environment", 'os.getenv("MODEL", "openai:gpt-5.2")'),
         ("file", 'json.loads(Path("config.json").read_text())["model"]'),
         ("arguments", "sys.argv[1]"),
         ("library", 'load("model", default="openai:gpt-5.2")'),
@@ -136,7 +140,7 @@ def test_a_name_assigned_in_more_than_one_place_is_not_taken_for_its_last_value(
 
 def test_a_prompt_built_by_a_library_call_is_kept_as_its_source_written_out(tmp_path: Path) -> None:
     source = '''
-        from textwrap import dedent
+        from prompt_tools import dedent
         from pydantic_ai import Agent
 
         agent = Agent(
@@ -156,6 +160,7 @@ def test_a_prompt_built_by_a_library_call_is_kept_as_its_source_written_out(tmp_
     assert instruction.expression == (
         'dedent(\n        """\n        You are a careful assistant.\n        Answer briefly.\n        """\n    )'
     )
+    # A ``dedent`` of another package is not the standard library's, whatever its name.
     assert agent(found, "agent").warnings == [
         'one of the instructions is the expression `dedent( """ You are a careful assistant. Answer briefly. """ )`; '
         "its text is only known when the code runs"
@@ -584,14 +589,9 @@ def test_str_format_is_read_like_any_other_value(tmp_path: Path) -> None:
         "today": [(True, "You are {role}.")],
         "written": [(True, "Today is {date.today()}.")],
     }
-    assert agent(found, "crew-1").warnings == agent(found, "numbered").warnings == []
-    assert agent(found, "today").warnings == [
-        "one of the instructions is the template `You are {role}.`; what is in braces is filled in when the code runs"
-    ]
-    assert agent(found, "written").warnings == [
-        "one of the instructions is the template `Today is {date.today()}.`; what is in braces is filled in when "
-        "the code runs"
-    ]
+    # A template is shown whole, as what it is: it is not a degradation, so it is no warning.
+    for label in ("crew-1", "numbered", "today", "written"):
+        assert agent(found, label).warnings == []
 
 
 TOOLS_WITH_DOCSTRING_FORMATS = '''

@@ -8,60 +8,51 @@ from pathlib import Path
 from static_support import agent, analyze_source, one_agent, properties, tool
 
 from pydantic_ai_viz import analyze
+from pydantic_ai_viz._compat import pydantic_ai_version
 
 # ------------------------------------------------- the model, from a setting
 
 
 def test_a_model_read_at_run_time_is_its_expression_with_one_message_whatever_reads_it(tmp_path: Path) -> None:
-    # The environment, a config object, a function: all are outside the source, so none is singled out,
-    # and no default the source passes along is taken for the value.
+    # A config object, a function, an environment variable read in a way that is not one of the few the
+    # analyser knows (test_static_stdlib.py): all are outside the source, so none is singled out, and no
+    # default the source passes along is taken for the value.
     found = analyze_source(
         tmp_path,
         """
         import os
-        from os import environ, getenv
+        from os import getenv
         from pydantic_ai import Agent
         from pydantic_ai.models.openai import OpenAIChatModel
-        from pydantic_ai.providers.openai import OpenAIProvider
 
-        MODEL = os.getenv("PYDANTIC_AI_MODEL", "openai:gpt-5.2")
-        by_default = Agent(MODEL)
-        inline = Agent(os.environ.get("MODEL", "gpt-5-mini"))
         with_or = Agent(getenv("MODEL") or "anthropic:claude-sonnet-5")
-        keyword = Agent(model=os.getenv("MODEL", default="test"))
-        required = Agent(environ["MODEL"])
-        optional = Agent(os.getenv("MODEL"))
         computed_default = Agent(os.getenv("MODEL", pick_default()))
+        computed_name = Agent(os.getenv(NAME_OF_THE_VARIABLE, "openai:gpt-5.2"))
         other_function = Agent(config.get("MODEL", "openai:gpt-5.2"))
+        other_mapping = Agent(settings["MODEL"])
 
 
         def get_model():
-            llm = os.getenv("MODEL_CHOICE", "gpt-4.1-mini")
-            base_url = os.getenv("BASE_URL", "https://api.openai.com/v1")
-            return OpenAIChatModel(llm, provider=OpenAIProvider(base_url=base_url))
+            return OpenAIChatModel(load_model_name())
 
 
         through_class = Agent(get_model())
-        class_without_default = Agent(OpenAIChatModel(os.environ["LLM"]))
         """,
     )
 
     def model(label: str) -> tuple[str | None, str | None, str | None, bool, str | None]:
         info = agent(found, label).model
         assert info is not None
+        assert info.env is None
         return info.id, info.provider, info.name, info.offline, info.expression
 
     expressions = {
-        "by_default": 'os.getenv("PYDANTIC_AI_MODEL", "openai:gpt-5.2")',  # what MODEL was assigned
-        "inline": 'os.environ.get("MODEL", "gpt-5-mini")',
         "with_or": 'getenv("MODEL") or "anthropic:claude-sonnet-5"',
-        "keyword": 'os.getenv("MODEL", default="test")',
-        "required": 'environ["MODEL"]',
-        "optional": 'os.getenv("MODEL")',
         "computed_default": 'os.getenv("MODEL", pick_default())',
+        "computed_name": 'os.getenv(NAME_OF_THE_VARIABLE, "openai:gpt-5.2")',
         "other_function": 'config.get("MODEL", "openai:gpt-5.2")',
+        "other_mapping": 'settings["MODEL"]',
         "through_class": "get_model()",
-        "class_without_default": 'OpenAIChatModel(os.environ["LLM"])',
     }
     for label, expression in expressions.items():
         assert model(label) == (None, None, expression, False, expression)
@@ -112,9 +103,11 @@ def test_a_cast_is_looked_through_to_the_value_it_wraps(tmp_path: Path) -> None:
     from_environment = agent(found, "from_environment").model
     assert from_environment is not None
     assert (from_environment.id, from_environment.provider) == (None, None)
+    assert from_environment.env is not None
+    assert (from_environment.env.variable, from_environment.env.default) == ("PYDANTIC_AI_MODEL", "openai:gpt-5.2")
     assert agent(found, "from_environment").warnings == [
-        'the model is set by `cast(KnownModelName, os.getenv("PYDANTIC_AI_MODEL", "openai:gpt-5.2"))`, '
-        "so it is only known when the code runs"
+        "the model comes from the environment variable `PYDANTIC_AI_MODEL` when the code runs; "
+        "the source's default is `openai:gpt-5.2`"
     ]
     # Only the cast of the typing module is known to hand its argument back.
     assert agent(found, "another_cast").warnings == [
@@ -178,11 +171,8 @@ def test_a_prompt_filled_in_with_format_is_shown_as_its_template(tmp_path: Path)
         ("system_prompt", True, "Call the user {name}.", None),
         ("system_prompt", True, None, "load_prompt().format(date=today())"),
     ]
+    # The templates are shown whole, so only the prompt whose template is not in the source is a warning.
     assert found.warnings == [
-        "one of the instructions is the template `You are a researcher. Today is {date}.`; what is in braces is "
-        "filled in when the code runs",
-        "one of the system prompts is the template `Call the user {name}.`; what is in braces is filled in when "
-        "the code runs",
         "one of the system prompts is the expression `load_prompt().format(date=today())`; its text is only "
         "known when the code runs",
     ]
@@ -351,7 +341,8 @@ def test_running_the_agent_a_run_is_given_as_its_dependencies_is_delegation_to_t
 # ------------------------------------------------------- tools that are not defs
 
 
-def test_a_tool_made_by_a_library_function_is_shown_under_the_name_the_library_gives_it(tmp_path: Path) -> None:
+def test_a_tool_made_by_a_function_of_pydantic_ai_is_read_from_its_installed_source(tmp_path: Path) -> None:
+    # More in test_static_installed.py.
     found = one_agent(
         tmp_path,
         """
@@ -367,16 +358,22 @@ def test_a_tool_made_by_a_library_function_is_shown_under_the_name_the_library_g
         )
         """,
     )
-    assert [(t.name, t.function, t.parameters_schema, t.location and t.location.line) for t in found.tools] == [
-        ("duckduckgo_search", "pydantic_ai.common_tools.duckduckgo.duckduckgo_search_tool", None, 10),
-        ("tavily_search", "pydantic_ai.common_tools.tavily.tavily_search_tool", None, 10),
+    version = pydantic_ai_version()
+    assert [(t.name, t.function, t.library_version, t.location and t.location.line) for t in found.tools] == [
+        ("duckduckgo_search", "pydantic_ai.common_tools.duckduckgo.DuckDuckGoSearchTool.__call__", version, 10),
+        ("tavily_search", "pydantic_ai.common_tools.tavily.tavily_search_tool", version, 10),
     ]
+    assert found.tools[0].parameters_schema == {
+        "additionalProperties": False,
+        "properties": {"query": {"description": "The query to search for.", "type": "string"}},
+        "required": ["query"],
+        "type": "object",
+    }
     assert found.warnings == [
         "a tool is built by `their_search_tool()`; it cannot be described without running the code",
-        "the tool `duckduckgo_search` is `pydantic_ai.common_tools.duckduckgo.duckduckgo_search_tool`, which is "
-        "defined outside the analysed source, so its description and parameters are not shown",
-        "the tool `tavily_search` is `pydantic_ai.common_tools.tavily.tavily_search_tool`, which is defined "
-        "outside the analysed source, so its description and parameters are not shown",
+        "the tool `tavily_search` is made by `pydantic_ai.common_tools.tavily.tavily_search_tool`; its name and "
+        f"description are read from the installed Pydantic AI {version}, and its parameters are only known when "
+        "the code runs",
     ]
 
 

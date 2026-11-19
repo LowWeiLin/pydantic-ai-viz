@@ -198,12 +198,13 @@ def test_a_blueprint_read_from_code_carries_locations_and_expressions() -> None:
     agent["source"] = "code"
     agent["location"] = location
     agent["model"] = {"id": None, "name": "get_model()", "provider": None, "offline": False}
-    agent["model"]["expression"] = "get_model()"
+    agent["model"] |= {"expression": "get_model()", "model_class": "OpenAIChatModel"}
+    agent["model"]["env"] = {"variable": "MODEL", "default": "gpt-5.2"}
     agent["instructions"][0]["location"] = location
     agent["instructions"][1] |= {"function": None, "expression": "PROMPTS[role]", "location": location}
     agent["toolsets"][0]["location"] = location
     agent["toolsets"][1] |= {"opaque": True, "expression": "build_toolset(env)"}
-    agent["tools"][0] |= {"origin": "code", "location": location}
+    agent["tools"][0] |= {"origin": "code", "location": location, "library_version": "2.70.0"}
     agent["output"]["location"] = location
     agent["settings"]["expressions"] = {"tool_retries": "RETRIES", "model_settings.temperature": "TEMP"}
     agent["delegates"][0]["evidence"] = "code"

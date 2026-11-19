@@ -163,6 +163,8 @@ def test_computed_values_are_reported_as_source_text_never_guessed() -> None:
         "provider": None,
         "offline": False,
         "expression": "get_model()",
+        "model_class": None,
+        "env": None,
     }
     # A computed name leaves the variable name as the label.
     assert (computed.name, computed.label, computed.description) == (None, "computed", None)
@@ -171,20 +173,16 @@ def test_computed_values_are_reported_as_source_text_never_guessed() -> None:
         return (instruction.dynamic, instruction.text, instruction.function, instruction.expression)
 
     assert [shape(i) for i in computed.instructions] == [
-        # What PREAMBLE was given, as it would read inline: a call of a library function is not evaluated.
-        (
-            True,
-            None,
-            None,
-            'dedent(\n    """\n    You are part of the support team.\n    Stay polite.\n    """\n).strip()',
-        ),
+        # PREAMBLE: ``textwrap.dedent`` of a literal is evaluated, exactly as Python does it.
+        (False, "You are part of the support team.\nStay polite.", None, None),
+        # A template, shown whole: the placeholders are filled in when the code runs.
         (True, "You work for the {TEAM} team, tier {os.environ.get('TIER', 'basic')!r}.", None, None),
         (True, None, None, 'PROMPTS["support"]'),
         (True, None, None, "house_style"),
         (True, None, None, "lambda ctx: ctx.deps.motto"),
         (True, None, None, "GREETING"),  # assigned twice in the file
         (True, None, "dynamic_values.with_context", None),
-        (True, None, None, 'PREAMBLE + " Answer in English."'),
+        (False, "You are part of the support team.\nStay polite. Answer in English.", None, None),
     ]
 
     assert computed.settings.model_dump() == {
@@ -203,16 +201,10 @@ def test_computed_values_are_reported_as_source_text_never_guessed() -> None:
         'the name is computed by `f"support-{TEAM}"`, so it is only known when the code runs',
         'the description is computed by `house_style("support")`, so it is only known when the code runs',
         "the model is set by `get_model()`, so it is only known when the code runs",
-        'one of the instructions is the expression `dedent( """ You are part of the support team. Stay polite. """ )'
-        ".strip()`; its text is only known when the code runs",
-        "one of the instructions is the template `You work for the {TEAM} team, tier "
-        "{os.environ.get('TIER', 'basic')!r}.`; what is in braces is filled in when the code runs",
         'one of the instructions is the expression `PROMPTS["support"]`; its text is only known when the code runs',
         "one of the instructions is `house_style` (my_company.prompts.house_style), which is defined outside the "
         "analysed source; whether it is text or a function is not known",
         "one of the instructions is the expression `GREETING`; its text is only known when the code runs",
-        'one of the system prompts is the expression `PREAMBLE + " Answer in English."`; '
-        "its text is only known when the code runs",
     ]
 
 
@@ -226,6 +218,8 @@ def test_models_given_in_other_ways() -> None:
         "provider": "openai",
         "offline": False,
         "expression": None,
+        "model_class": None,
+        "env": None,
     }
     assert by_constant.settings.expressions == {
         "tool_retries": "compute_retries()",
@@ -244,12 +238,27 @@ def test_models_given_in_other_ways() -> None:
         "provider": None,
         "offline": False,
         "expression": 'OpenAIChatModel("gpt-5.2", provider=make_provider())',
+        "model_class": "OpenAIChatModel",
+        "env": None,
     }
     assert by_class.warnings == []
 
     by_env = agent(found, "by_env")
     assert by_env.model is not None
-    assert by_env.model.expression == 'os.getenv("MODEL", "openai:gpt-5.2")'  # the default is not taken as the value
+    # Read from the environment: the default is reported as a default, never taken for the value.
+    assert by_env.model.model_dump() == {
+        "id": None,
+        "name": 'os.getenv("MODEL", "openai:gpt-5.2")',
+        "provider": None,
+        "offline": False,
+        "expression": 'os.getenv("MODEL", "openai:gpt-5.2")',
+        "model_class": None,
+        "env": {"variable": "MODEL", "default": "openai:gpt-5.2"},
+    }
+    assert by_env.warnings[0] == (
+        "the model comes from the environment variable `MODEL` when the code runs; "
+        "the source's default is `openai:gpt-5.2`"
+    )
 
     assert agent(found, "no_model").model is None
     splatted = agent(found, "splatted")
@@ -284,6 +293,8 @@ def test_offline_model_classes_are_recognised_but_not_named(tmp_path: Path) -> N
         "provider": "test",
         "offline": True,
         "expression": 'TestModel(custom_output_text="hi")',
+        "model_class": "TestModel",
+        "env": None,
     }
     assert agent(found, "tested").warnings == []
     scripted, shared, impostor = models["scripted"], models["shared"], models["impostor"]
@@ -331,16 +342,24 @@ def test_a_model_class_given_a_literal_name_names_the_model(tmp_path: Path) -> N
     )
     models = {blueprint.label: blueprint.model for blueprint in found.agents}
     warnings = {blueprint.label: blueprint.warnings for blueprint in found.agents}
-    assert [(label, m.name, m.expression, m.id, m.provider) for label, m in models.items() if m] == [
-        ("through_variable", "gpt-5.2", 'OpenAIChatModel("gpt-5.2", provider=make_provider())', None, None),
-        ("through_factory", "claude-sonnet-5", "build_model()", None, None),
-        # A computed name, a model that wraps others, a class from elsewhere: only the expression is known.
+    assert [(label, m.name, m.expression, m.id, m.provider, m.model_class) for label, m in models.items() if m] == [
+        (
+            "through_variable",
+            "gpt-5.2",
+            'OpenAIChatModel("gpt-5.2", provider=make_provider())',
+            None,
+            None,
+            "OpenAIChatModel",
+        ),
+        ("through_factory", "claude-sonnet-5", "build_model()", None, None, "AnthropicModel"),
+        # A name from the environment, a model that wraps others, a class from elsewhere: the expression.
         (
             "from_environment",
             'OpenAIChatModel(os.environ["MODEL"])',
             'OpenAIChatModel(os.environ["MODEL"])',
             None,
             None,
+            "OpenAIChatModel",
         ),
         (
             "wrapped",
@@ -348,12 +367,18 @@ def test_a_model_class_given_a_literal_name_names_the_model(tmp_path: Path) -> N
             "FallbackModel(shared_model, build_model())",
             None,
             None,
+            "FallbackModel",
         ),
-        ("not_ours", 'LocalModel("llama")', 'LocalModel("llama")', None, None),
+        ("not_ours", 'LocalModel("llama")', 'LocalModel("llama")', None, None, None),
     ]
     assert (warnings["through_variable"], warnings["through_factory"]) == ([], [])
+    environment = models["from_environment"]
+    assert environment is not None
+    assert environment.env is not None
+    assert (environment.env.variable, environment.env.default) == ("MODEL", None)
     assert warnings["from_environment"] == [
-        'the model is set by `OpenAIChatModel(os.environ["MODEL"])`, so it is only known when the code runs'
+        "the model name of `OpenAIChatModel` comes from the environment variable `MODEL` when the code runs; "
+        "the source gives no default"
     ]
     assert len(warnings["wrapped"]) == len(warnings["not_ours"]) == 1
 

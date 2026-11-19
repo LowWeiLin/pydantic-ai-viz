@@ -56,6 +56,18 @@ class SourceLocation(WireModel):
     line: int = Field(ge=1)
 
 
+class EnvironmentValue(WireModel):
+    """A value the code reads from an environment variable when it runs (``os.getenv("X", default)``)."""
+
+    variable: str
+    """The name of the environment variable."""
+    default: str | None
+    """The default the source gives, used only when the variable is not set; ``None`` when it gives none.
+
+    It is never the value: the environment the code runs in decides that.
+    """
+
+
 class ModelInfo(WireModel):
     id: str | None
     name: str
@@ -67,13 +79,29 @@ class ModelInfo(WireModel):
     ``name`` then repeats it, unless the source builds one of Pydantic AI's model classes
     with a literal model name (``OpenAIChatModel("gpt-5.2", ...)``): that name is the ``name``.
     """
+    model_class: str | None
+    """The Pydantic AI model class the model is an instance of (``OpenAIChatModel``), when that is known.
+
+    Static analysis knows it when the source constructs one of Pydantic AI's model classes.
+    """
+    env: EnvironmentValue | None
+    """Set when the model name is read from an environment variable when the code runs.
+
+    The name then is the one in the environment: ``name`` and ``expression`` hold the source text,
+    and ``model_class`` the class built with that name, if one is.
+    """
 
 
 class Instruction(WireModel):
     kind: Literal["instructions", "system_prompt"]
     dynamic: bool
     text: str | None
-    """The literal text; for a dynamic f-string, its template with ``{...}`` placeholders."""
+    """The literal text; for a template (a dynamic f-string or ``str.format`` call), the template.
+
+    A template is written in the syntax of ``str.format``: each part filled in when the code runs
+    is a placeholder in braces (``{date}``), and a literal brace is doubled (``{{``). A placeholder
+    whose value the source gives is already filled in.
+    """
     function: str | None
     expression: str | None
     """Source text of a value that is neither a literal, an f-string nor a named function."""
@@ -105,6 +133,12 @@ class Tool(WireModel):
     function: str | None
     origin: Provenance
     location: SourceLocation | None
+    library_version: str | None
+    """Set for a tool that Pydantic AI itself defines (``duckduckgo_search_tool()``), read by static
+    analysis from the source of the installed Pydantic AI: the version of that installation.
+
+    The project may use another version, whose tool can differ.
+    """
 
 
 class OutputInfo(WireModel):

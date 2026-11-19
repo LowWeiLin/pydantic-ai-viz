@@ -649,8 +649,9 @@ def test_the_strip_methods_of_a_literal_string_are_applied() -> None:
 
 
 def test_a_call_of_a_library_function_is_not_evaluated_even_when_it_is_pure() -> None:
-    # ``textwrap.dedent`` would give the same text every time; it is still code outside the source.
-    for call in ('dedent("  x")', 'textwrap.dedent("  x")', 'inspect.cleandoc("x")', 'dedent("  x").strip()'):
+    # Only the two text functions of the analyser's allow-list are evaluated (see test_static_stdlib.py).
+    # ``textwrap.indent`` or ``str.upper`` would give the same text every time; they are still not read.
+    for call in ('textwrap.indent("x", "  ")', 'textwrap.fill("x")', "inspect.getdoc(f)", '"x".upper()'):
         with pytest.raises(NotLiteral):
             value(f"import inspect, textwrap\nfrom textwrap import dedent\nvalue = {call}\n")
 
@@ -750,6 +751,7 @@ def test_an_f_string_becomes_a_template() -> None:
     )
     node = module.scope.bindings["value"][0].node
     assert isinstance(node, ast.JoinedStr)
+    # In the syntax of ``str.format``: a literal brace stays doubled, so that it is not taken for a placeholder.
     assert fstring_template(node) == (
-        "Hi {user.name!r}, you have {count:>4} items{suffix} and {total:{...}.2f} EUR{literal}"
+        "Hi {user.name!r}, you have {count:>4} items{suffix} and {total:{...}.2f} EUR{{literal}}"
     )

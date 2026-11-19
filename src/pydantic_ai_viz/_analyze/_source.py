@@ -174,6 +174,8 @@ class Module:
     """``id(FunctionDef)`` -> the scope of its body."""
     class_scopes: dict[int, Scope] = field(default_factory=dict[int, Scope])
     """``id(ClassDef)`` -> the scope of its body."""
+    installed: bool = False
+    """A file of the installed Pydantic AI, not of the project: its imports are never followed."""
 
     def __post_init__(self) -> None:
         self.directory = str(self.path.parent)

@@ -495,6 +495,8 @@ def test_view_reads_the_source_and_runs_none_of_it(capsys: pytest.CaptureFixture
         "provider": "function",
         "offline": True,
         "expression": "FunctionModel(never)",
+        "model_class": "FunctionModel",
+        "env": None,
     }
     # Nothing ran and nothing global was touched.
     assert _compat.instrumentation_default() is before

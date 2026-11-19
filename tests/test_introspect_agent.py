@@ -135,6 +135,8 @@ def test_full_agent_blueprint() -> None:
                 "provider": "function",
                 "offline": True,
                 "expression": None,
+                "model_class": "FunctionModel",
+                "env": None,
             },
             "deps_type": "test_introspect_agent.Deps",
             "instructions": [
@@ -212,6 +214,7 @@ def test_full_agent_blueprint() -> None:
                     "function": "test_introspect_agent.get_weather",
                     "origin": "object",
                     "location": None,
+                    "library_version": None,
                 },
                 {
                     "name": "flaky",
@@ -231,6 +234,7 @@ def test_full_agent_blueprint() -> None:
                     "function": "test_introspect_agent.flaky",
                     "origin": "object",
                     "location": None,
+                    "library_version": None,
                 },
                 {
                     "name": "delegate_research",
@@ -250,6 +254,7 @@ def test_full_agent_blueprint() -> None:
                     "function": "test_introspect_agent.delegate_research",
                     "origin": "object",
                     "location": None,
+                    "library_version": None,
                 },
                 {
                     "name": "add",
@@ -269,6 +274,7 @@ def test_full_agent_blueprint() -> None:
                     "function": "test_introspect_agent.add",
                     "origin": "object",
                     "location": None,
+                    "library_version": None,
                 },
             ],
             "native_tools": ["tool_search"],
@@ -312,14 +318,30 @@ def test_full_agent_blueprint() -> None:
 
 def test_model_instance() -> None:
     assert _agent_blueprint(Agent(TestModel())).model == snapshot(
-        ModelInfo(id="test:test", name="test", provider="test", offline=True, expression=None)
+        ModelInfo(
+            id="test:test",
+            name="test",
+            provider="test",
+            offline=True,
+            expression=None,
+            model_class="TestModel",
+            env=None,
+        )
     )
 
 
 def test_model_string_with_deferred_check_is_not_resolved() -> None:
     agent = Agent("openai:gpt-5.2", defer_model_check=True)
     assert _agent_blueprint(agent).model == snapshot(
-        ModelInfo(id="openai:gpt-5.2", name="gpt-5.2", provider="openai", offline=False, expression=None)
+        ModelInfo(
+            id="openai:gpt-5.2",
+            name="gpt-5.2",
+            provider="openai",
+            offline=False,
+            expression=None,
+            model_class=None,
+            env=None,
+        )
     )
     assert agent.model == "openai:gpt-5.2"
 
@@ -327,7 +349,7 @@ def test_model_string_with_deferred_check_is_not_resolved() -> None:
 def test_model_string_without_provider_prefix() -> None:
     agent = Agent("test", defer_model_check=True)
     assert _agent_blueprint(agent).model == snapshot(
-        ModelInfo(id="test", name="test", provider=None, offline=False, expression=None)
+        ModelInfo(id="test", name="test", provider=None, offline=False, expression=None, model_class=None, env=None)
     )
 
 
@@ -337,7 +359,9 @@ def test_model_none() -> None:
 
 def test_offline_flag_follows_the_provider() -> None:
     assert _agent_blueprint(Agent("function:x", defer_model_check=True)).model == snapshot(
-        ModelInfo(id="function:x", name="x", provider="function", offline=True, expression=None)
+        ModelInfo(
+            id="function:x", name="x", provider="function", offline=True, expression=None, model_class=None, env=None
+        )
     )
 
 
@@ -760,6 +784,7 @@ def test_external_tools_have_no_python_function() -> None:
             "function": None,
             "origin": "object",
             "location": None,
+            "library_version": None,
         }
     )
 

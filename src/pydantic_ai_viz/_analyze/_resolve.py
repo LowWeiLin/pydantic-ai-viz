@@ -167,7 +167,11 @@ class Project:
         then in each directory above it up to where its project starts, then in
         ``bases``. Failing that, ``a.b.c`` is the one file of the project whose path
         ends in ``a/b/c.py``, if exactly one does.
+
+        A file of the installed Pydantic AI finds none: what it imports stays an ``External``.
         """
+        if importer.installed:
+            return None
         key = (importer.directory, dotted, level)
         if key in self._found:
             return self._found[key]
@@ -584,6 +588,10 @@ class Resolver:
         base = _absolute(importer, dotted, binding.level)
         # ``from . import x`` outside any known package keeps its dot: ``.x``.
         return External(f"{base}{binding.attr}" if not base or base.endswith(".") else f"{base}.{binding.attr}")
+
+    def member(self, module: Module, name: str) -> Resolved:
+        """What ``name`` is at the top level of ``module`` once the module has run."""
+        return self._member(module, name)
 
     def _member(self, module: Module, name: str, depth: int = 0, trail: frozenset[int] = frozenset()) -> Resolved:
         """What ``name`` is at the top level of ``module`` once the module has run."""

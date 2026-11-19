@@ -505,6 +505,33 @@
       "title": "Delegate",
       "type": "object"
     },
+    "EnvironmentValue": {
+      "additionalProperties": false,
+      "description": "A value the code reads from an environment variable when it runs (``os.getenv(\"X\", default)``).",
+      "properties": {
+        "default": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Default"
+        },
+        "variable": {
+          "title": "Variable",
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable",
+        "default"
+      ],
+      "title": "EnvironmentValue",
+      "type": "object"
+    },
     "GraphBlueprint": {
       "additionalProperties": false,
       "description": "Structure of one pydantic-graph ``Graph``, read from code or from a live object.",
@@ -1151,6 +1178,16 @@
     "ModelInfo": {
       "additionalProperties": false,
       "properties": {
+        "env": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EnvironmentValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "expression": {
           "anyOf": [
             {
@@ -1172,6 +1209,17 @@
             }
           ],
           "title": "Id"
+        },
+        "model_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model Class"
         },
         "name": {
           "title": "Name",
@@ -1198,7 +1246,9 @@
         "name",
         "provider",
         "offline",
-        "expression"
+        "expression",
+        "model_class",
+        "env"
       ],
       "title": "ModelInfo",
       "type": "object"
@@ -2049,6 +2099,17 @@
           "title": "Kind",
           "type": "string"
         },
+        "library_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Library Version"
+        },
         "location": {
           "anyOf": [
             {
@@ -2117,7 +2178,8 @@
         "max_retries",
         "function",
         "origin",
-        "location"
+        "location",
+        "library_version"
       ],
       "title": "Tool",
       "type": "object"

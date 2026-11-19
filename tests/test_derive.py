@@ -64,7 +64,15 @@ async def test_unregistered_agent_gets_an_observed_blueprint_with_its_tools() ->
             "description": "Main demo agent",
             "source": "observed",
             "location": None,
-            "model": {"id": None, "name": "scripted-fn", "provider": "function", "offline": True, "expression": None},
+            "model": {
+                "id": None,
+                "name": "scripted-fn",
+                "provider": "function",
+                "offline": True,
+                "expression": None,
+                "model_class": None,
+                "env": None,
+            },
             "deps_type": None,
             "instructions": [
                 {
@@ -121,6 +129,7 @@ User is ann.\
                     "function": None,
                     "origin": "observed",
                     "location": None,
+                    "library_version": None,
                 },
                 {
                     "name": "flaky",
@@ -140,6 +149,7 @@ User is ann.\
                     "function": None,
                     "origin": "observed",
                     "location": None,
+                    "library_version": None,
                 },
                 {
                     "name": "delegate_research",
@@ -159,6 +169,7 @@ User is ann.\
                     "function": None,
                     "origin": "observed",
                     "location": None,
+                    "library_version": None,
                 },
                 {
                     "name": "add",
@@ -178,6 +189,7 @@ User is ann.\
                     "function": None,
                     "origin": "observed",
                     "location": None,
+                    "library_version": None,
                 },
             ],
             "native_tools": [],
@@ -222,6 +234,7 @@ User is ann.\
                 "function": None,
                 "origin": "observed",
                 "location": None,
+                "library_version": None,
             }
         ]
     )
@@ -470,6 +483,7 @@ async def test_tools_from_an_opaque_toolset_are_added_to_a_static_blueprint() ->
             "function": None,
             "origin": "observed",
             "location": None,
+            "library_version": None,
         }
     )
 
@@ -550,7 +564,15 @@ def test_observed_blueprint_shape() -> None:
             "description": "Helps",
             "source": "observed",
             "location": None,
-            "model": {"id": None, "name": "gpt-x", "provider": None, "offline": False, "expression": None},
+            "model": {
+                "id": None,
+                "name": "gpt-x",
+                "provider": None,
+                "offline": False,
+                "expression": None,
+                "model_class": None,
+                "env": None,
+            },
             "deps_type": None,
             "instructions": [],
             "toolsets": [],
@@ -639,6 +661,7 @@ def test_merge_request_into_an_observed_blueprint() -> None:
             "function": None,
             "origin": "observed",
             "location": None,
+            "library_version": None,
         }
     )
     assert dumped["output"] == snapshot(
@@ -667,6 +690,8 @@ def test_merge_request_into_an_observed_blueprint() -> None:
         "provider": "function",
         "offline": True,
         "expression": None,
+        "model_class": None,
+        "env": None,
     }
     assert AgentBlueprint.model_validate(dumped) == merged
 

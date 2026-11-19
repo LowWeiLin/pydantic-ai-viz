@@ -36,7 +36,9 @@ def observed_blueprint(id: str, name: str, *, description: str | None, model_nam
         location=None,
         model=None
         if model_name is None
-        else ModelInfo(id=None, name=model_name, provider=None, offline=False, expression=None),
+        else ModelInfo(
+            id=None, name=model_name, provider=None, offline=False, expression=None, model_class=None, env=None
+        ),
         deps_type=None,
         instructions=[],
         toolsets=[],
@@ -101,6 +103,7 @@ def _observed_tool(raw: Mapping[str, Any], name: str, toolset: str) -> Tool:
         function=None,
         origin="observed",
         location=None,
+        library_version=None,
     )
 
 

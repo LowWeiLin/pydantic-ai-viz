@@ -264,6 +264,7 @@ def _tool(
         function=function,
         origin="object",
         location=None,
+        library_version=None,
     )
 
 
@@ -349,7 +350,13 @@ def _model_info(agent: AnyAgent) -> ModelInfo | None:
         if not separator:
             provider, name = None, model
         return ModelInfo(
-            id=model, name=name, provider=provider, offline=provider in _compat.OFFLINE_PROVIDERS, expression=None
+            id=model,
+            name=name,
+            provider=provider,
+            offline=provider in _compat.OFFLINE_PROVIDERS,
+            expression=None,
+            model_class=None,
+            env=None,
         )
     name_attr: Any = _safe_getattr(model, "model_name")
     provider_attr: Any = _safe_getattr(model, "system")
@@ -361,6 +368,8 @@ def _model_info(agent: AnyAgent) -> ModelInfo | None:
         provider=provider,
         offline=provider in _compat.OFFLINE_PROVIDERS,
         expression=None,
+        model_class=type(model).__name__,
+        env=None,
     )
 
 

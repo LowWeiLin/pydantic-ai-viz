@@ -4,9 +4,14 @@ A value is read only when the source spells it out: constants, containers of
 constants, string concatenation, f-strings and ``"...".format(...)`` whose every
 placeholder is itself such a value, the ``strip`` methods of ``str``, ``a if condition else b`` whose
 condition is such a value, and a name that is assigned
-such a value once and whose value is not changed in place afterwards. A call of
-any function, of the standard library or not, is not evaluated. Everything else
+such a value once and whose value is not changed in place afterwards. Everything else
 raises ``NotLiteral``; the caller then reports the source text instead of a value.
+
+A call of a function is not evaluated, with the exceptions listed in ``PURE_TEXT_FUNCTIONS``:
+two functions of the standard library that only rearrange the text they are given, applied
+to a literal string as Python would apply them. Reading an environment variable is not
+evaluated either; ``environment`` says which variable an expression reads, and the default
+the source gives, so that the caller can report both for what they are.
 
 There is no ``eval`` and no ``ast.literal_eval`` here: both walk recursively
 without a bound. This reader counts what it visits and gives up on anything
@@ -16,12 +21,15 @@ deeper or larger than a prompt or a settings dict could plausibly be.
 from __future__ import annotations
 
 import ast
+import inspect
 import string as _string
+import textwrap
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
-from ._resolve import Expression, Resolver
-from ._source import Scope, clip_expression
+from ._resolve import Expression, External, Resolver
+from ._source import Scope, clip_expression, unwrap
 
 MAX_DEPTH = 24
 MAX_NODES = 5_000
@@ -29,10 +37,32 @@ MAX_STRING_CHARS = 200_000
 _MAX_INT = 2**63
 _STR_METHODS = frozenset({"strip", "lstrip", "rstrip"})
 """Methods of ``str`` applied to a literal string, when called without arguments."""
+PURE_TEXT_FUNCTIONS: dict[str, Callable[[str], str]] = {
+    "textwrap.dedent": textwrap.dedent,
+    "inspect.cleandoc": inspect.cleandoc,
+}
+"""The functions of the standard library that are evaluated, on one literal string and nothing else.
+
+Each one only rearranges the text it is given: it reads nothing else and changes nothing, so
+calling the real function on the literal gives exactly what the running code gets.
+"""
+ENVIRONMENT_GETTERS = frozenset({"os.getenv", "os.environ.get"})
+"""Calls that read an environment variable: ``(name)`` or ``(name, default)``."""
+ENVIRONMENT = "os.environ"
+"""The mapping of environment variables, read as ``os.environ[name]``."""
 
 
 class NotLiteral(Exception):
     """The expression is not a literal value that can be read from source."""
+
+
+@dataclass(frozen=True, slots=True)
+class EnvironmentRead:
+    """An expression that reads an environment variable when the code runs."""
+
+    variable: str
+    default: str | None
+    """The default the source gives, if it gives one: what is used when the variable is not set."""
 
 
 class _Budget:
@@ -113,6 +143,14 @@ def _read(resolver: Resolver, expression: Expression, depth: int, budget: _Budge
         inside = resolver.cast_value(node, expression.scope, expression.line)
         if inside is not None:
             return child(inside)
+        function = _pure_text_function(resolver, node, expression.scope, expression.line)
+        if function is not None:
+            if len(node.args) != 1 or node.keywords or isinstance(node.args[0], ast.Starred):
+                raise NotLiteral
+            text = child(node.args[0])
+            if not isinstance(text, str):
+                raise NotLiteral
+            return _bounded(function(text))
         if isinstance(node.func, ast.Attribute) and node.func.attr in _STR_METHODS:
             return _string_method(resolver, expression, node, depth, budget)
         if isinstance(node.func, ast.Attribute) and node.func.attr == "format":
@@ -120,6 +158,59 @@ def _read(resolver: Resolver, expression: Expression, depth: int, budget: _Budge
         # What a function or method of the analysed files returns, when it has one ``return``.
         return _followed(resolver, expression, depth, budget)
     raise NotLiteral
+
+
+def _pure_text_function(resolver: Resolver, node: ast.Call, scope: Scope, line: int) -> Callable[[str], str] | None:
+    """The function of ``PURE_TEXT_FUNCTIONS`` that ``node`` calls, under whatever name it is imported."""
+    if not isinstance(node.func, ast.Name | ast.Attribute):
+        return None
+    callee = resolver.resolve(node.func, scope, line, depth=1)
+    return PURE_TEXT_FUNCTIONS.get(callee.name) if isinstance(callee, External) else None
+
+
+def environment(resolver: Resolver, node: ast.expr, scope: Scope, line: int | None = None) -> EnvironmentRead | None:
+    """The environment variable ``node`` reads, followed through names and functions; ``None`` if it reads none.
+
+    ``os.getenv(name)``, ``os.getenv(name, default)``, ``os.environ.get(...)`` alike, and
+    ``os.environ[name]``, under whatever names ``os`` and its members are imported. The name of
+    the variable must be a literal string, and so must the default, if the source gives one:
+    otherwise the expression is not read as an environment variable at all.
+    """
+    target = resolver.resolve(node, scope, node.lineno if line is None else line)
+    if resolver.reassigned() or not isinstance(target, Expression):
+        return None  # a name assigned in more than one place: which value it holds is decided at run time
+    read = unwrap(target.node)
+    where = (target.scope, target.line)
+    if isinstance(read, ast.Subscript) and not isinstance(read.slice, ast.Slice):
+        mapping = resolver.resolve(read.value, *where, depth=1)
+        if isinstance(mapping, External) and mapping.name == ENVIRONMENT:
+            variable = string(resolver, read.slice, *where)
+            return None if variable is None else EnvironmentRead(variable, None)
+        return None
+    if not isinstance(read, ast.Call) or not isinstance(read.func, ast.Name | ast.Attribute):
+        return None
+    callee = resolver.resolve(read.func, *where, depth=1)
+    if not isinstance(callee, External) or callee.name not in ENVIRONMENT_GETTERS:
+        return None
+    if any(isinstance(item, ast.Starred) for item in read.args) or len(read.args) > 2:
+        return None
+    given: dict[str, ast.expr] = dict(zip(("key", "default"), read.args, strict=False))
+    for keyword in read.keywords:
+        if keyword.arg not in ("key", "default") or keyword.arg in given:
+            return None  # ``**options``, or an argument these functions do not take
+        given[keyword.arg] = keyword.value
+    if "key" not in given:
+        return None
+    variable = string(resolver, given["key"], *where)
+    if variable is None:
+        return None
+    if "default" not in given:
+        return EnvironmentRead(variable, None)
+    try:
+        default = literal(resolver, given["default"], *where)
+    except NotLiteral:
+        return None  # a default the code computes: the whole expression is shown as it is written
+    return EnvironmentRead(variable, default) if default is None or isinstance(default, str) else None
 
 
 def _followed(resolver: Resolver, expression: Expression, depth: int, budget: _Budget) -> Any:
@@ -240,22 +331,80 @@ def _format(node: ast.Call, read: Callable[[ast.expr], Any]) -> str:
 
 
 # --------------------------------------------------------------- templates
+#
+# A template is written in the syntax of ``str.format``: literal text with every brace doubled,
+# and each part that the running code fills in as a placeholder in single braces. A placeholder
+# whose value the source spells out is filled in already.
+
+
+def _escaped(text: str) -> str:
+    return text.replace("{", "{{").replace("}", "}}")
 
 
 def format_template(resolver: Resolver, node: ast.expr, scope: Scope, line: int) -> str | None:
-    """``"You are {role}.".format(...)`` as a template: the string it is called on, braces and all."""
+    """``"You are {role}.".format(...)`` as a template: the string it is called on, filled in where it can be."""
     if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format"):
         return None
-    return string(resolver, node.func.value, scope, line)
+    template = string(resolver, node.func.value, scope, line)
+    if template is None:
+        return None
+    try:
+        fields = list(_string.Formatter().parse(template))
+    except ValueError:
+        return None  # unbalanced braces: what the running code raises on
+    spread = any(isinstance(item, ast.Starred) for item in node.args) or any(item.arg is None for item in node.keywords)
+    named = {keyword.arg: keyword.value for keyword in node.keywords if keyword.arg is not None}
+
+    def given(field: str, automatic: int) -> ast.expr | None:
+        """The argument a placeholder takes; ``None`` when that is decided at run time."""
+        if spread:
+            return None  # ``*values`` or ``**values``: which placeholder gets what is decided at run time
+        if field == "" or field.isdigit():
+            index = automatic if field == "" else int(field)
+            return node.args[index] if index < len(node.args) else None
+        return named.get(field) if field.isidentifier() else None
+
+    parts: list[str] = []
+    automatic = 0
+    for text, field, spec, conversion in fields:
+        parts.append(_escaped(text))
+        if field is None:
+            continue
+        argument = given(field, automatic)
+        automatic += field == ""
+        filled = None if argument is None or spec or conversion else _scalar(resolver, argument, scope, line)
+        if filled is not None:
+            parts.append(_escaped(filled))
+        else:
+            parts.append("{" + field + (f"!{conversion}" if conversion else "") + (f":{spec}" if spec else "") + "}")
+    return "".join(parts)
 
 
-def fstring_template(node: ast.JoinedStr) -> str:
-    """An f-string as a template: its literal text with each placeholder as ``{expression}``."""
+def _scalar(resolver: Resolver, node: ast.expr, scope: Scope, line: int) -> str | None:
+    """A literal string or number as ``str.format`` writes it; ``None`` for anything else."""
+    try:
+        value = literal(resolver, node, scope, line)
+    except NotLiteral:
+        return None
+    return str(value) if isinstance(value, str | int | float) and not isinstance(value, bool) else None
+
+
+def fstring_template(node: ast.JoinedStr, read: Callable[[ast.expr], Any] | None = None) -> str:
+    """An f-string as a template, each placeholder as ``{expression}``.
+
+    With ``read``, a placeholder whose value it reads is filled in.
+    """
     parts: list[str] = []
     for part in node.values:
         if isinstance(part, ast.Constant):
-            parts.append(str(part.value))
+            parts.append(_escaped(str(part.value)))
         elif isinstance(part, ast.FormattedValue):
+            if read is not None:
+                try:
+                    parts.append(_escaped(_fstring_part(part, read)))
+                    continue
+                except NotLiteral:
+                    pass
             parts.append("{" + _placeholder(part) + "}")
     return "".join(parts)
 
@@ -266,6 +415,8 @@ def _placeholder(part: ast.FormattedValue) -> str:
     except (RecursionError, ValueError):
         text = "..."
     text = clip_expression(text)
+    if text.startswith("{"):
+        text = " " + text  # ``{ {...}[key]}``: not to be read as a doubled brace
     if part.conversion in (ord("r"), ord("s"), ord("a")):
         text += f"!{chr(part.conversion)}"
     spec = part.format_spec
