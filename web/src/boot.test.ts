@@ -160,6 +160,7 @@ describe("startBoot", () => {
       close() {
         this.closed = true;
       }
+      addEventListener() {}
     }
     vi.stubGlobal("EventSource", FakeEventSource);
 

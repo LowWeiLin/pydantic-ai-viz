@@ -3,7 +3,9 @@
  * scrolls. It does so only when that cannot interrupt anything:
  *
  * - the view is pinned to now (pausing, scrubbing or stepping stops the following);
- * - the new run is still going (the backlog a late viewer receives is history, not news);
+ * - the new run is news: it entered the log after the server's backlog for this page ended,
+ *   or it is still going. Finished runs in the backlog a late viewer receives are history. A
+ *   run that ends within one batch of events (a fast agent, a busy page) is news all the same;
  * - the user is watching a run with no span selected, or waiting on a blueprint for the
  *   session's first run. Someone reading a blueprint while runs come and go is left alone.
  */
@@ -28,11 +30,14 @@ export const seenOf = (list: readonly RunSummary[]): Seen => ({
 export function followTarget(
   before: Seen,
   list: readonly RunSummary[],
-  context: { live: boolean; pinned: boolean; route: Route },
+  context: { live: boolean; pinned: boolean; route: Route; backlogEnd: number | null },
 ): string | null {
   const newest = list[0];
   if (!context.live || !context.pinned || !newest) return null;
-  if (newest.traceId === before.newest || newest.status !== "running") return null;
+  if (newest.traceId === before.newest) return null;
+  const { backlogEnd } = context;
+  const news = newest.status === "running" || (backlogEnd !== null && newest.firstSeq > backlogEnd);
+  if (!news) return null;
   const { route } = context;
   if (route.name === "run") {
     return route.spanId === null && route.traceId !== newest.traceId ? newest.traceId : null;
@@ -68,12 +73,13 @@ export function useFollowLive(route: Route): void {
   const list = useViewer((state) => runs(state.data));
   const live = useViewer((state) => state.source.kind === "live");
   const pinned = useViewer((state) => state.playback.mode === "live");
+  const backlogEnd = useViewer((state) => state.backlogEnd);
   const seen = useRef<Seen>(nothingSeen);
   useEffect(() => {
-    const target = followTarget(seen.current, list, { live, pinned, route });
+    const target = followTarget(seen.current, list, { live, pinned, route, backlogEnd });
     seen.current = seenOf(list);
     if (target === null) return;
     // From one run to the next the history keeps a single entry; Back leaves the runs.
     navigate({ name: "run", traceId: target, spanId: null }, { replace: route.name === "run" });
-  }, [list, live, pinned, route]);
+  }, [list, live, pinned, route, backlogEnd]);
 }

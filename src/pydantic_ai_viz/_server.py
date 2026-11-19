@@ -228,6 +228,8 @@ class _Handler(BaseHTTPRequestHandler):
             return
         with viewer.session._log.subscribe(seen) as stream:  # pyright: ignore[reportPrivateUsage]
             self.wfile.write(b"retry: 1000\n\n")
+            # Where the backlog ends: to this client, a run that starts after it is news.
+            self.wfile.write(encode(f"event: backlog\ndata: {dumps({'last_seq': stream.backlog_end})}\n\n"))
             while True:
                 events = stream.get(timeout=viewer.ping_interval)
                 if events:

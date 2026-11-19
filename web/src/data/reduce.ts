@@ -40,6 +40,8 @@ export type DataState = {
   traces: Readonly<Record<string, readonly string[]>>;
   /** trace_ids in first-seen order. */
   traceOrder: readonly string[];
+  /** The seq of the first span event of each trace: where it entered the log. */
+  traceSeq: Readonly<Record<string, number>>;
   /** Stream deltas per model_request span_id, in arrival order. */
   deltas: Readonly<Record<string, readonly DeltaRecord[]>>;
   /** Highest seq applied, or -1. Doubles as the SSE resume cursor. */
@@ -59,6 +61,7 @@ export const initialData: DataState = {
   spans: {},
   traces: {},
   traceOrder: [],
+  traceSeq: {},
   deltas: {},
   lastSeq: -1,
   lastTs: 0,
@@ -100,6 +103,7 @@ function freshDraft(): Draft {
     spans: {},
     traces: {},
     traceOrder: [],
+    traceSeq: {},
     deltas: {},
     lastSeq: -1,
     lastTs: 0,
@@ -117,6 +121,7 @@ function allOwned(): Owned {
       "spans",
       "traces",
       "traceOrder",
+      "traceSeq",
       "deltas",
     ]),
     traces: new Set(),
@@ -128,7 +133,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function upsertSpan(draft: Draft, owned: Owned, span: Span): void {
+function upsertSpan(draft: Draft, owned: Owned, span: Span, seq: number): void {
   const known = span.span_id in draft.spans;
   own(draft, owned, "spans")[span.span_id] = span;
   if (known) return;
@@ -139,6 +144,7 @@ function upsertSpan(draft: Draft, owned: Owned, span: Span): void {
     traces[span.trace_id] = [span.span_id];
     owned.traces.add(span.trace_id);
     own(draft, owned, "traceOrder").push(span.trace_id);
+    own(draft, owned, "traceSeq")[span.trace_id] = seq;
     return;
   }
   if (!owned.traces.has(span.trace_id)) {
@@ -216,12 +222,12 @@ function apply(draft: Draft, owned: Owned, env: Envelope): { draft: Draft; owned
       // A late or replayed start must not regress a span that has already ended.
       const current = draft.spans[env.span.span_id];
       if (current && current.end_ms !== null) break;
-      upsertSpan(draft, owned, env.span);
+      upsertSpan(draft, owned, env.span, env.seq);
       break;
     }
     case "span.ended": {
       if (!isObject(env.span) || typeof env.span.span_id !== "string") break;
-      upsertSpan(draft, owned, env.span);
+      upsertSpan(draft, owned, env.span, env.seq);
       break;
     }
     case "stream.delta": {

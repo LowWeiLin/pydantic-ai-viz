@@ -13,12 +13,19 @@ class FakeEventSource {
   onopen: (() => void) | null = null;
   onerror: (() => void) | null = null;
   onmessage: ((message: { data: string }) => void) | null = null;
+  named = new Map<string, (message: { data: string }) => void>();
   constructor(readonly url: string) {
     FakeEventSource.instances.push(this);
   }
   close(): void {
     this.closed = true;
     this.readyState = FakeEventSource.CLOSED;
+  }
+  addEventListener(name: string, listener: (message: { data: string }) => void): void {
+    this.named.set(name, listener);
+  }
+  sendNamed(name: string, data: string): void {
+    this.named.get(name)?.({ data });
   }
   send(envelope: Envelope | string): void {
     this.onmessage?.({ data: typeof envelope === "string" ? envelope : JSON.stringify(envelope) });
@@ -41,11 +48,13 @@ const runFrame = (): void => {
 function start() {
   const batches: Envelope[][] = [];
   const states: Connection[] = [];
+  const backlogs: number[] = [];
   const stop = startLiveSource("api/v1/events", {
     onEvents: (batch) => batches.push(batch),
     onConnection: (state) => states.push(state),
+    onBacklog: (seq) => backlogs.push(seq),
   });
-  return { batches, states, stop };
+  return { batches, states, backlogs, stop };
 }
 
 const events = log(
@@ -103,6 +112,17 @@ describe("startLiveSource", () => {
     latest().send(second);
     vi.advanceTimersByTime(250);
     expect(batches).toEqual([[first], [second]]);
+  });
+
+  test("where the server's backlog ends is passed on at once, and is not an envelope", () => {
+    const { batches, backlogs } = start();
+    latest().sendNamed("backlog", '{"last_seq":41}');
+    expect(backlogs).toEqual([41]);
+    latest().sendNamed("backlog", "{not json");
+    latest().sendNamed("backlog", '{"last_seq":"41"}');
+    expect(backlogs).toEqual([41]);
+    runFrame();
+    expect(batches).toEqual([]);
   });
 
   test("a malformed frame is skipped and the rest still arrive", () => {

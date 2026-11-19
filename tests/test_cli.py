@@ -136,11 +136,16 @@ def follow(session: Session, until: Callable[[list[dict[str, Any]]], bool]) -> l
     connection.request("GET", "/api/v1/events")
     response = connection.getresponse()
     events: list[dict[str, Any]] = []
+    named = False
     try:
         while not until(events):
             line = response.readline().decode("utf-8")
             assert line, "the event stream ended early"
-            if line.startswith("data: "):
+            if line.startswith("event: "):
+                named = True  # an event with a name of its own (the backlog marker) is not an envelope
+            elif line.strip() == "":
+                named = False
+            elif line.startswith("data: ") and not named:
                 events.append(json.loads(line[6:]))
     finally:
         response.close()

@@ -33,7 +33,11 @@ function stubFetch(handler: (url: string) => Response = () => new Response("", {
   return mock;
 }
 
-type FakeSource = { onopen?: () => void; onerror?: () => void };
+type FakeSource = {
+  onopen?: () => void;
+  onerror?: () => void;
+  named: Map<string, (m: { data: string }) => void>;
+};
 
 /** Replaces EventSource with one the test drives; returns the instances created. */
 function stubEventSource(): FakeSource[] {
@@ -44,10 +48,14 @@ function stubEventSource(): FakeSource[] {
     onopen?: () => void;
     onerror?: () => void;
     onmessage?: (m: { data: string }) => void;
+    named = new Map<string, (m: { data: string }) => void>();
     constructor() {
       sources.push(this);
     }
     close() {}
+    addEventListener(name: string, listener: (m: { data: string }) => void) {
+      this.named.set(name, listener);
+    }
   }
   vi.stubGlobal("EventSource", FakeEventSource);
   return sources;
@@ -241,6 +249,37 @@ describe("boot modes and states", () => {
     await user.click(screen.getByRole("button", { name: "Live" }));
     expect(useViewer.getState().playback.mode).toBe("live");
     expect(window.location.hash).toBe(`#/runs/${second}`);
+  });
+
+  test("a run that was over before the viewer drew it is followed, one in the backlog is not", async () => {
+    // A fast run can start and end between two frames: the viewer never sees it running.
+    const sources = stubEventSource();
+    render(<App plan={livePlan} />);
+    const source = sources.at(-1);
+    act(() => source?.onopen?.());
+    act(() => source?.named.get("backlog")?.({ data: '{"last_seq":3}' }));
+
+    const second = "f".repeat(32);
+    const old = agentRun({ id: "r1", start: 10, end: 50 });
+    const fast = agentRun({ id: "r2", trace: second, start: 100, end: 120 });
+    const events = log(
+      [1, { type: "blueprint.agent", agent: agentBlueprint({ id: "a1", name: "triage" }) }],
+      started(old),
+      ended(old),
+      started(fast),
+      ended(fast),
+    );
+    // The backlog (up to seq 3) holds a finished run: history, so the viewer stays home.
+    window.location.hash = "#/agents/a1";
+    act(() => useViewer.getState().ingest(events.slice(0, 4)));
+    await waitFor(() => expect(screen.getAllByRole("link", { name: /triage/ }).length).toBe(2));
+    expect(window.location.hash).toBe("#/agents/a1");
+
+    // Watching that run, the next one arrives whole in one batch, after the backlog: news.
+    window.location.hash = `#/runs/${TRACE}`;
+    await waitFor(() => expect(screen.getByRole("button", { name: "Live" })).toBeInTheDocument());
+    act(() => useViewer.getState().ingest(events.slice(4)));
+    await waitFor(() => expect(window.location.hash).toBe(`#/runs/${second}`));
   });
 
   test("a new session behind the same address starts the viewer over", async () => {

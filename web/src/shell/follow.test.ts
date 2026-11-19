@@ -4,7 +4,11 @@ import type { RunSummary } from "../data/selectors";
 import { followTarget, nothingSeen, type Seen, seenOf } from "./follow";
 import type { Route } from "./router";
 
-const run = (traceId: string, status: RunSummary["status"] = "running"): RunSummary => ({
+const run = (
+  traceId: string,
+  status: RunSummary["status"] = "running",
+  firstSeq = 0,
+): RunSummary => ({
   traceId,
   rootSpanId: "root",
   name: "triage",
@@ -15,6 +19,7 @@ const run = (traceId: string, status: RunSummary["status"] = "running"): RunSumm
   durationMs: 10,
   spanCount: 1,
   usage: { input_tokens: 0, output_tokens: 0 },
+  firstSeq,
 });
 
 const onRun = (traceId: string, spanId: string | null = null): Route => ({
@@ -23,7 +28,7 @@ const onRun = (traceId: string, spanId: string | null = null): Route => ({
   spanId,
 });
 const onAgent: Route = { name: "agent", id: "a1" };
-const watching = { live: true, pinned: true };
+const watching = { live: true, pinned: true, backlogEnd: null };
 const afterOne: Seen = { newest: "t1", count: 1 };
 
 describe("followTarget", () => {
@@ -53,13 +58,13 @@ describe("followTarget", () => {
   test("a paused or scrubbed view stays where it is", () => {
     const list = [run("t2"), run("t1", "ok")];
     expect(
-      followTarget(afterOne, list, { live: true, pinned: false, route: onRun("t1") }),
+      followTarget(afterOne, list, { ...watching, pinned: false, route: onRun("t1") }),
     ).toBeNull();
   });
 
   test("recordings never follow", () => {
     expect(
-      followTarget(nothingSeen, [run("t1")], { live: false, pinned: true, route: onAgent }),
+      followTarget(nothingSeen, [run("t1")], { ...watching, live: false, route: onAgent }),
     ).toBeNull();
   });
 
@@ -67,6 +72,23 @@ describe("followTarget", () => {
     const backlog = [run("t2", "ok"), run("t1", "error")];
     expect(followTarget(nothingSeen, backlog, { ...watching, route: onAgent })).toBeNull();
     expect(followTarget(nothingSeen, backlog, { ...watching, route: onRun("t1") })).toBeNull();
+    // The server says where its backlog ended: these runs are in it.
+    const told = { ...watching, backlogEnd: 40 };
+    const inBacklog = [run("t2", "ok", 30), run("t1", "error", 10)];
+    expect(followTarget(nothingSeen, inBacklog, { ...told, route: onAgent })).toBeNull();
+    expect(followTarget(nothingSeen, inBacklog, { ...told, route: onRun("t1") })).toBeNull();
+  });
+
+  test("a run that came after the backlog is followed even when it was over before it was seen", () => {
+    // A fast run can start and end between two renders; by then it is no longer "running".
+    const told = { ...watching, backlogEnd: 40 };
+    expect(followTarget(nothingSeen, [run("t1", "ok", 41)], { ...told, route: onAgent })).toBe(
+      "t1",
+    );
+    const list = [run("t2", "ok", 90), run("t1", "ok", 41)];
+    expect(followTarget(afterOne, list, { ...told, route: onRun("t1") })).toBe("t2");
+    // Until the server has said where its backlog ends, only a run still going is news.
+    expect(followTarget(afterOne, list, { ...watching, route: onRun("t1") })).toBeNull();
   });
 
   test("the same newest run is followed once, not on every event", () => {

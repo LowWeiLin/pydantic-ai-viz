@@ -51,6 +51,8 @@ describe("reduce", () => {
     expect(done.spans[sid("root")]).toEqual(root);
     expect(done.traces[TRACE]).toEqual([sid("root")]);
     expect(done.traceOrder).toEqual([TRACE]);
+    // Where the trace entered the log: its first span event, not a later one.
+    expect(done.traceSeq).toEqual({ [TRACE]: 1 });
   });
 
   test("span.ended without span.started is accepted", () => {

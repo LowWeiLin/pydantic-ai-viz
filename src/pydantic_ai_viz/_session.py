@@ -157,7 +157,7 @@ class EventLog:
             cursor = -1 if after is None or after >= self._next_seq else after
             self._subscribers += 1
             self._changed.notify_all()
-        return Subscription(self, cursor)
+            return Subscription(self, cursor, self._next_seq - 1)
 
     @property
     def subscriber_count(self) -> int:
@@ -188,10 +188,12 @@ class EventLog:
 class Subscription:
     """A reader's cursor into an ``EventLog``. Not shared between threads."""
 
-    def __init__(self, log: EventLog, cursor: int) -> None:
+    def __init__(self, log: EventLog, cursor: int, backlog_end: int) -> None:
         self._log = log
         self._cursor = cursor
         self._open = True
+        self.backlog_end = backlog_end
+        """``seq`` of the newest event when the subscription began: what follows it happened while it was open."""
 
     def get(self, timeout: float | None = None) -> list[Envelope]:
         """Envelopes newer than the last ones returned, waiting up to ``timeout`` seconds for the first.

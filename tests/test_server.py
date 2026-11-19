@@ -93,6 +93,8 @@ class EventStream:
         self.headers = {name.lower(): value for name, value in self.response.getheaders()}
         self.preamble: list[str] = []
         """Every line that is not part of an event: the retry field and comments."""
+        self.named: list[tuple[str, Any]] = []
+        """Events with a name of their own, which are not envelopes: ``(name, data)``."""
         self.ended = False
 
     def read(self, count: int) -> list[dict[str, Any]]:
@@ -104,6 +106,7 @@ class EventStream:
     def read_until_end(self, limit: int | None = None) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         event_id: str | None = None
+        name: str | None = None
         data: str | None = None
         while limit is None or len(events) < limit:
             line = self.response.readline().decode("utf-8")
@@ -113,15 +116,20 @@ class EventStream:
             line = line.rstrip("\n")
             if line.startswith("id: "):
                 event_id = line[4:]
+            elif line.startswith("event: "):
+                name = line[7:]
             elif line.startswith("data: "):
                 assert data is None, "one data line per event"
                 data = line[6:]
             elif line == "":
-                if data is not None:
+                if data is not None and name is not None:
+                    assert event_id is None, "a named event is not an envelope and moves no cursor"
+                    self.named.append((name, json.loads(data)))
+                elif data is not None:
                     envelope = json.loads(data)
                     assert event_id == event_id_of(self._session_id, envelope["seq"])
                     events.append(envelope)
-                event_id = data = None
+                event_id = name = data = None
             else:
                 self.preamble.append(line)
         return events
@@ -300,6 +308,8 @@ def test_events_sends_the_whole_backlog_then_tails(session: Session) -> None:
     assert "content-length" not in stream.headers
     received = stream.read(len(backlog))
     assert stream.preamble == ["retry: 1000"]  # first thing on the wire, before any event
+    # Then where the backlog ends, so the viewer can tell the runs it missed from new ones.
+    assert stream.named == [("backlog", {"last_seq": len(backlog) - 1})]
     assert received == backlog
     assert [event["seq"] for event in received] == list(range(len(backlog)))
     assert received[0]["type"] == "session.started"
@@ -340,6 +350,8 @@ def test_resume_with_last_event_id_sends_only_newer_events(session: Session) -> 
     received = stream.read(len(events) - middle - 1)
     assert received == events[middle + 1 :]
     assert received[0]["seq"] == middle + 1
+    # The backlog ends where the log stood on connecting, not where the client had got to.
+    assert stream.named == [("backlog", {"last_seq": events[-1]["seq"]})]
     stream.close()
 
     # Fully caught up: nothing is resent, the next thing on the stream is the next event.

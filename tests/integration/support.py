@@ -219,9 +219,14 @@ def follow(url: str, until: Callable[[Events], bool], *, timeout: float = 60) ->
     deadline = time.monotonic() + timeout
     events: Events = []
     with urllib.request.urlopen(f"{url}/api/v1/events", timeout=timeout) as stream:
+        named = False
         for raw in stream:
             line = raw.decode("utf-8")
-            if line.startswith("data: "):
+            if line.startswith("event: "):
+                named = True  # an event with a name of its own (the backlog marker) is not an envelope
+            elif line.strip() == "":
+                named = False
+            elif line.startswith("data: ") and not named:
                 events.extend(validated([line[len("data: ") :]], "event stream"))
                 if until(events):
                     return events

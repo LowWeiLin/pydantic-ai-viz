@@ -131,6 +131,7 @@ export function startBoot(plan: BootPlan): () => void {
       return startLiveSource(plan.eventsUrl, {
         onEvents: (envelopes) => useViewer.getState().ingest(envelopes),
         onConnection: (connection) => useViewer.getState().setConnection(connection),
+        onBacklog: (seq) => useViewer.getState().setBacklogEnd(seq),
       });
     }
     case "embedded": {

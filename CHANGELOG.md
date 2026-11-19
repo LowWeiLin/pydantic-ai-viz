@@ -11,6 +11,7 @@ The wire format has its own version number (`pviz`, currently `1`), recorded in 
 ### Changed
 
 - Wire format (still `pviz` 1): the rule that at most one blueprint has any given `name` now holds for `"capture"` sessions only. A `"blueprint"` session, such as `view`, has no runs to match by name, so two agents named alike in different files both keep their name and get no warning.
+- Live transport: `GET /api/v1/events` starts with one event named `backlog`, before any envelope, that gives the `seq` of the newest event logged when the connection was opened. The envelopes and their framing are unchanged; a reader that wants only envelopes skips events with a name.
 
 ### Fixed
 
@@ -23,6 +24,7 @@ The wire format has its own version number (`pviz`, currently `1`), recorded in 
 - `str.format` with written-out arguments is read like any other value; a prompt template filled in at run time, from an f-string or `.format`, gives a warning. A computed instruction reads the same whether written inline or through a name.
 - A tool's `docstring_format` is used; a decorator applied before a tool is registered, a deps type held by a variable, and a skipped `build` or `dist` directory that holds Python are each named.
 - The viewer shows a warning count on the agent card, keeps the ellipsis on a cut path's folder, and no longer shows the placeholder id `<agent>`.
+- A live viewer waiting on a blueprint, or watching a run, follows the next run even when that run starts and ends between two of its frames (a fast agent, or a busy page); before, such a run was taken for history and the viewer stayed where it was.
 
 ## [0.1.0] - 2026-11-18
 

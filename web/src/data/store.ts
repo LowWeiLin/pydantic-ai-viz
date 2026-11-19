@@ -39,6 +39,12 @@ export type ViewerState = {
   failure: Failure | null;
   /** Live mode only. */
   connection: Connection | null;
+  /**
+   * Live mode only: the seq of the newest event the server had logged when the stream was
+   * opened. A run that entered the log after it is news to this viewer; null until the server
+   * says.
+   */
+  backlogEnd: number | null;
   /** Entries of `recordings/index.json`, when the page has one. */
   gallery: readonly RecordingEntry[] | null;
   playback: Playback;
@@ -57,6 +63,7 @@ export type ViewerState = {
   setLoading: () => void;
   fail: (error: RecordingError) => void;
   setConnection: (connection: Connection) => void;
+  setBacklogEnd: (seq: number) => void;
   setGallery: (entries: readonly RecordingEntry[] | null) => void;
   /** Applies one of the pure transitions from `playback.ts`. */
   updatePlayback: (transition: (playback: Playback) => Playback) => void;
@@ -71,6 +78,7 @@ type Values = Omit<
   | "setLoading"
   | "fail"
   | "setConnection"
+  | "setBacklogEnd"
   | "setGallery"
   | "updatePlayback"
 >;
@@ -81,6 +89,7 @@ const initialValues: Values = {
   phase: "loading",
   failure: null,
   connection: null,
+  backlogEnd: null,
   gallery: null,
   playback: livePlayback,
 };
@@ -101,6 +110,7 @@ export const useViewer = create<ViewerState>()((set) => ({
       phase: "loading",
       failure: null,
       connection: "connecting",
+      backlogEnd: null,
       playback: livePlayback,
     }),
 
@@ -134,6 +144,8 @@ export const useViewer = create<ViewerState>()((set) => ({
       // The first successful connection ends the skeleton; later drops keep what is on screen.
       phase: connection === "open" && state.phase === "loading" ? "ready" : state.phase,
     })),
+
+  setBacklogEnd: (seq) => set({ backlogEnd: seq }),
 
   setGallery: (entries) => set({ gallery: entries }),
 

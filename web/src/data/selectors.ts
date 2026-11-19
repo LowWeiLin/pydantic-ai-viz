@@ -152,6 +152,8 @@ export type RunSummary = {
   durationMs: number;
   spanCount: number;
   usage: Usage;
+  /** Where the run entered the log: the seq of its first span event. */
+  firstSeq: number;
 };
 
 const runsCache = new WeakMap<DataState, readonly RunSummary[]>();
@@ -185,6 +187,7 @@ export function runs(data: DataState): readonly RunSummary[] {
       durationMs: Math.max(0, (root.end_ms ?? Math.max(data.lastTs, startMs)) - startMs),
       spanCount: spans.length,
       usage,
+      firstSeq: data.traceSeq[traceId] ?? -1,
     });
   }
   // Newest first; runs that start at the same instant keep arrival order.

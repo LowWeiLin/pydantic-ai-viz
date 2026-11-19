@@ -140,6 +140,7 @@ function liveSession(holdAt, header, run) {
       if (state.down) return send(res, 503, '{"error":"stopped"}');
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store" });
       res.write("retry: 1000\n\n");
+      res.write(`event: backlog\ndata: ${JSON.stringify({ last_seq: log.at(-1)?.seq ?? -1 })}\n\n`);
       for (const envelope of log) if (envelope.seq > lastId) writeEvent(res, envelope);
       clients.add(res);
       res.on("close", () => clients.delete(res));

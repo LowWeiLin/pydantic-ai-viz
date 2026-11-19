@@ -5,6 +5,9 @@
  * The browser reconnects by itself and sends `Last-Event-ID`. If the stream is closed for good
  * (the server answered with an error), a fresh EventSource is opened after a short wait; the
  * server then replays the log and the reducer drops what it has already seen.
+ *
+ * Each connection starts with a `backlog` event, not an envelope: the seq of the newest event
+ * the server had logged when it was opened. Everything after it happened while this page watched.
  */
 import type { Envelope } from "../wire";
 
@@ -13,6 +16,7 @@ export type Connection = "connecting" | "open" | "reconnecting";
 export type LiveHandlers = {
   onEvents: (envelopes: Envelope[]) => void;
   onConnection: (state: Connection) => void;
+  onBacklog: (lastSeq: number) => void;
 };
 
 /** How long a batch may wait when no frame fires (a background tab). */
@@ -58,6 +62,14 @@ export function startLiveSource(url: string, handlers: LiveHandlers): () => void
       }
       schedule();
     };
+    es.addEventListener("backlog", (message: MessageEvent<string>) => {
+      try {
+        const { last_seq } = JSON.parse(message.data) as { last_seq: unknown };
+        if (typeof last_seq === "number") handlers.onBacklog(last_seq);
+      } catch {
+        // Malformed: the viewer goes on as if it had not been sent.
+      }
+    });
     es.onerror = () => {
       if (stopped) return;
       handlers.onConnection("reconnecting");
