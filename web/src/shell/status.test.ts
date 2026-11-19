@@ -117,6 +117,9 @@ describe("what the shell says, by state", () => {
   test("live, connection lost: the banner says so and nothing claims to be live", () => {
     const lost = status(LIVE, [session(), blueprint("a1"), ...oneRun], "ready", "reconnecting");
     expect(shown(lost)).toMatchObject({ chip: null, banner: "reconnecting", sidebar: "lists" });
+    // Export and Run again ask the server, which is not answering.
+    expect(lost.reachable).toBe(false);
+    expect(status(LIVE, [session(), blueprint("a1"), ...oneRun]).reachable).toBe(true);
     // What was waiting is still waiting: the strip does not flicker with the connection.
     const waiting = status(LIVE, [session(), blueprint("a1")], "ready", "reconnecting");
     expect(shown(waiting)).toMatchObject({ banner: "reconnecting", strip: "waiting-for-run" });
@@ -144,11 +147,14 @@ describe("what the shell says, by state", () => {
     });
 
     test("the server behind it stops: a quiet banner, and it is still a blueprint", () => {
-      expect(shown(status(LIVE, view, "ready", "reconnecting"))).toMatchObject({
+      const stopped = status(LIVE, view, "ready", "reconnecting");
+      expect(shown(stopped)).toMatchObject({
         chip: "blueprint",
         banner: "server-stopped",
         strip: null,
       });
+      // The banner says that exporting needs the server; the button does not pretend otherwise.
+      expect(stopped.reachable).toBe(false);
     });
 
     test("in a file (`view --export`): the same, with no connection to speak of", () => {

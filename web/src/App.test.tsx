@@ -175,9 +175,14 @@ describe("boot modes and states", () => {
     expect(screen.getByText("Reconnecting...")).toBeInTheDocument();
     expect(screen.queryByText("Live")).toBeNull();
     expect(screen.getByRole("heading", { level: 2, name: "triage" })).toBeInTheDocument();
+    // What asks the server waits for it to answer again.
+    expect(screen.getByRole("button", { name: "Run again" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
     act(() => source?.onopen?.());
     expect(screen.queryByText("Reconnecting...")).toBeNull();
     expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
   });
 
   test("a live session opens a run as it starts, shows it live, and follows the next one", async () => {

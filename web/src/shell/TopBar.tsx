@@ -112,7 +112,7 @@ export function Notices({ notices }: { notices: readonly string[] }) {
 type RerunState = "idle" | "sending" | "busy" | "failed";
 
 /** Demo mode only: asks the server to run the scenario again. */
-export function RunAgain({ url }: { url: string }) {
+export function RunAgain({ url, disabled }: { url: string; disabled: boolean }) {
   const [state, setState] = useState<RerunState>("idle");
   const rerun = async () => {
     setState("sending");
@@ -134,7 +134,7 @@ export function RunAgain({ url }: { url: string }) {
       >
         {note}
       </span>
-      <Button icon="play" onClick={rerun} disabled={state === "sending"}>
+      <Button icon="play" onClick={rerun} disabled={disabled || state === "sending"}>
         Run again
       </Button>
     </span>
@@ -144,12 +144,22 @@ export function RunAgain({ url }: { url: string }) {
 export function ExportMenu({
   source,
   blueprintOnly,
+  disabled,
 }: {
   source: Extract<Source, { kind: "live" }>;
   /** A blueprint-only session has no captured content to warn about. */
   blueprintOnly: boolean;
+  /** The server that writes the files does not answer. */
+  disabled: boolean;
 }) {
   if (!source.exportHtmlUrl && !source.exportJsonlUrl) return null;
+  if (disabled) {
+    return (
+      <Button icon="download" disabled>
+        Export
+      </Button>
+    );
+  }
   return (
     <Popover label="Export" trigger={<Button icon="download">Export</Button>}>
       <div className="flex flex-col gap-2">
@@ -236,9 +246,15 @@ export function TopBar({ route, onShowShortcuts }: { route: Route; onShowShortcu
       <Notices notices={status.notices} />
 
       <div className="ml-auto flex items-center gap-1.5">
-        {source.kind === "live" && source.rerunUrl && <RunAgain url={source.rerunUrl} />}
+        {source.kind === "live" && source.rerunUrl && (
+          <RunAgain url={source.rerunUrl} disabled={!status.reachable} />
+        )}
         {source.kind === "live" && (
-          <ExportMenu source={source} blueprintOnly={status.about !== null} />
+          <ExportMenu
+            source={source}
+            blueprintOnly={status.about !== null}
+            disabled={!status.reachable}
+          />
         )}
         {hasGallery && (
           <ButtonLink

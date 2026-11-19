@@ -865,6 +865,8 @@ test.describe("live", () => {
     await expect(rows(page)).toHaveCount(HELD_SPANS);
     // The banner is the one place that says it; nothing still claims to be live.
     await expect(page.locator("[data-mode]")).toHaveCount(0);
+    // Exporting asks the server, so it waits for the server to answer again.
+    await expect(page.getByRole("button", { name: "Export" })).toBeDisabled();
   });
 
   test("a live session with no run yet waits in one place", async ({ page }) => {
@@ -916,6 +918,7 @@ test.describe("blueprint-only view", () => {
     });
     await expect(page.locator("[data-mode]")).toHaveText("Blueprint");
     await expect(page.locator("#root")).not.toContainText(LIVE_WORDS, { useInnerText: true });
+    await expect(page.getByRole("button", { name: "Export" })).toBeDisabled();
     await canvasNode(page, "Tool publish").click();
     await expect(page.getByRole("table", { name: "Parameters of publish" })).toBeVisible();
     // The browser reports the refused reconnects itself; the page must add nothing to that.

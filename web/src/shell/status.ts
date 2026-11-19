@@ -24,6 +24,9 @@
  *
  * In every mode, notices about the session as a whole (files static analysis skipped) are a
  * count in the top bar that opens their list, each notice once.
+ *
+ * "Export" (live sessions) and "Run again" (demos) ask the server. While the banner says that
+ * it does not answer, they are disabled rather than left to fail.
  */
 import { useMemo } from "react";
 import type { DataState } from "../data/reduce";
@@ -56,6 +59,8 @@ export type ShellStatus = {
   contentOff: boolean;
   /** Messages about the session as a whole, e.g. files that static analysis skipped. */
   notices: readonly string[];
+  /** False while a live page's server does not answer: what asks it is disabled. */
+  reachable: boolean;
 };
 
 type Input = Pick<ViewerState, "source" | "phase" | "connection"> & {
@@ -113,6 +118,7 @@ export function shellStatus(state: Input): ShellStatus {
     contentOff: !blueprintOnly && data.session?.include_content === false,
     // The same notice given twice is one fact.
     notices: [...new Set(data.session?.notices ?? [])],
+    reachable: !lost,
   };
 }
 
