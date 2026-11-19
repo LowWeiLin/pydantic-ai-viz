@@ -33,7 +33,7 @@ from .._models import (
 )
 from ._docstring import describe
 from ._resolve import Definition, Expression, External, Project, Resolved, Resolver, receiver_class
-from ._schema import NOT_FROM_THE_MODEL, SchemaBuilder
+from ._schema import NOT_FROM_THE_MODEL, SchemaBuilder, typing_construct
 from ._source import CallSite, Module, Mutation, Scope, clip_expression, unwrap
 from ._values import NotLiteral, fstring_template, literal, string
 
@@ -61,6 +61,13 @@ _OUTPUT_MODES: dict[str, str] = {
     "PromptedOutput": "prompted",
     "TextOutput": "text",
 }
+_OUTPUT_WRAPS: dict[str, str] = {
+    "ToolOutput": "type_",
+    "NativeOutput": "outputs",
+    "PromptedOutput": "outputs",
+    "TextOutput": "output_function",
+}
+"""The keyword each output marker takes what it wraps as, when that is not passed first."""
 _OFFLINE_MODELS: dict[str, str] = {"TestModel": "test", "FunctionModel": "function"}
 _NATIVE_TOOLS: dict[str, str] = {
     "WebSearchTool": "web_search",
@@ -107,6 +114,25 @@ def _inside(scope: Scope, outer: Scope) -> bool:
             return True
         current = current.parent
     return False
+
+
+def _output_mode(kinds: list[str]) -> str:
+    """The output mode Pydantic AI picks for outputs of these kinds, by the rule it builds its output schema with.
+
+    A ``NativeOutput`` or ``PromptedOutput`` marker gives its mode. Otherwise text (``str``,
+    ``TextOutput``) next to anything the model has to answer with a tool makes it ``tool``, as does
+    a ``ToolOutput``; text alone is ``text``; other types are ``auto``. ``None`` takes a tool of its
+    own only beside other outputs that do.
+    """
+    for marked in ("native", "prompted"):
+        if marked in kinds:
+            return marked
+    tools = "tool" in kinds or "auto" in kinds
+    if "text" in kinds:
+        return "tool" if tools else "text"
+    if "tool" in kinds:
+        return "tool"
+    return "auto" if "auto" in kinds else "unknown"
 
 
 def _class_around(scope: Scope) -> ast.ClassDef | None:
@@ -1330,14 +1356,11 @@ class _AgentBuilder:
                 location=None,
             )
         builder = SchemaBuilder(self.resolver)
-        modes: list[str] = []
+        kinds: list[str] = []
         labels: list[str] = []
         schemas: list[dict[str, Any]] = []
-        self._output_member(Expression(node, *self.where(node)), builder, modes, labels, schemas, 0)
-        if not modes or "tool" in modes:
-            mode = "tool" if modes else "unknown"
-        else:
-            mode = modes[0] if len(set(modes)) == 1 else "auto"
+        self._output_member(Expression(node, *self.where(node)), builder, kinds, labels, schemas, 0)
+        mode = _output_mode(kinds)
         unique: list[dict[str, Any]] = []
         for schema in schemas:
             if schema not in unique:
@@ -1359,7 +1382,8 @@ class _AgentBuilder:
         where = builder.locations[0] if builder.locations else None
         return OutputInfo(
             mode=mode,
-            allows_text=True if mode == "text" else None,
+            # Pydantic AI reads a text answer in every mode but ``tool``, which needs ``str`` among the outputs.
+            allows_text=None if mode == "unknown" else mode != "tool" or "text" in kinds,
             type_name=" | ".join(labels) or None,
             json_schema=document,
             tool_names=[],
@@ -1392,6 +1416,8 @@ class _AgentBuilder:
                 callee = self.resolver.callee(inner, target.scope, target.line)
                 if isinstance(callee, External) and callee.is_library(*_OUTPUT_MODES):
                     wrapped = inner.args[0] if inner.args and not isinstance(inner.args[0], ast.Starred) else None
+                    keyword = _OUTPUT_WRAPS[callee.last]
+                    wrapped = next((k.value for k in inner.keywords if k.arg == keyword), wrapped)
                     if wrapped is not None and callee.last == "TextOutput":
                         # The model answers in text, and the function turns that text into the output.
                         function = self.resolver.resolve(wrapped, target.scope, target.line)
@@ -1424,8 +1450,39 @@ class _AgentBuilder:
         # A name for a type expression (``Answer = Person | Point``) is shown as what it stands for.
         shown = target if isinstance(target, Expression) and isinstance(node, ast.Name) else entry
         labels.append(shown.module.text(shown.node))
-        modes.append("auto")
+        modes.extend(self._union_kinds(entry, 0))
         schemas.append(builder.annotation(node, entry.scope, entry.line))
+
+    def _union_kinds(self, entry: Expression, depth: int) -> list[str]:
+        """What each member of an output type is to Pydantic AI, which reads a union as a list of its members.
+
+        ``"text"`` for ``str``, ``"none"`` for ``None`` and ``"auto"`` for any other type.
+        """
+        node = entry.node
+        target = self.resolver.resolve(node, entry.scope, entry.line)
+        if isinstance(target, Expression) and target.node is not node and depth < 4:
+            return self._union_kinds(target, depth + 1)
+        if isinstance(node, ast.Constant) and node.value is None:
+            return ["none"]
+        if isinstance(target, External) and target.name in ("builtins.str", "types.NoneType"):
+            return ["text" if target.name == "builtins.str" else "none"]
+        members: list[ast.expr] = []
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            members = [node.left, node.right]
+        elif isinstance(node, ast.Subscript):
+            construct = typing_construct(self.resolver.resolve(node.value, entry.scope, entry.line))
+            arguments = list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]
+            if construct == "Union":
+                members = arguments
+            elif construct == "Optional":
+                members = [*arguments[:1], ast.Constant(None)]
+        if not members or depth >= 4:
+            return ["auto"]
+        return [
+            kind
+            for member in members[:_MAX_LIST_ITEMS]
+            for kind in self._union_kinds(Expression(member, entry.scope, entry.line), depth + 1)
+        ]
 
     # -------------------------------------------------------- capabilities
 

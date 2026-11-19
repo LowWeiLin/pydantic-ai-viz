@@ -131,7 +131,7 @@ def test_tools_from_decorators_with_schemas_and_docstring_descriptions() -> None
 
 def test_the_output_type_is_resolved_to_its_class() -> None:
     output = fixture("basic_agent.py").agents[0].output
-    assert (output.mode, output.allows_text, output.type_name, output.tool_names) == ("auto", None, "Verdict", [])
+    assert (output.mode, output.allows_text, output.type_name, output.tool_names) == ("auto", True, "Verdict", [])
     assert output.location == SourceLocation(file="basic_agent.py", line=26)
     assert output.json_schema == {
         "description": "What the agent decided.",

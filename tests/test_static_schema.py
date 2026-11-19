@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
+import sys
 import textwrap
 from pathlib import Path
 from typing import Any
 
 import pytest
-from static_support import agent, analyze_source, fixture, one_agent, tool
+from pydantic_ai import Agent
+from static_support import FIXTURES, agent, analyze_source, fixture, one_agent, tool
 
+from pydantic_ai_viz import AgentBlueprint, blueprint
 from pydantic_ai_viz._analyze._docstring import describe, infer_style
 from pydantic_ai_viz._analyze._resolve import END_OF_MODULE, Project, Resolver
 from pydantic_ai_viz._analyze._schema import SchemaBuilder
@@ -513,23 +517,28 @@ def test_output_markers_set_the_mode() -> None:
     assert rows == {
         "plain": ("text", True, "str"),
         "text": ("text", True, "str"),
-        "number": ("auto", None, "int"),
-        "person": ("auto", None, "Person"),
-        "employee": ("auto", None, "Employee"),
-        "point": ("auto", None, "Point"),
-        "movie": ("auto", None, "Movie"),
-        "people": ("auto", None, "list[Person]"),
-        "union": ("auto", None, "Person | Point"),
-        "alias": ("auto", None, "Person | Point"),  # the alias Answer is shown as what it stands for
-        "score": ("auto", None, "int | float"),
-        "several": ("auto", None, "Person | Point"),
-        "tool": ("tool", None, "Person"),
-        "native": ("native", None, "Point"),
-        "prompted": ("prompted", None, "Person | Point"),
+        "number": ("auto", True, "int"),
+        "person": ("auto", True, "Person"),
+        "employee": ("auto", True, "Employee"),
+        "point": ("auto", True, "Point"),
+        "movie": ("auto", True, "Movie"),
+        "people": ("auto", True, "list[Person]"),
+        "union": ("auto", True, "Person | Point"),
+        "alias": ("auto", True, "Person | Point"),  # the alias Answer is shown as what it stands for
+        "score": ("auto", True, "int | float"),
+        "several": ("auto", True, "Person | Point"),
+        "tool": ("tool", False, "Person"),
+        "native": ("native", True, "Point"),
+        "prompted": ("prompted", True, "Person | Point"),
         "text_function": ("text", True, "shout"),
-        "function": ("auto", None, "as_point"),
-        "mixed": ("tool", None, "Person | Point | as_point"),
-        "choice": ("auto", None, 'Literal["yes", "no"]'),
+        "function": ("auto", True, "as_point"),
+        "mixed": ("tool", False, "Person | Point | as_point"),
+        "choice": ("auto", True, 'Literal["yes", "no"]'),
+        "by_keyword": ("tool", False, "Person"),  # what ToolOutput wraps, passed as `type_=`
+        "text_or_person": ("tool", True, "str | Person"),  # text beside a type: the type is a tool
+        "text_or_nothing": ("text", True, "str | None"),
+        "maybe_text": ("text", True, "Optional[str]"),
+        "maybe_person": ("auto", True, "Optional[Person]"),
     }
     assert all(blueprint.output.tool_names == [] for blueprint in found.agents)  # never guessed
     assert all(blueprint.warnings == [] for blueprint in found.agents)
@@ -539,6 +548,25 @@ def test_output_markers_set_the_mode() -> None:
     assert isinstance(employee, dict)
     assert employee["$ref"] == "#/$defs/Employee"  # it refers to itself through `manager`
     assert agent(found, "person").output.location is not None
+
+
+def test_output_modes_read_from_source_are_the_ones_pydantic_ai_picks() -> None:
+    spec = importlib.util.spec_from_file_location("outputs_fixture", FIXTURES / "outputs.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses look their module up while the class is made
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        del sys.modules[spec.name]
+    agents = [blueprint(value) for value in vars(module).values() if isinstance(value, Agent)]
+    live = {b.label: b.output for b in agents if isinstance(b, AgentBlueprint)}
+    found = {b.label: b.output for b in fixture("outputs.py").agents}
+    assert set(found) == set(live)
+    assert {name: (o.mode, o.allows_text) for name, o in found.items()} == {
+        name: (o.mode, o.allows_text) for name, o in live.items()
+    }
 
 
 def test_deferred_tool_requests_are_named_as_an_output_and_left_out_of_what_the_model_writes(tmp_path: Path) -> None:

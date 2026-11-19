@@ -94,3 +94,8 @@ text_function = Agent(model, name="text_function", output_type=TextOutput(shout)
 function = Agent(model, name="function", output_type=as_point)
 mixed = Agent(model, name="mixed", output_type=[ToolOutput(Person, name="give_person"), Point, as_point])
 choice = Agent(model, name="choice", output_type=Literal["yes", "no"])  # type: ignore[arg-type]
+by_keyword = Agent(model, name="by_keyword", output_type=ToolOutput(type_=Person, name="give_person"))
+text_or_person = Agent(model, name="text_or_person", output_type=[str, Person])
+text_or_nothing = Agent(model, name="text_or_nothing", output_type=str | None)  # type: ignore[arg-type]
+maybe_text = Agent(model, name="maybe_text", output_type=Optional[str])  # type: ignore[arg-type]
+maybe_person = Agent(model, name="maybe_person", output_type=Optional[Person])  # type: ignore[arg-type]

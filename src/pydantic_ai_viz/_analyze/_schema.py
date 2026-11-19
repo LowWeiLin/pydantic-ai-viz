@@ -137,7 +137,7 @@ class _Field:
     """A ``*args`` parameter: the annotation is the type of each item."""
 
 
-def _wrapper_name(target: object) -> str | None:
+def typing_construct(target: object) -> str | None:
     """The name of a ``typing`` construct, if that is what a subscript's base resolved to."""
     if isinstance(target, External) and _package(target) in _TYPING:
         return target.last
@@ -266,9 +266,9 @@ class SchemaBuilder:
         node = target.node
         if isinstance(node, ast.Call):
             callee = self.resolver.callee(node, target.scope, target.line)
-            if _wrapper_name(callee) == "NewType" and len(node.args) == 2:
+            if typing_construct(callee) == "NewType" and len(node.args) == 2:
                 return self._type(self._sub(target, node.args[1]), depth + 1)
-            if _wrapper_name(callee) == "TypedDict" and len(node.args) == 2 and isinstance(node.args[1], ast.Dict):
+            if typing_construct(callee) == "TypedDict" and len(node.args) == 2 and isinstance(node.args[1], ast.Dict):
                 return self._functional_typed_dict(target, node, text, depth)
             return self._unresolved(text)
         return self._type(target, depth + 1)
@@ -317,7 +317,7 @@ class SchemaBuilder:
         base = self.resolver.resolve(node.value, expression.scope, expression.line)
         if isinstance(base, Definition) and isinstance(base.node, ast.ClassDef):
             return self._class(base, depth)  # a generic class of the project: its parameters are not applied
-        name = _wrapper_name(base)
+        name = typing_construct(base)
         if name is None or not arguments:
             return self._unresolved(text)
 
@@ -484,7 +484,7 @@ class SchemaBuilder:
         if isinstance(node, ast.Subscript):
             node = node.value
         if isinstance(node, ast.Name | ast.Attribute):
-            return _wrapper_name(self.resolver.resolve(node, annotation.scope, annotation.line))
+            return typing_construct(self.resolver.resolve(node, annotation.scope, annotation.line))
         return None
 
     def _default(self, item: _Field, value: Expression) -> None:
