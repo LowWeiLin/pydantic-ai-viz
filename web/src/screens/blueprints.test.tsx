@@ -221,6 +221,23 @@ describe("a toolset, and the parts a panel names", () => {
     expect(title()).toBe("reporter");
   });
 
+  test("a toolset's id is shown, except the placeholder that stands for the agent's own tools", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/agents/a2";
+    render(<App plan={embedded(NEWSROOM)} />);
+    const definition = (): HTMLElement =>
+      within(details()).getByRole("heading", { level: 4, name: "Definition" }).closest("section") ??
+      details();
+    await user.click(
+      screen.getByRole("button", { name: "Toolset FunctionToolset 'wires', 2 tools" }),
+    );
+    expect(within(definition()).getByText("wires")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Toolset Agent tools/ }));
+    expect(within(definition()).getByText("The agent's own tools")).toBeInTheDocument();
+    expect(within(definition()).queryByText("Id")).toBeNull();
+    expect(within(details()).queryByText("<agent>")).toBeNull();
+  });
+
   test("a picked graph node is a link that opens on it", async () => {
     const user = userEvent.setup();
     window.location.hash = "#/graphs/g1";

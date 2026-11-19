@@ -743,12 +743,15 @@ export function ToolsetInspector({ agent, toolset }: { agent: AgentBlueprint; to
               <Facts
                 items={known([
                   ["Kind", TOOLSET_KINDS[toolset.kind] ?? toolset.kind],
-                  toolset.toolset_id !== null && [
-                    "Id",
-                    <code key="id" className="break-all">
-                      {toolset.toolset_id}
-                    </code>,
-                  ],
+                  // The agent's own toolset is known to Pydantic AI by the placeholder "<agent>",
+                  // which says nothing that the kind does not.
+                  toolset.toolset_id !== null &&
+                    toolset.kind !== "agent" && [
+                      "Id",
+                      <code key="id" className="break-all">
+                        {toolset.toolset_id}
+                      </code>,
+                    ],
                   toolset.wrappers.length > 0 && [
                     "Wrapped by",
                     <span key="wrappers" className="flex flex-wrap gap-1.5">
