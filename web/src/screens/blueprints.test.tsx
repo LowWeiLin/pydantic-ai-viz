@@ -410,15 +410,15 @@ describe("SourceRef", () => {
       "medical_agent_delegation.py",
       ":161",
     ]);
-    // The folder takes what room the name and line leave it, down to one character (a lone
-    // ellipsis). They do not shrink as long as they fit: only a name too long on its own is
-    // cut, never the line.
-    expect(folder).toHaveClass("min-w-[1ch]", "truncate");
+    // The folder takes what room the name and line leave it, down to two characters (the
+    // ellipsis and its last slash). They do not shrink as long as they fit: only a name too long
+    // on its own is cut, never the line.
+    expect(folder).toHaveClass("min-w-[2ch]", "truncate");
     // Cut from its start, so the folders nearest the file stay; its slashes stay in place.
     expect(folder).toHaveAttribute("dir", "rtl");
     expect(folder?.firstElementChild?.tagName).toBe("BDI");
     expect(folder?.firstElementChild).toHaveAttribute("dir", "ltr");
-    expect(tail).toHaveClass("shrink-0", "max-w-[calc(100%-1ch)]", "min-w-0");
+    expect(tail).toHaveClass("shrink-0", "max-w-[calc(100%-2ch)]", "min-w-0");
     expect(name).toHaveClass("min-w-0", "truncate");
     expect(line).toHaveClass("shrink-0");
     expect(code).toHaveTextContent(/^pydantic_ai_examples\/medical_agent_delegation\.py:161$/);
