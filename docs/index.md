@@ -5,34 +5,53 @@ description: See what your Pydantic AI agents are and what they do, live or repl
 
 # pydantic-ai-viz
 
-See what your [Pydantic AI](https://ai.pydantic.dev/) agents **are** (the blueprint) and what they **do** (the run) on one canvas, live or replayed. No API key, no account, and nothing leaves your machine.
+See what your [Pydantic AI](https://ai.pydantic.dev/) agents **are** (the blueprint) and what they **do** (the run) on one canvas, live or replayed. Draw any project's agents straight from its source code, without running a line of it. No API key, no account, and nothing leaves your machine.
 
 !!! note "Unofficial project"
 
     pydantic-ai-viz is a community project. It is not affiliated with or endorsed by Pydantic.
+
+## Start in ten seconds
+
+<div class="grid cards" markdown>
+
+-   **See a demo**
+
+    ```bash
+    uvx pydantic-ai-viz demo
+    ```
+
+    Plays a scripted support agent in your browser: streamed tokens, parallel tool calls, a retry, a delegation and a structured result. The model is scripted, so there is no API key and no network call.
+
+-   **See your own agents, with nothing executed**
+
+    ```bash
+    uvx pydantic-ai-viz view .
+    ```
+
+    Run it in your project's directory. It draws every agent and graph in the project from its source code: model, instructions, tools with their schemas, output type and who delegates to whom. The code is parsed, never imported or run, so its dependencies need not be installed.
+
+</div>
+
+<figure class="screenshot" markdown="span">
+  [![pydantic-ai-viz view on the demos' own source: their files in the sidebar, the triage agent with its tools, output and a delegation edge to the refunds agent, and the inspector on a tool with its parameters and the line it is defined at](assets/screenshots/view-light.png#only-light)![pydantic-ai-viz view on the demos' own source: their files in the sidebar, the triage agent with its tools, output and a delegation edge to the refunds agent, and the inspector on a tool with its parameters and the line it is defined at](assets/screenshots/view-dark.png#only-dark)](https://lowweilin.github.io/pydantic-ai-viz/demo/?src=recordings/source.pviz.jsonl)
+  <figcaption><code>pydantic-ai-viz view src/pydantic_ai_viz/demos</code>: three files read, none of them run. Click the image to open it in the hosted viewer.</figcaption>
+</figure>
 
 <figure class="screenshot" markdown="span">
   [![A finished agent run: the blueprint canvas with every tool marked done, the span timeline, and the inspector open on a retried tool call](assets/screenshots/hero-light.png#only-light)![A finished agent run: the blueprint canvas with every tool marked done, the span timeline, and the inspector open on a retried tool call](assets/screenshots/hero-dark.png#only-dark)](https://lowweilin.github.io/pydantic-ai-viz/demo/)
   <figcaption>The support demo after its run, with the retried tool call selected. Click the image to open the hosted demo.</figcaption>
 </figure>
 
-## Three commands
+## From the command line
 
-=== "See a demo"
-
-    ```bash
-    uvx pydantic-ai-viz demo
-    ```
-
-    Opens a browser tab and plays a scripted support agent: streamed tokens, parallel tool calls, a retry, a delegation and a structured result. The model is scripted, so there is no API key and no network call.
-
-=== "Draw your agent"
+=== "Read your code"
 
     ```bash
-    pydantic-ai-viz view my_app/agents.py
+    pydantic-ai-viz view my_app/
     ```
 
-    Draws the blueprint of every agent in the file: model, instructions, tools with their schemas, output type and the agents it delegates to. The file is read, not imported: nothing in it runs, its dependencies need not be installed, and no model is called.
+    A directory, a file (`my_app/agents.py`), one agent in it (`my_app/agents.py:support_agent`), a module name (`my_app.agents`) or a GitHub repository (`gh:owner/repo`). Imports between your files are followed. [How view works](concepts/how-view-works.md)
 
 === "Watch your script"
 
@@ -42,7 +61,7 @@ See what your [Pydantic AI](https://ai.pydantic.dev/) agents **are** (the bluepr
 
     Runs your script unchanged and shows every agent run in it as it happens.
 
-Or do the same from Python, with one line around the code you already have:
+Or watch runs from Python, with one line around the code you already have:
 
 ```python
 import pydantic_ai_viz as pviz
@@ -58,9 +77,9 @@ with pviz.serve(agent, open_browser=True) as session:
 
 ## What it shows
 
-Blueprint
+Blueprint from source
 
-:   The agent as a diagram, read from the `Agent` object before anything runs: model, instructions, toolsets, tools with JSON schemas, output type, retries and delegation to other agents. [Visualize an agent](guides/visualize-an-agent.md)
+:   The agent as a diagram: model, instructions, toolsets, tools with JSON schemas, output type, retries and delegation to other agents, each with the file and line it is defined at. Read from your source code, across the files of a project, without importing or running any of it; a value only running the code could tell is shown as the code that computes it. [Visualize an agent](guides/visualize-an-agent.md), [How view works](concepts/how-view-works.md), [Real-world examples](real-world.md)
 
 Live runs
 

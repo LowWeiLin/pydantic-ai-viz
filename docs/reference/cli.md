@@ -67,6 +67,7 @@ Draw blueprints by **reading source files**. The code is parsed, never imported 
 | `--no-open` | Do not open a browser. |
 
 ```bash
+pydantic-ai-viz view .
 pydantic-ai-viz view agents.py
 pydantic-ai-viz view src/my_app
 pydantic-ai-viz view my_app/agents.py:support_agent
@@ -74,7 +75,7 @@ pydantic-ai-viz view my_app/agents.py my_app/pipeline.py --export blueprint.html
 pydantic-ai-viz view gh:pydantic/pydantic-ai@v2.70.0/examples
 ```
 
-`view` reports on stderr what it read, for example `Read 1 file without running any code: 2 agents, 0 graphs`, followed by the number of warnings when the source left something open. A file that had to be skipped (not valid Python, unreadable, too large) is named there too and in the viewer.
+`view` reports on stderr what it read, for example `Read 1 file without running any code: 2 agents, 0 graphs`, followed by the number of warnings when the source left something open. A file that had to be skipped (not valid Python, unreadable, too large) is named there too, on a line marked `note:`, and in the viewer. The number of files includes the files read because a target imports them.
 
 ### Targets { #targets }
 

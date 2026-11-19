@@ -1,6 +1,6 @@
 # Quickstart
 
-Five minutes, no API key. You will play a demo, draw the blueprint of an agent, and watch a run live.
+Five minutes, no API key. You will play a demo, draw the blueprint of an agent from its source code without running it, and watch a run live.
 
 ## Install
 
@@ -22,7 +22,7 @@ Five minutes, no API key. You will play a demo, draw the blueprint of an agent, 
     uvx pydantic-ai-viz demo
     ```
 
-    `uvx` runs the command in a throwaway environment. Good for the demo; to visualize your own agents, install the package next to them.
+    `uvx` runs the command in a throwaway environment. That is all `demo` and `view` need: `view` reads your code without importing it, so it does not have to share an environment with it. To watch your agents run, install the package next to them.
 
 It needs Python 3.11 or newer. It installs `pydantic-ai-slim` and `opentelemetry-sdk` and nothing else, so it adds no model provider and no web framework to your project.
 
@@ -44,9 +44,9 @@ Click any row in the timeline to inspect it. Drag the scrubber, or press ++space
 
 `pydantic-ai-viz demo --list` shows the other demos; see [Demos](demos.md). Stop the server with ++ctrl+c++.
 
-## 2. Draw the blueprint of an agent
+## 2. Draw the blueprint of an agent, without running it
 
-Save this as `quickstart.py`. It uses Pydantic AI's `TestModel`, so it runs offline:
+Save this as `quickstart.py`. It uses Pydantic AI's `TestModel`, so it also runs offline in step 3:
 
 ```python title="quickstart.py"
 from pydantic_ai import Agent
@@ -71,9 +71,16 @@ Then:
 pydantic-ai-viz view quickstart.py
 ```
 
-The viewer shows the `helper` agent, its model, the `add` tool with its parameter schema, and a text output. `view` reads the source of `quickstart.py` and stops there: the file is not imported and none of it runs, so no agent is run and no model is called.
+The viewer shows the `helper` agent, its model, the `add` tool with its parameter schema and the description from its docstring, and a text output, each with the line of `quickstart.py` it is defined at. `view` reads the source and stops there: the file is not imported and none of it runs, so no agent is run, no model is called, and nothing it imports has to be installed.
 
-A target can also name one agent in a file: `pydantic-ai-viz view my_app/agents.py:support_agent`. More in [Visualize an agent](guides/visualize-an-agent.md), and in [How view works](concepts/how-view-works.md).
+Now point it at your own code. A directory is read whole, and imports between its files are followed, so a tool or an output model defined in another file is drawn with the agent that uses it:
+
+```bash
+pydantic-ai-viz view my_app/                         # every .py file below my_app
+pydantic-ai-viz view my_app/agents.py:support_agent  # one agent, and the agents it delegates to
+```
+
+Where the code computes a value when it runs, for example `Agent(os.getenv("MODEL"))`, the viewer shows that expression marked "decided at run time" rather than a guess. More in [Visualize an agent](guides/visualize-an-agent.md), and in [How view works](concepts/how-view-works.md).
 
 ## 3. Watch a run live
 

@@ -1,6 +1,6 @@
 # pydantic-ai-viz
 
-See what your [Pydantic AI](https://ai.pydantic.dev/) agents are (the blueprint) and what they do (the run) on one canvas, live or replayed. No API key, no account, nothing leaves your machine.
+See what your [Pydantic AI](https://ai.pydantic.dev/) agents are (the blueprint) and what they do (the run) on one canvas, live or replayed. Draw any project's agents straight from its source code, without running a line of it. No API key, no account, nothing leaves your machine.
 
 [![CI](https://github.com/LowWeiLin/pydantic-ai-viz/actions/workflows/ci.yml/badge.svg)](https://github.com/LowWeiLin/pydantic-ai-viz/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/pydantic-ai-viz.svg)](https://pypi.org/project/pydantic-ai-viz/)
@@ -9,11 +9,9 @@ See what your [Pydantic AI](https://ai.pydantic.dev/) agents are (the blueprint)
 
 > **Unofficial.** pydantic-ai-viz is a community project. It is not affiliated with or endorsed by Pydantic.
 
-[![An agent run in pydantic-ai-viz: blueprint canvas, span timeline and inspector](https://raw.githubusercontent.com/LowWeiLin/pydantic-ai-viz/main/docs/assets/screenshots/hero-dark.png)](https://lowweilin.github.io/pydantic-ai-viz/demo/)
-
-The screenshot links to the [hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/), which replays real recordings in your browser.
-
 ## Try it in 10 seconds
+
+**See a demo.**
 
 ```bash
 uvx pydantic-ai-viz demo
@@ -21,7 +19,24 @@ uvx pydantic-ai-viz demo
 
 This opens a browser tab and plays a scripted support-triage agent: streamed tokens, three parallel tool calls, a retry, a delegation to a second agent and a structured result. The demo model is scripted, so it needs no API key and makes no network calls. `pydantic-ai-viz demo --list` shows the other demos.
 
-## Use it with your agent
+[![An agent run in pydantic-ai-viz: blueprint canvas, span timeline and inspector](https://raw.githubusercontent.com/LowWeiLin/pydantic-ai-viz/main/docs/assets/screenshots/hero-dark.png)](https://lowweilin.github.io/pydantic-ai-viz/demo/)
+
+The screenshot links to the [hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/), which replays real recordings in your browser.
+
+**See your own agents, with nothing executed.**
+
+```bash
+cd path/to/your/project
+uvx pydantic-ai-viz view .
+```
+
+This reads every `.py` file below the current directory and draws each agent and graph in it: model, instructions, tools with their parameter schemas, output type, and which agent hands work to which, each with the file and line it is defined at. The code is parsed, never imported or run, so its dependencies do not have to be installed and it is safe on code you have not reviewed. A file, a module name or a GitHub repository works too: `uvx pydantic-ai-viz view gh:pydantic/pydantic-ai@v2.70.0/examples`.
+
+[![pydantic-ai-viz view on the demos' own source: files in the sidebar, an agent with its tools and delegate, and a tool's schema and source location in the inspector](https://raw.githubusercontent.com/LowWeiLin/pydantic-ai-viz/main/docs/assets/screenshots/view-dark.png)](https://lowweilin.github.io/pydantic-ai-viz/concepts/how-view-works/)
+
+What can and cannot be read from source is in [How view works](https://lowweilin.github.io/pydantic-ai-viz/concepts/how-view-works/), and [Real-world examples](https://lowweilin.github.io/pydantic-ai-viz/real-world/) shows it on twelve public projects.
+
+## Watch your agent run
 
 ```bash
 pip install pydantic-ai-viz    # or: uv add --dev pydantic-ai-viz
@@ -38,19 +53,15 @@ with pviz.serve(agent, open_browser=True) as session:
 
 `serve` captures every agent run in the process from then on. You do not change how you call the agent.
 
-Or leave your code alone and use the CLI:
+Or leave your code alone and run a script under the viewer:
 
 ```bash
-# Draw the blueprint from the source code. The file is not imported and nothing in it runs.
-pydantic-ai-viz view my_app/agents.py
-
-# Run a script and watch its agent runs live.
 pydantic-ai-viz run my_script.py
 ```
 
 ## What you get
 
-- **Blueprint.** The agent as a diagram: model, instructions, toolsets, tools with their JSON schemas, output type and delegation to other agents. Drawn from your source code, which is read and never executed, or from the agent object, before anything runs.
+- **Blueprint from source.** The agent as a diagram: model, instructions, toolsets, tools with their JSON schemas, output type and delegation to other agents, across all the files of a project. `view` reads it from your source code, which is never executed; what only running the code could tell, such as a model read from an environment variable, is shown as the code that computes it. From Python, a blueprint can also be read from the agent object.
 - **Live runs.** Model requests, tool calls, retries and sub-agent runs light up on the blueprint and stack up in a span timeline as they happen.
 - **Inspector.** Click any span to read the conversation, tool arguments and results, token usage and the raw span attributes.
 - **Graphs.** `pydantic-graph` graphs get the same treatment: nodes, decisions and edges, with the active node highlighted during a run.
@@ -69,6 +80,8 @@ pydantic-ai-viz run my_script.py
 
 ## How it works
 
+`view` parses your files with Python's own `ast` module and follows names, imports and your own functions to the values they stand for; it never imports or executes the code. Values that only running the code could produce stay as source text. See [How view works](https://lowweilin.github.io/pydantic-ai-viz/concepts/how-view-works/).
+
 `serve` turns on Pydantic AI's own OpenTelemetry instrumentation and points it at a private tracer provider, so nothing is sent anywhere and no global OpenTelemetry state is set. A span processor in your process turns each span into an event in an append-only log. A small local server (standard library only, bound to `127.0.0.1`) streams that log to a one-file viewer, and the same log is what a recording or an export contains.
 
 Read more in the [documentation](https://lowweilin.github.io/pydantic-ai-viz/):
@@ -79,6 +92,7 @@ Read more in the [documentation](https://lowweilin.github.io/pydantic-ai-viz/):
 
 ## Limits and non-goals
 
+- **`view` shows only what the source spells out.** A model or prompt that is computed when the code runs is shown as the expression that computes it, and an agent built by a library function is not found. `view --import` reads the live objects instead, which runs the code; use it only on code you trust.
 - **Local development only.** It captures runs in the process that calls `serve` or `record`, and keeps them in memory. For production tracing, use [Pydantic Logfire](https://pydantic.dev/logfire). The two work together; see the [Logfire guide](https://lowweilin.github.io/pydantic-ai-viz/guides/logfire/).
 - **Not a chat playground.** Pydantic AI already has `agent.to_web()` for that.
 - **Recordings and exports contain your prompts, tool arguments and tool results.** Read [Privacy](https://lowweilin.github.io/pydantic-ai-viz/guides/privacy/) before you share one.
