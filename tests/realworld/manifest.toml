@@ -1,0 +1,209 @@
+# The real-world set: public projects that use Pydantic AI, which the static analyser is tried on.
+#
+# Nothing of these projects is kept in this repository. Each entry names a repository and one commit
+# of it by its full SHA; the tests and scripts/realworld_report.py fetch that commit with git and read
+# it. None of its code is imported or run.
+#
+#   uv run pytest -m network tests/realworld            # check every project against its entry
+#   uv run python scripts/realworld_report.py           # the results as a Markdown table
+#   uv run pydantic-ai-viz view gh:<repo>@<sha>/<subdir>  # look at one of them
+#
+# An entry:
+#
+#   id         a short name, unique in this file
+#   repo       owner/name on GitHub
+#   sha        the commit, as its full 40-character SHA: never a branch or a tag, which move
+#   subdir     the directory to read, when it is not the whole repository
+#   licence    the licence the repository declares, as an SPDX identifier
+#   exercises  what kind of code it is, in a sentence
+#   [project.expect]
+#     min_files, min_agents, min_tools, min_graphs, min_delegations
+#                what the analyser must find at the least. The numbers are what it found when the entry
+#                was written, so a change that loses an agent, a tool or an edge fails the test.
+#     agents, tools, graphs
+#                labels and names that must be among what is found
+#     delegations
+#                edges that must be found, each as "label of the agent -> label of the agent it runs"
+
+[[project]]
+id = "pydantic-ai-examples"
+repo = "pydantic/pydantic-ai"
+sha = "679ed8942dd553c5aa2da25fa777135d9a1abc49"
+subdir = "examples"
+licence = "MIT"
+exercises = "The examples of Pydantic AI itself: single agents with tools, structured output, RAG, a bank support agent with dependencies, and three examples in which one agent runs another."
+
+[project.expect]
+min_files = 49
+min_agents = 36
+min_tools = 24
+min_delegations = 3
+agents = ["support_agent", "weather_agent", "search_agent", "extraction_agent", "seat_preference_agent", "roulette_agent"]
+tools = ["customer_balance", "get_lat_lng", "get_weather", "extract_flights", "retrieve", "roulette_wheel", "duckduckgo_search"]
+delegations = ["search_agent -> extraction_agent", "triage_agent -> senior_doctor_agent", "camera_assistant -> diagram_drawer"]
+
+[[project]]
+id = "pydantic-ai-examples-v1"
+repo = "pydantic/pydantic-ai"
+sha = "78f3b7a64556d25414739fa6f2379730952ca251"
+subdir = "examples"
+licence = "MIT"
+exercises = "The same examples a year earlier, at the 1.0 release: fewer of them, and a pydantic-graph graph given as a list of node classes."
+
+[project.expect]
+min_files = 39
+min_agents = 23
+min_tools = 16
+min_graphs = 1
+min_delegations = 1
+agents = ["support_agent", "ask_agent", "evaluate_agent"]
+tools = ["customer_balance", "run_duckdb", "roulette_wheel"]
+graphs = ["question_graph"]
+delegations = ["search_agent -> extraction_agent"]
+
+[[project]]
+id = "pydantic-stack-demo"
+repo = "pydantic/pydantic-stack-demo"
+sha = "5048e75c2390f60dbff90c94669939ff4f762e14"
+licence = "MIT"
+exercises = "Small demos by the Pydantic team: durable execution with Temporal and DBOS wrappers around agents, deep research with three agents, an agent behind an MCP server, memory tools."
+
+[project.expect]
+min_files = 22
+min_agents = 25
+min_tools = 11
+min_delegations = 5
+agents = ["plan_agent", "search_agent", "analysis_agent", "questioner_agent", "answerer_agent", "weather_agent"]
+tools = ["extra_search", "ask_question", "tavily_search", "record_memory", "retrieve_memories"]
+delegations = ["analysis_agent -> search_agent", "questioner_agent -> answerer_agent"]
+
+[[project]]
+id = "pydantic-talks"
+repo = "pydantic/talks"
+sha = "facd103259c1721e61a4e4c6cfebf973169d7bbb"
+licence = "MIT"
+exercises = "The code of two years of conference talks: many small scripts, MCP servers and clients, toolsets wrapped for code execution, evals, and two pydantic-graph graphs."
+
+[project.expect]
+min_files = 181
+min_agents = 67
+min_tools = 80
+min_graphs = 2
+min_delegations = 6
+agents = ["weather_agent", "questioner_agent", "answerer_agent", "writer_agent", "reviewer_agent", "monty_ecommerce_agent"]
+tools = ["get_weather", "ask_question", "record_memory", "create_blog_pr", "query", "insert_rows"]
+graphs = ["graph"]
+delegations = ["questioner_agent -> answerer_agent", "writer_agent -> reviewer_agent"]
+
+[[project]]
+id = "ottomator-agents"
+repo = "coleam00/ottomator-agents"
+sha = "2be20d5737fc49aa0f665a012f3ffde283d26d54"
+licence = "MIT"
+exercises = "A collection of about forty community agent projects, many written for early Pydantic AI releases: RAG agents, a primary agent that hands work to six MCP-backed agents, models chosen through environment variables."
+
+[project.expect]
+min_files = 297
+min_agents = 86
+min_tools = 104
+min_delegations = 18
+agents = ["primary_agent", "github_agent", "brave_agent", "slack_agent", "rag_agent", "pydantic_ai_expert"]
+tools = ["use_github_agent", "use_brave_search_agent", "retrieve_relevant_documentation", "search_knowledge_base", "get_repo_structure"]
+delegations = ["primary_agent -> github_agent", "primary_agent -> brave_agent", "primary_agent -> slack_agent"]
+
+[[project]]
+id = "pydantic-ai-tutorial"
+repo = "daveebbelaar/pydantic-ai-tutorial"
+sha = "248f383ae4add2dcfc25e31b696320a494767844"
+licence = "MIT"
+exercises = "One tutorial file from the first weeks of Pydantic AI: five agents, result_type, a tool passed as Tool(...) and one added by a decorator, a variable that is assigned an agent three times."
+
+[project.expect]
+min_files = 2
+min_agents = 5
+min_tools = 2
+agents = ["agent1", "agent2", "agent5"]
+tools = ["get_shipping_info", "get_shipping_status"]
+
+[[project]]
+id = "vstorm-examples"
+repo = "vstorm-co/pydantic-ai-examples"
+sha = "5d5eb325ff161c85729815573ac7521d57567987"
+licence = "MIT"
+exercises = "Tutorial scripts, one topic per directory: sentiment classification with structured output, message history, OCR, a local model served by Ollama."
+
+[project.expect]
+min_files = 18
+min_agents = 18
+min_tools = 3
+agents = ["sentiment_agent", "agent_structured"]
+tools = ["roll_dice", "check_weather"]
+
+[[project]]
+id = "python-ai-kit"
+repo = "the-momentum/python-ai-kit"
+sha = "71b2d65b13b1a372e76977b9916547c90ed8a53a"
+licence = "MIT"
+exercises = "An application template: a FastAPI app whose agents are classes around one Agent built in a base class, and two workflows built with GraphBuilder from node classes added in a loop."
+
+[project.expect]
+min_files = 92
+min_agents = 1
+min_graphs = 2
+graphs = ["UserAssistantWorkflow", "PDFWorkflow"]
+
+[[project]]
+id = "deep-research-agent"
+repo = "alexliap/pydantic_deep_research_agent"
+sha = "691d45dec24f6f61d012b93a74bd3f4290869a74"
+licence = "MIT"
+exercises = "A deep research pipeline: seven agents, four of them with structured output, prompts filled in with str.format, and pydantic-graph graphs given as lists of node classes."
+
+[project.expect]
+min_files = 10
+min_agents = 7
+min_graphs = 3
+agents = ["clarifying_agent", "briefing_agent", "research_supervisor", "report_writer"]
+graphs = ["graph"]
+
+[[project]]
+id = "code-puppy"
+repo = "mpfaffenberger/code_puppy"
+sha = "d5a84e684d915990c2cd0e27f677d792a96b627c"
+licence = "MIT"
+exercises = "A coding agent of about 800 files. Its one agent is assembled at run time from a registry of tools and MCP servers, so most of it is beyond reading; what the tests construct is not."
+
+[project.expect]
+min_files = 804
+min_agents = 51
+min_tools = 16
+agents = ["_new_pydantic_agent", "temp_agent"]
+tools = ["read_file", "create_file", "replace_in_file"]
+
+[[project]]
+id = "pydantic-deepagents"
+repo = "vstorm-co/pydantic-deepagents"
+sha = "650b592b6accd7dc994226abbaa0cf717527e457"
+licence = "MIT"
+exercises = "An agent framework on top of Pydantic AI: one agent given its arguments as **kwargs, toolsets that are classes derived from FunctionToolset or made by factory functions, about twenty capabilities."
+
+[project.expect]
+min_files = 298
+min_agents = 42
+min_tools = 28
+agents = ["agent", "_agent"]
+tools = ["load_skill", "save_checkpoint", "rewind_to", "spawn_team", "fork_run", "search_conversation_history"]
+
+[[project]]
+id = "marvin"
+repo = "PrefectHQ/marvin"
+sha = "be92af1d777c2bddf6b06a18b8afef62b3a2a844"
+licence = "Apache-2.0"
+exercises = "A library with an Agent class of its own that builds a Pydantic AI agent per run, and a Slack bot written with it that has plain Pydantic AI agents with tools."
+
+[project.expect]
+min_files = 208
+min_agents = 10
+min_tools = 13
+agents = ["agentlet"]
+tools = ["research_prefect_topic", "read_github_issues", "store_facts_about_user"]

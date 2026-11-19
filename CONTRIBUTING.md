@@ -11,10 +11,10 @@ For anything larger than a bug fix, please [open an issue](https://github.com/Lo
 | `src/pydantic_ai_viz/` | The Python package: introspection, capture, session, server, export, CLI |
 | `src/pydantic_ai_viz/_analyze/` | Static analysis: blueprints read from source files that are never imported or run |
 | `src/pydantic_ai_viz/demos/` | The offline demos |
-| `tests/` | Python tests (`tests/demos/` for the demos, `tests/integration/` for cross-language checks) |
+| `tests/` | Python tests (`tests/demos/` for the demos, `tests/integration/` for cross-language checks, `tests/realworld/` for the pinned real projects) |
 | `web/` | The viewer: React, TypeScript, Vite. It builds to one file, `web/dist/viewer.html` |
 | `schema/pviz.schema.json` | JSON Schema of the wire format, generated from the Python models |
-| `scripts/` | `gen_schema.py` and `build_demo_site.py` |
+| `scripts/` | `gen_schema.py`, `build_demo_site.py` and `realworld_report.py` |
 | `examples/` | Short runnable examples |
 | `docs/`, `mkdocs.yml` | The documentation site |
 
@@ -60,7 +60,7 @@ uv run pytest -q
 
 `uv run ruff format .` and `uv run ruff check --fix .` fix most lint findings. The formatter also formats Python code blocks in Markdown files, so a docs change can fail `ruff format --check`; the same command fixes it.
 
-All tests are offline: they use Pydantic AI's `TestModel` and `FunctionModel`, never a real provider. Keep it that way. A test must not need an API key or a network connection.
+All tests in the default run are offline: they use Pydantic AI's `TestModel` and `FunctionModel`, never a real provider. Keep it that way. A test must not need an API key, and only a test marked `network` may need a network connection; those are left out unless you ask for them (see [The real-world set](#the-real-world-set)).
 
 ### Viewer
 
@@ -92,6 +92,19 @@ To run the viewer's Playwright specs over the real demo recordings as well as th
 ```bash
 PVIZ_RECORDINGS_DIR="$PWD/site/demo/recordings" PVIZ_SCREENSHOTS_DIR="$PWD/web/test-results/screenshots" pnpm --dir web e2e
 ```
+
+### The real-world set
+
+`tests/realworld/manifest.toml` lists public projects that use Pydantic AI, each pinned to a commit by its full SHA, with what the static analyser must find in it at the least. Nothing of those projects is kept in this repository. The tests fetch each one from GitHub with git into the cache directory (`PYDANTIC_AI_VIZ_CACHE_DIR`, or your user cache) and read it; none of its code is imported or run.
+
+```bash
+uv run pytest -m network tests/realworld
+uv run python scripts/realworld_report.py --out realworld-results.md
+```
+
+The first command checks every project against its entry. The second writes the results as a Markdown table: files read, agents, tools, graphs, delegation edges, warnings and time. Both need `git` and a network connection the first time; after that the commits are read from the cache. CI runs them once a week (the "Real-world set" workflow), not on pull requests.
+
+Run them when you change the analyser in `src/pydantic_ai_viz/_analyze/`. If a change finds more than an entry expects, raise the numbers in the manifest in the same commit. To add a project, add an entry with the repository, the full SHA of one commit, its licence and what the analyser finds in it; choose projects that declare a licence.
 
 ### Older Pydantic AI versions
 

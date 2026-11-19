@@ -116,6 +116,9 @@ include = ["src", "tests", "scripts", "examples"]
 # tests/fixtures/static is input for the static analyser, not code of this project.
 exclude = ["**/node_modules", "**/__pycache__", "**/.*", "examples/with_logfire.py", "tests/fixtures/static"]
 pythonVersion = "3.11"
+# Import roots: src, as pyright assumes when none are named, and scripts, from which tests/realworld imports
+# realworld_report by name, as the pythonpath of pytest lets it.
+extraPaths = ["src", "scripts"]
 typeCheckingMode = "basic"
 strict = ["src"]
 venvPath = "."
@@ -123,5 +126,11 @@ venv = ".venv"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["-ra", "--strict-markers", "--strict-config"]
+# tests/realworld imports scripts/realworld_report.py, which holds the manifest reader they share.
+pythonpath = ["scripts"]
+# Tests that fetch from GitHub are left out unless asked for: uv run pytest -m network tests/realworld
+addopts = ["-ra", "--strict-markers", "--strict-config", "-m", "not network"]
+markers = [
+    "network: needs the network (fetches pinned public repositories from GitHub); not part of the default run",
+]
 xfail_strict = true
