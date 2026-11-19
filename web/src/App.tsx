@@ -66,6 +66,11 @@ function Screen({ route }: { route: Route }): ReactNode {
 export function App({ plan }: { plan?: BootPlan }) {
   const route = useRoute();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // The sidebar drawer of a phone-sized window closes whenever the screen changes.
+  const [navOpen, setNavOpen] = useState(false);
+  const routeKey = formatRoute(route);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: closing on a route change is the point.
+  useEffect(() => setNavOpen(false), [routeKey]);
 
   // Boot once. The plan is read at mount; a new boot needs a page load.
   // biome-ignore lint/correctness/useExhaustiveDependencies: boot runs once per mount by design.
@@ -99,11 +104,16 @@ export function App({ plan }: { plan?: BootPlan }) {
         >
           Skip to content
         </button>
-        <TopBar route={route} onShowShortcuts={() => setShortcutsOpen(true)} />
+        <TopBar
+          route={route}
+          onShowShortcuts={() => setShortcutsOpen(true)}
+          navOpen={status.sidebar === "lists" ? navOpen : null}
+          onToggleNav={() => setNavOpen(!navOpen)}
+        />
         <ConnectionBanner />
-        <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1">
           {status.sidebar === "skeleton" && <SidebarSkeleton />}
-          {status.sidebar === "lists" && <Sidebar route={route} />}
+          {status.sidebar === "lists" && <Sidebar route={route} open={navOpen} />}
           <div id="main" tabIndex={-1} className="flex min-w-0 flex-1 flex-col outline-none">
             <ErrorBoundary resetKey={formatRoute(route)}>
               <Screen route={route} />

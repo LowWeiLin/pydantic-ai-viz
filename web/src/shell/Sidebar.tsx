@@ -319,12 +319,18 @@ export function AboutView({ about }: { about: AboutBlueprints }) {
   );
 }
 
-export function Sidebar({ route }: { route: Route }) {
+/** On a phone the sidebar is a drawer over the screen, shown only when `open`. */
+export function Sidebar({ route, open = false }: { route: Route; open?: boolean }) {
   const status = useShellStatus();
   return (
     <aside
+      id="sidebar"
       aria-label={status.about ? "Blueprints" : "Blueprints and runs"}
-      className="flex w-60 shrink-0 flex-col border-line border-r bg-surface max-xl:w-52 max-md:w-48"
+      className={cx(
+        "flex w-60 shrink-0 flex-col border-line border-r bg-surface max-xl:w-52 max-md:w-48",
+        "max-sm:absolute max-sm:inset-y-0 max-sm:left-0 max-sm:z-30 max-sm:w-[min(280px,85%)] max-sm:shadow-float",
+        !open && "max-sm:hidden",
+      )}
     >
       <BlueprintList route={route} fill={status.about !== null} />
       <div className="mx-3 mt-2 shrink-0 border-line border-t" />
@@ -342,7 +348,7 @@ export function SidebarSkeleton() {
   return (
     <aside
       aria-hidden="true"
-      className="flex w-60 shrink-0 flex-col gap-2 border-line border-r bg-surface p-3 max-xl:w-52 max-md:w-48"
+      className="flex w-60 shrink-0 flex-col gap-2 border-line border-r bg-surface p-3 max-xl:w-52 max-md:w-48 max-sm:hidden"
     >
       <Skeleton className="h-3 w-20" />
       <Skeleton className="h-6 w-full" />

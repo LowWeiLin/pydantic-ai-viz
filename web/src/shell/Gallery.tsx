@@ -17,6 +17,7 @@ export function recordingHref(entry: RecordingEntry, base: string = window.locat
 }
 
 export function RecordingCard({ entry, playing }: { entry: RecordingEntry; playing: boolean }) {
+  const action = entry.kind === "blueprint" ? "Open" : "Play";
   return (
     <li className="flex flex-col gap-2 rounded-card border border-line bg-surface p-4 transition-colors duration-150 ease-out hover:border-line-strong">
       <h3 className="m-0 font-semibold text-em">{entry.title}</h3>
@@ -25,10 +26,10 @@ export function RecordingCard({ entry, playing }: { entry: RecordingEntry; playi
         <ButtonLink
           href={recordingHref(entry)}
           variant="primary"
-          icon="play"
-          aria-label={`Play ${entry.title}`}
+          icon={entry.kind === "blueprint" ? "blueprint" : "play"}
+          aria-label={`${action} ${entry.title}`}
         >
-          Play
+          {action}
         </ButtonLink>
         <span className="truncate font-mono text-faint text-meta">
           {playing ? "loaded" : entry.src}
@@ -49,8 +50,8 @@ export function Gallery() {
         <header className="flex flex-col gap-1">
           <h2 className="m-0 font-semibold text-page tracking-[-0.01em]">Recordings</h2>
           <p className="m-0 max-w-2xl text-em text-muted">
-            Each recording is a real session log, replayed in your browser. Nothing here calls a
-            model or needs an API key.
+            Each recording is a session captured by pydantic-ai-viz, replayed in your browser.
+            Nothing here calls a model or needs an API key.
           </p>
         </header>
         {entries && entries.length > 0 ? (
@@ -69,6 +70,14 @@ export function Gallery() {
           </p>
         )}
         <DropZone />
+        <p className="m-0 text-faint text-meta">
+          Made with{" "}
+          <a href="https://github.com/LowWeiLin/pydantic-ai-viz" className="text-muted underline">
+            pydantic-ai-viz
+          </a>
+          , an unofficial viewer for Pydantic AI agents. To see your own:{" "}
+          <code className="font-mono">uvx pydantic-ai-viz view .</code>
+        </p>
       </div>
     </div>
   );

@@ -133,6 +133,7 @@ const paths = {
     </>
   ),
   // canvas and playback
+  menu: <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />,
   plus: <path d="M8 3.5v9M3.5 8h9" />,
   minus: <path d="M3.5 8h9" />,
   fit: (

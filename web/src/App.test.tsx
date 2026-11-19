@@ -364,6 +364,22 @@ describe("boot modes and states", () => {
     expect(screen.getByRole("link", { name: "Gallery" })).toHaveAttribute("aria-current", "page");
   });
 
+  test("a gallery entry of kind blueprint is opened, not played", async () => {
+    stubFetch(() =>
+      Response.json({
+        recordings: [
+          { id: "r", title: "A run", description: "", src: "r.pviz.jsonl" },
+          { id: "s", title: "The source", description: "", src: "s.pviz.jsonl", kind: "blueprint" },
+        ],
+      }),
+    );
+    render(<App plan={{ kind: "static" }} />);
+    await waitFor(() => expect(window.location.hash).toBe("#/gallery"));
+    expect(screen.getByRole("link", { name: "Play A run" })).toBeInTheDocument();
+    const open = screen.getByRole("link", { name: "Open The source" });
+    expect(open.getAttribute("href")).toMatch(/\?src=recordings%2Fs\.pviz\.jsonl#\/$/);
+  });
+
   test("recordingHref keeps the page path and makes src relative to it", () => {
     const entry = { id: "a", title: "A", description: "", src: "a.pviz.jsonl" };
     expect(recordingHref(entry, "https://example.test/demo/index.html?src=old#/runs/x")).toBe(

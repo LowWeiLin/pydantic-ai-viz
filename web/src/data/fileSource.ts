@@ -119,7 +119,8 @@ function isEntry(value: unknown): value is RecordingEntry {
     typeof value.id === "string" &&
     typeof value.title === "string" &&
     typeof value.description === "string" &&
-    typeof value.src === "string"
+    typeof value.src === "string" &&
+    (value.kind === undefined || typeof value.kind === "string")
   );
 }
 

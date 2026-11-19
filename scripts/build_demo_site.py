@@ -8,9 +8,8 @@ writes
     <out>/recordings/<name>.pviz.jsonl    one recording per demo, token streaming on
     <out>/recordings/index.json           the gallery the viewer fetches
     <out>/recordings/source.pviz.jsonl    the demos' source code as `pydantic-ai-viz view`
-                                          reads it: blueprints only, opened with
-                                          ?src=recordings/source.pviz.jsonl and not in the
-                                          gallery, which lists runs to play
+                                          reads it: blueprints only, listed last in the
+                                          gallery with kind "blueprint"
 
 The recordings are made here on every build and are never committed. The viewer
 must have been built first (``pnpm --dir web build``): a demo site made of the
@@ -74,6 +73,16 @@ def build(out: Path, speed: float) -> list[Path]:
                 "src": f"{demo.name}.pviz.jsonl",
             }
         )
+    index.append(
+        {
+            "id": "source",
+            "title": SOURCE_TITLE,
+            "description": "Seven agents and a graph, drawn from the demos' code by pydantic-ai-viz view "
+            "without running any of it.",
+            "src": "source.pviz.jsonl",
+            "kind": "blueprint",
+        }
+    )
     index_file = recordings / "index.json"
     index_file.write_text(json.dumps({"recordings": index}, indent=2) + "\n", encoding="utf-8", newline="\n")
     # What `pydantic-ai-viz view` shows of the same code: read, never imported or run.

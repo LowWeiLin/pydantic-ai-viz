@@ -12,6 +12,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import { type Bounds, type Playback, seek } from "../data/playback";
 import { displayStatus, type RunView } from "../data/selectors";
@@ -27,12 +28,33 @@ import type { Span } from "../wire";
 import { PlaybackBar } from "./PlaybackBar";
 import { barExtent, fraction, rulerTicks, tickLabel } from "./ruler";
 
-/** Name column and waterfall column. Shared by the header, the rows and the playhead layer. */
-const COLUMNS = "grid grid-cols-[minmax(240px,34%)_minmax(0,1fr)]";
+/**
+ * Name column and waterfall column. Shared by the header, the rows and the playhead layer.
+ * On a phone the name column gives up width so the waterfall keeps some.
+ */
+const COLUMNS =
+  "grid grid-cols-[minmax(240px,34%)_minmax(0,1fr)] max-sm:grid-cols-[minmax(150px,46%)_minmax(0,1fr)]";
 /** The waterfall track: inset on the right so a duration label fits after the last bar. */
 const TRACK = "relative ml-3 mr-[76px]";
 
 const percent = (value: number): string => `${(value * 100).toFixed(3)}%`;
+
+const PHONE = "(max-width: 639px)";
+
+/** How many ruler ticks fit: eight labels overlap in the narrow waterfall of a phone. */
+function useTickCount(): number {
+  const query = (): boolean =>
+    typeof window.matchMedia === "function" && window.matchMedia(PHONE).matches;
+  const [phone, setPhone] = useState(query);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia(PHONE);
+    const change = (): void => setPhone(media.matches);
+    media.addEventListener("change", change);
+    return () => media.removeEventListener("change", change);
+  }, []);
+  return phone ? 3 : 8;
+}
 
 /** The ruler, which is also the scrubber: drag or use the arrow keys to move through time. */
 export function Ruler({ playback, bounds }: { playback: Playback; bounds: Bounds }) {
@@ -40,7 +62,8 @@ export function Ruler({ playback, bounds }: { playback: Playback; bounds: Bounds
   const dragging = useRef(false);
   const total = Math.max(0, bounds.end - bounds.start);
   const position = playback.mode === "live" ? 1 : fraction(playback.t, bounds);
-  const ticks = useMemo(() => rulerTicks(total, 8), [total]);
+  const tickCount = useTickCount();
+  const ticks = useMemo(() => rulerTicks(total, tickCount), [total, tickCount]);
 
   const seekTo = (t: number): void => update((p) => seek(p, t, bounds));
   const seekAt = (event: PointerEvent<HTMLDivElement>): void => {
@@ -218,7 +241,8 @@ export function Timeline({
   );
   const total = Math.max(0, bounds.end - bounds.start);
   const position = playback.mode === "live" ? 1 : fraction(playback.t, bounds);
-  const ticks = useMemo(() => rulerTicks(total, 8), [total]);
+  const tickCount = useTickCount();
+  const ticks = useMemo(() => rulerTicks(total, tickCount), [total, tickCount]);
   // One tab stop: the selected row, or the first.
   const tabStop = selectedId && view.spans[selectedId] ? selectedId : view.order[0];
 

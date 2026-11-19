@@ -209,7 +209,18 @@ export function ThemeToggle() {
   );
 }
 
-export function TopBar({ route, onShowShortcuts }: { route: Route; onShowShortcuts: () => void }) {
+export function TopBar({
+  route,
+  onShowShortcuts,
+  navOpen,
+  onToggleNav,
+}: {
+  route: Route;
+  onShowShortcuts: () => void;
+  /** Whether the sidebar drawer of a phone-sized window is open; `null` when there is no sidebar. */
+  navOpen: boolean | null;
+  onToggleNav: () => void;
+}) {
   const source = useViewer((state) => state.source);
   const title = useViewer((state) => state.data.session?.title ?? null);
   const hasGallery = useViewer((state) => state.gallery !== null);
@@ -217,6 +228,16 @@ export function TopBar({ route, onShowShortcuts }: { route: Route; onShowShortcu
 
   return (
     <header className="flex h-11 shrink-0 items-center gap-3 border-line border-b bg-surface px-3">
+      {navOpen !== null && (
+        <IconButton
+          icon={navOpen ? "close" : "menu"}
+          label={navOpen ? "Hide blueprints and runs" : "Show blueprints and runs"}
+          aria-expanded={navOpen}
+          aria-controls="sidebar"
+          className="sm:hidden"
+          onClick={onToggleNav}
+        />
+      )}
       <a
         href={formatRoute({ name: "home" })}
         className="flex items-center gap-2 text-fg no-underline"

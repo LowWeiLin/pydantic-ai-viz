@@ -12,6 +12,7 @@ import { cx, type Tone, toneClass } from "../ui/tone";
  *
  * In a narrow window the facts wrap within their own column; the title and the actions stay
  * on the first line, so the bar grows by a line of chips, never by a line holding one button.
+ * On a phone the chips take a line of their own under the title.
  */
 export function ScreenBar({
   icon,
@@ -30,7 +31,7 @@ export function ScreenBar({
   aside?: ReactNode;
 }) {
   return (
-    <header className="flex min-h-11 shrink-0 items-center gap-3 border-line border-b bg-surface py-1.5 pr-12 pl-3">
+    <header className="flex min-h-11 shrink-0 items-center gap-3 border-line border-b bg-surface py-1.5 pr-12 pl-3 max-sm:flex-wrap max-sm:gap-y-1.5">
       <span
         className={cx(
           toneClass[tone],
@@ -45,7 +46,11 @@ export function ScreenBar({
         </p>
         <h2 className="m-0 truncate font-semibold text-em leading-tight">{title}</h2>
       </div>
-      {chips && <div className="flex min-w-40 flex-1 flex-wrap items-center gap-1.5">{chips}</div>}
+      {chips && (
+        <div className="flex min-w-40 flex-1 flex-wrap items-center gap-1.5 max-sm:order-last max-sm:basis-full">
+          {chips}
+        </div>
+      )}
       {aside && <div className="ml-auto flex shrink-0 items-center gap-2">{aside}</div>}
     </header>
   );

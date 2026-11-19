@@ -50,14 +50,16 @@ def test_the_demo_site_is_the_viewer_a_gallery_index_and_one_recording_per_demo(
     assert page == VIEWER_PATH.read_bytes()
     assert page.decode("utf-8").count(BOOT_TOKEN) == 1
 
-    # The gallery lists the demos in their display order; `src` is relative to the recordings directory.
+    # The gallery lists the demos in their display order, then their source as a blueprint to open;
+    # `src` is relative to the recordings directory.
     index = json.loads((out / "recordings" / "index.json").read_text(encoding="utf-8"))
-    assert index == {
-        "recordings": [
-            {"id": demo.name, "title": demo.title, "description": demo.description, "src": f"{demo.name}.pviz.jsonl"}
-            for demo in DEMOS.values()
-        ]
-    }
+    *runs, source = index["recordings"]
+    assert runs == [
+        {"id": demo.name, "title": demo.title, "description": demo.description, "src": f"{demo.name}.pviz.jsonl"}
+        for demo in DEMOS.values()
+    ]
+    assert source["src"] == "source.pviz.jsonl"
+    assert source["kind"] == "blueprint"
 
     for demo in DEMOS.values():
         events = read_recording(out / "recordings" / f"{demo.name}.pviz.jsonl")

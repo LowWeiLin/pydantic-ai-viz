@@ -383,7 +383,14 @@ export type Boot =
 /** `recordings/index.json`, served next to the viewer by the hosted demo. */
 export type RecordingIndex = { recordings: RecordingEntry[] };
 
-export type RecordingEntry = { id: string; title: string; description: string; src: string };
+export type RecordingEntry = {
+  id: string;
+  title: string;
+  description: string;
+  src: string;
+  /** `"blueprint"` for a recording with no runs, such as what `view` read; a run otherwise. */
+  kind?: "run" | "blueprint";
+};
 
 /** The wire format version this viewer understands. */
 export const PVIZ_VERSION = 1;

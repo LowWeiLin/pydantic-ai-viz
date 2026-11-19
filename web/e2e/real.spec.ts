@@ -63,7 +63,7 @@ const subject = (page: Page, name: string) =>
 test.describe("real demo recordings", () => {
   test.skip(!dir, "PVIZ_RECORDINGS_DIR is not set; build it with scripts/build_demo_site.py");
 
-  test("the gallery lists the three demos and plays one, asking for nothing else", async ({
+  test("the gallery lists the three demos and their source, and plays one, asking for nothing else", async ({
     page,
     baseURL,
   }) => {
@@ -74,6 +74,10 @@ test.describe("real demo recordings", () => {
     for (const title of ["Support triage", "Research team", "Article pipeline"]) {
       await expect(page.getByRole("link", { name: `Play ${title}` })).toBeVisible();
     }
+    // The demos' source, as `view` reads it, has no run to play: it is opened.
+    await expect(
+      page.getByRole("link", { name: "Open The demos, read from source" }),
+    ).toBeVisible();
     await page.getByRole("link", { name: "Play Research team" }).click();
     await page.waitForURL(/\?src=recordings%2Fresearch\.pviz\.jsonl#\/runs\//);
     await expect(page.getByRole("heading", { name: "Research team" })).toBeVisible();
