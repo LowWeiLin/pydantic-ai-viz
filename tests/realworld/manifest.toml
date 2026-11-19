@@ -37,10 +37,15 @@ exercises = "The examples of Pydantic AI itself: single agents with tools, struc
 min_files = 49
 min_agents = 36
 min_tools = 24
-min_delegations = 3
+min_delegations = 6
 agents = ["support_agent", "weather_agent", "search_agent", "extraction_agent", "seat_preference_agent", "roulette_agent"]
 tools = ["customer_balance", "get_lat_lng", "get_weather", "extract_flights", "retrieve", "roulette_wheel", "duckduckgo_search"]
-delegations = ["search_agent -> extraction_agent", "triage_agent -> senior_doctor_agent", "camera_assistant -> diagram_drawer"]
+delegations = [
+    "search_agent -> extraction_agent",
+    "triage_agent -> senior_doctor_agent",
+    "triage_agent -> cardiology_agent",
+    "camera_assistant -> diagram_drawer",
+]
 
 [[project]]
 id = "pydantic-ai-examples-v1"
@@ -72,7 +77,7 @@ exercises = "Small demos by the Pydantic team: durable execution with Temporal a
 min_files = 22
 min_agents = 25
 min_tools = 11
-min_delegations = 5
+min_delegations = 6
 agents = ["plan_agent", "search_agent", "analysis_agent", "questioner_agent", "answerer_agent", "weather_agent"]
 tools = ["extra_search", "ask_question", "tavily_search", "record_memory", "retrieve_memories"]
 delegations = ["analysis_agent -> search_agent", "questioner_agent -> answerer_agent"]
@@ -193,7 +198,7 @@ exercises = "An agent framework on top of Pydantic AI: one agent given its argum
 [project.expect]
 min_files = 298
 min_agents = 42
-min_tools = 28
+min_tools = 36
 agents = ["agent", "_agent"]
 tools = ["load_skill", "save_checkpoint", "rewind_to", "spawn_team", "fork_run", "search_conversation_history"]
 
