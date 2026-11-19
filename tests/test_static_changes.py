@@ -1,8 +1,9 @@
 """Values that are changed after they are created: ``tools.append(f)``, ``settings["k"] = v`` and the like.
 
 A list or a dict that the source builds up in steps is not the literal it started
-as. It is read with what was added where that can be followed, and not read at
-all where it cannot.
+as. It is read with what was added where that can be followed. Where more is
+added that cannot be read, that is said; where it is changed in any other way, it
+is not read at all.
 """
 
 from __future__ import annotations
@@ -140,7 +141,6 @@ def test_what_is_added_under_a_condition_is_shown_and_said_to_depend_on_it(tmp_p
         "tools[1:] = []",
         "del tools[0]",
         "tools += [second]",
-        "tools.extend(other_tools())",
         "tools.append(*more)",
         "def later():\n    tools.append(second)",
         "class Setup:\n    def run(self):\n        tools.clear()",
@@ -309,4 +309,149 @@ def test_instructions_listed_and_added_to_are_all_read(tmp_path: Path) -> None:
     assert [instruction.text for instruction in found.instructions] == ["Be brief.", "Be kind.", "Never guess."]
     assert found.warnings == [
         "some of the instructions in `parts` depend on a condition; those of every case are shown"
+    ]
+
+
+# ------------------------------------------------ arguments spread from a dict
+
+
+SPREAD = """
+from pydantic import BaseModel
+from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai.toolsets import FunctionToolset
+
+
+class Report(BaseModel):
+    title: str
+
+
+def search(query: str) -> str:
+    \"\"\"Search the web.\"\"\"
+    return query
+
+
+def fetch(url: str) -> str:
+    return url
+
+
+COMMON = {"model": "openai:gpt-5.2", "retries": 2}
+shared = Agent(**COMMON, instructions="Shared.")
+called = Agent(**dict(model="test", name="called"))
+inline = Agent("test", **{"name": "inline", "retries": 1})
+
+
+def build(model, tools=None, output_type=None, wrap=None, extra_toolsets=None, **agent_kwargs):
+    all_toolsets = []
+    memory = FunctionToolset()
+    memory.add_function(search)
+    all_toolsets.append(memory)
+    kwargs = {
+        "toolsets": all_toolsets,
+        "instructions": "Built.",
+        "retries": 3,
+    }
+    if output_type is not None:
+        kwargs["output_type"] = [Report, DeferredToolRequests]
+    else:
+        kwargs["output_type"] = Report
+    if tools:
+        kwargs["tools"] = [fetch]
+    all_toolsets.append(FunctionToolset([fetch]))
+    if extra_toolsets:
+        all_toolsets.extend(extra_toolsets)
+    if wrap:
+        all_toolsets = wrap(all_toolsets)
+        kwargs["toolsets"] = all_toolsets
+    kwargs["name"] = "built"
+    kwargs["retries"] = 5
+    kwargs.update(agent_kwargs)
+    return Agent(model, **kwargs)
+
+
+def updated():
+    kwargs = {"name": "updated"}
+    kwargs.update({"retries": 4}, end_strategy="exhaustive")
+    kwargs.setdefault("name", "ignored")
+    kwargs.setdefault("instructions", "Defaulted.")
+    return Agent("test", **kwargs)
+
+
+def unreadable(options, key):
+    one = Agent("test", **options)
+    kwargs = {"name": "partly", key: 1, **options}
+    del kwargs["retries"]
+    two = Agent("test", **kwargs)
+    return one, two
+"""
+
+
+def test_arguments_spread_from_a_dict_written_in_the_source_are_read(tmp_path: Path) -> None:
+    found = analyze_source(tmp_path, SPREAD)
+    shared = agent(found, "shared")
+    assert shared.model is not None
+    assert (shared.model.id, shared.settings.tool_retries) == ("openai:gpt-5.2", 2)
+    assert [i.text for i in shared.instructions] == ["Shared."]
+    called = agent(found, "called")
+    assert called.model is not None
+    assert (called.name, called.model.id) == ("called", "test")
+    assert (agent(found, "inline").name, agent(found, "inline").settings.tool_retries) == ("inline", 1)
+    updated = agent(found, "updated")
+    # ``setdefault`` sets what is not there yet, and leaves alone what is.
+    assert (updated.name, updated.settings.tool_retries, updated.settings.end_strategy) == ("updated", 4, "exhaustive")
+    assert [i.text for i in updated.instructions] == ["Defaulted."]
+    for label in ("shared", "called", "inline", "updated"):
+        assert agent(found, label).warnings == []
+
+
+def test_a_dict_of_arguments_is_read_with_what_is_set_in_it_before_the_call(tmp_path: Path) -> None:
+    built = agent(analyze_source(tmp_path, SPREAD), "built")
+    # Set without a condition after the dict was written: the later value is the one passed.
+    assert (built.name, built.settings.tool_retries) == ("built", 5)
+    assert [i.text for i in built.instructions] == ["Built."]
+    # The list in the dict is the list at the call: what is appended in between is in it.
+    assert [(t.kind, t.label) for t in built.toolsets] == [
+        ("agent", "Agent tools"),
+        ("function", "FunctionToolset"),
+        ("function", "FunctionToolset"),
+    ]
+    assert [(t.name, t.toolset) for t in built.tools] == [("fetch", "ts0"), ("search", "ts1"), ("fetch", "ts2")]
+    assert (built.output.type_name, built.output.mode) == ("Report | DeferredToolRequests", "auto")
+    assert built.warnings == [
+        "in `**kwargs`, `output_type` and `tools` are only set under a condition, and shown as if it held",
+        "in `**kwargs`, `toolsets` is replaced under a condition; what was given first is shown",
+        "some of the arguments passed as `**kwargs` cannot be read from source",
+        "more toolsets are added by `all_toolsets.extend(extra_toolsets)`; they are only known when the code runs",
+        "the model is set by `model`, so it is only known when the code runs",
+    ]
+
+
+def test_a_dict_of_arguments_that_is_not_written_out_is_said_to_be_unread(tmp_path: Path) -> None:
+    found = analyze_source(tmp_path, SPREAD)
+    one, two = agent(found, "one"), agent(found, "partly")
+    assert one.warnings == ["arguments passed as `**options` cannot be read from source"]
+    # A computed key, another dict spread into it and a deleted key: what is written out is read, the rest said.
+    assert (two.name, two.settings.tool_retries) == ("partly", None)
+    assert two.warnings == ["some of the arguments passed as `**kwargs` cannot be read from source"]
+
+
+def test_a_list_that_is_extended_with_something_unreadable_keeps_what_is_written_out(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+
+
+        def search(query: str) -> str:
+            return query
+
+
+        def build(extra_tools):
+            tools = [search]
+            tools.extend(extra_tools)
+            return Agent("test", tools=tools)
+        """,
+    )
+    assert [t.name for t in found.tools] == ["search"]
+    assert found.warnings == [
+        "more tools are added by `tools.extend(extra_tools)`; they are only known when the code runs"
     ]

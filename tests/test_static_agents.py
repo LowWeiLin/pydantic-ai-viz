@@ -241,8 +241,9 @@ def test_models_given_in_other_ways() -> None:
 
     assert agent(found, "no_model").model is None
     splatted = agent(found, "splatted")
-    assert splatted.name is None  # it is inside **OPTIONS
-    assert splatted.warnings == ["arguments passed as `**OPTIONS` cannot be read from source"]
+    # ``**OPTIONS`` is a dict the file writes out, so what is in it is read like any other argument.
+    assert (splatted.name, splatted.settings.tool_retries) == ("splatted", 2)
+    assert splatted.warnings == []
 
 
 def test_offline_model_classes_are_recognised_but_not_named(tmp_path: Path) -> None:

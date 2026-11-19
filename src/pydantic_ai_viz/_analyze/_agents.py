@@ -33,7 +33,7 @@ from .._models import (
 from ._docstring import describe
 from ._resolve import Definition, Expression, External, Project, Resolved, Resolver
 from ._schema import NOT_FROM_THE_MODEL, SchemaBuilder
-from ._source import CallSite, Module, Scope, clip_expression, unwrap
+from ._source import CallSite, Module, Mutation, Scope, clip_expression, unwrap
 from ._values import NotLiteral, fstring_template, literal, string
 
 ToolKind: TypeAlias = Literal["function", "output", "external", "unapproved"]
@@ -167,6 +167,8 @@ class AgentExtractor:
         self.toolsets: dict[int, _ToolsetSite] = {}
         self.conditional = False
         """Set by ``items`` when an entry it returned depends on a condition."""
+        self.added_unread: list[str] = []
+        """Filled by ``items``: statements that add entries to a list it returned which it could not read."""
 
     # -------------------------------------------------------------- driver
 
@@ -410,14 +412,19 @@ class AgentExtractor:
             method.node.name, function, location(made.module, method.node), takes_ctx=self._takes_ctx(function)
         )
 
-    def items(self, node: ast.expr, scope: Scope, line: int, depth: int = 0) -> list[Expression] | None:
+    def items(
+        self, node: ast.expr, scope: Scope, line: int, depth: int = 0, *, until: tuple[Scope, int] | None = None
+    ) -> list[Expression] | None:
         """The entries of a list written in source; ``None`` when what the list holds cannot be read.
 
         ``*name`` entries are expanded, and so are entries added afterwards with
         ``append``, ``extend`` and ``insert``. Where an entry depends on a condition
         (``[a] if flag else []``, an ``append`` inside an ``if``), it is included and
-        ``conditional`` is set, for the caller to say so. A list that is changed in
-        any other way is not read at all.
+        ``conditional`` is set, for the caller to say so. Where ``extend`` adds
+        entries that cannot be read, the others are returned and the statement is
+        noted in ``added_unread``. A list that is changed in any other way is not
+        read at all. ``until`` is where the list is used, when
+        that is further down than ``line``: what is added up to there counts too.
         """
         if depth > _MAX_EXPANSION_DEPTH:
             return None
@@ -425,7 +432,7 @@ class AgentExtractor:
         if isinstance(written, ast.IfExp | ast.BoolOp):
             return self._either(written, scope, line, depth)
         target = self.resolver.resolve(node, scope, line)
-        changes = self.resolver.changed()
+        changes = self.resolver.changed(until=until)
         if not isinstance(target, Expression):
             return None
         if isinstance(target.node, ast.IfExp | ast.BoolOp):
@@ -454,7 +461,9 @@ class AgentExtractor:
             elif call is not None and plain and change.method == "extend" and len(call.args) == 1:
                 more = self.items(call.args[0], change.scope, change.line, depth + 1)
                 if more is None:
-                    return None
+                    # More entries, which only the running code knows. Those that are written out still hold.
+                    self.added_unread.append(clip_expression(change.scope.module.text(call), 80))
+                    continue
                 found.extend(more)
             else:
                 return None  # removed from, sorted, replaced item by item: not something to read off the page
@@ -483,6 +492,11 @@ class AgentExtractor:
         conditional, self.conditional = self.conditional, False
         return conditional
 
+    def take_added_unread(self) -> list[str]:
+        """The statements that added unreadable entries to the lists read since the last call."""
+        unread, self.added_unread = list(dict.fromkeys(self.added_unread)), []
+        return unread
+
 
 class _AgentBuilder:
     """Turns one ``_AgentSite`` into an ``AgentBlueprint``."""
@@ -500,34 +514,149 @@ class _AgentBuilder:
         for note in agent.notes:
             self.warn(note)
         self.arguments: dict[str, ast.expr] = {}
+        self._spread_from: dict[int, tuple[Scope, int]] = {}
+        """``id(node)`` of an argument taken out of a ``**dict`` -> the scope and line it is written at."""
         if self.call.args and not isinstance(self.call.args[0], ast.Starred):
             self.arguments["model"] = self.call.args[0]
+        spread: list[ast.expr] = []
         for keyword in self.call.keywords:
             if keyword.arg is None:
-                self.warn(
-                    f"arguments passed as `**{brief(self.module.text(keyword.value))}` cannot be read from source"
-                )
+                spread.append(keyword.value)
             else:
                 self.arguments[keyword.arg] = keyword.value
+        for node in spread:
+            self._spread(node)
         if any(isinstance(argument, ast.Starred) for argument in self.call.args):
             self.warn("arguments passed with `*` cannot be read from source")
 
     def warn(self, message: str) -> None:
         _compat.add_warning(self.warnings, message)
 
+    def where(self, node: ast.expr) -> tuple[Scope, int]:
+        """The scope and the line an argument is evaluated at: the call's, unless it came out of a ``**dict``."""
+        return self._spread_from.get(id(node), (self.scope, self.line))
+
     def text(self, node: ast.AST) -> str:
-        return self.module.text(node)
+        scope, _ = self._spread_from.get(id(node), (self.scope, self.line))
+        return scope.module.text(node)
 
     def literal(self, node: ast.expr) -> Any:
         """The value an argument spells out; ``NotLiteral`` propagates."""
-        return literal(self.resolver, node, self.scope, self.line)
+        return literal(self.resolver, node, *self.where(node))
+
+    def _spread(self, node: ast.expr) -> None:
+        """Take the arguments out of ``**name``, where ``name`` is a dict that the source writes out.
+
+        ``kwargs = {"model": model}``, then ``kwargs["tools"] = tools`` under some
+        condition, then ``Agent(**kwargs)``: the keys are the arguments. A key that
+        is only set under a condition is taken as set, and said to depend on it.
+        """
+        text = brief(self.module.text(node))
+        target = self.resolver.resolve(node, self.scope, self.line)
+        changes = self.resolver.changed()
+        written = self._written_dict(target) if isinstance(target, Expression) else None
+        if written is None or not isinstance(target, Expression):
+            self.warn(f"arguments passed as `**{text}` cannot be read from source")
+            return
+        found: dict[str, tuple[ast.expr, Scope, int]] = {}
+        unread = False
+        for key, value in written:
+            name = key if isinstance(key, str) else None
+            if isinstance(key, ast.expr):
+                name = string(self.resolver, key, target.scope, target.line)
+            if name is None:
+                unread = True  # a computed key, or another dict spread into this one
+            else:
+                found[name] = (value, target.scope, target.line)
+        conditional: list[str] = []
+        replaced: list[str] = []
+        for change in changes:
+            pairs = None if change.elsewhere else self._set_by(change)
+            if pairs is None:
+                unread = True
+                continue
+            for name, value in pairs:
+                if change.method == "setdefault" and name in found:
+                    continue
+                if change.conditional and name in found and name not in conditional:
+                    replaced.append(name)  # the value first given stays: it is the one given in every case
+                    continue
+                if change.conditional and name not in conditional:
+                    conditional.append(name)
+                elif name in conditional and not change.conditional:
+                    conditional.remove(name)
+                found.setdefault(name, (value, change.scope, change.line))
+                if not change.conditional:
+                    found[name] = (value, change.scope, change.line)
+        for name, (value, scope, line) in found.items():
+            if name not in self.arguments:  # one written out in the call itself comes first
+                self.arguments[name] = value
+                self._spread_from[id(value)] = (scope, line)
+        replaced = list(dict.fromkeys(replaced))
+        if conditional:
+            names = " and ".join(f"`{name}`" for name in conditional)
+            verb = "is" if len(conditional) == 1 else "are"
+            self.warn(f"in `**{text}`, {names} {verb} only set under a condition, and shown as if it held")
+        if replaced:
+            names = " and ".join(f"`{name}`" for name in replaced)
+            verb = "is" if len(replaced) == 1 else "are"
+            self.warn(f"in `**{text}`, {names} {verb} replaced under a condition; what was given first is shown")
+        if unread:
+            self.warn(f"some of the arguments passed as `**{text}` cannot be read from source")
+
+    def _written_dict(self, target: Expression) -> list[tuple[ast.expr | str | None, ast.expr]] | None:
+        """The keys and values of ``{"k": v}`` or ``dict(k=v)``; a key is ``None`` for ``**other``."""
+        node = target.node
+        if isinstance(node, ast.Dict) and len(node.keys) <= _MAX_LIST_ITEMS:
+            return list(zip(node.keys, node.values, strict=True))
+        if isinstance(node, ast.Call) and not node.args and len(node.keywords) <= _MAX_LIST_ITEMS:
+            callee = self.resolver.callee(node, target.scope, target.line)
+            if isinstance(callee, External) and callee.name == "builtins.dict":
+                return [(keyword.arg, keyword.value) for keyword in node.keywords]
+        return None
+
+    def _set_by(self, change: Mutation) -> list[tuple[str, ast.expr]] | None:
+        """The keys a statement sets in a dict, with their values; ``None`` when that cannot be read."""
+        if change.method == "[]":
+            if change.key is None or change.value is None:
+                return None  # ``del kwargs[key]``, ``kwargs[key] += 1``
+            name = string(self.resolver, change.key, change.scope, change.line)
+            return None if name is None else [(name, change.value)]
+        call = change.call
+        if call is None or any(isinstance(argument, ast.Starred) for argument in call.args):
+            return None
+        if change.method == "setdefault" and len(call.args) == 2 and not call.keywords:
+            name = string(self.resolver, call.args[0], change.scope, change.line)
+            return None if name is None else [(name, call.args[1])]
+        if change.method != "update" or len(call.args) > 1:
+            return None
+        pairs: list[tuple[str, ast.expr]] = []
+        if call.args:
+            given = call.args[0]
+            if not isinstance(given, ast.Dict) or len(given.keys) > _MAX_LIST_ITEMS:
+                return None
+            for key, value in zip(given.keys, given.values, strict=True):
+                name = None if key is None else string(self.resolver, key, change.scope, change.line)
+                if name is None:
+                    return None
+                pairs.append((name, value))
+        for keyword in call.keywords:
+            if keyword.arg is None:
+                return None
+            pairs.append((keyword.arg, keyword.value))
+        return pairs
 
     def _listed(self, node: ast.expr, scope: Scope, line: int, what: str) -> list[Expression] | None:
         """The entries of a list argument, with a warning when some of them depend on a condition."""
-        entries = self.extractor.items(node, scope, line)
+        # A list that came out of a ``**dict`` is the same list when the call is made, further down.
+        until = (self.scope, self.line) if id(node) in self._spread_from and scope is self.scope else None
+        entries = self.extractor.items(node, scope, line, until=until)
         if self.extractor.take_conditional() and entries is not None:
             text = brief(scope.module.text(node))
             self.warn(f"some of the {what} in `{text}` depend on a condition; those of every case are shown")
+        for statement in self.extractor.take_added_unread():
+            if entries is not None:
+                self.warn(f"more {what} are added by `{statement}`; they are only known when the code runs")
         return entries
 
     # --------------------------------------------------------------- build
@@ -560,7 +689,7 @@ class _AgentBuilder:
         node = self.arguments.get(key)
         if node is None or (isinstance(node, ast.Constant) and node.value is None):
             return None
-        value = string(self.resolver, node, self.scope, self.line)
+        value = string(self.resolver, node, *self.where(node))
         if value is None:
             self.warn(f"the {key} is computed by `{brief(self.text(node))}`, so it is only known when the code runs")
         return value or None
@@ -569,7 +698,7 @@ class _AgentBuilder:
         node = self.arguments.get("model")
         if node is None or (isinstance(node, ast.Constant) and node.value is None):
             return None
-        value = string(self.resolver, node, self.scope, self.line)
+        value = string(self.resolver, node, *self.where(node))
         if value is not None:
             provider, separator, name = value.partition(":")
             if not separator:
@@ -579,7 +708,7 @@ class _AgentBuilder:
         text = self.text(node)
         name: str | None = None
         provider = None
-        target = self.resolver.resolve(node, self.scope, self.line)
+        target = self.resolver.resolve(node, *self.where(node))
         if isinstance(unwrap(node), ast.Name | ast.Attribute) and isinstance(target, Expression):
             # ``Agent(model)``: what ``model`` was assigned says more than its name does.
             text = target.module.text(target.node)
@@ -683,7 +812,7 @@ class _AgentBuilder:
         node = self.arguments.get("deps_type")
         if node is None:
             return None
-        target = self.resolver.resolve(node, self.scope, self.line)
+        target = self.resolver.resolve(node, *self.where(node))
         if isinstance(target, External):
             return (
                 None if target.name in ("builtins.object", "builtins.None") else target.name.removeprefix("builtins.")
@@ -709,17 +838,15 @@ class _AgentBuilder:
         node = self.arguments.get(kind)
         if node is None:
             return []
-        entries = self._listed(
-            node, self.scope, self.line, "instructions" if kind == "instructions" else "system prompts"
-        )
+        entries = self._listed(node, *self.where(node), "instructions" if kind == "instructions" else "system prompts")
         if entries is None:
-            entries = [Expression(node, self.scope, self.line)]
+            entries = [Expression(node, *self.where(node))]
         prompts = (self._prompt(kind, entry) for entry in entries)
         return [prompt for prompt in prompts if prompt is not None]
 
     def _prompt(self, kind: PromptKind, entry: Expression) -> Instruction | None:
         node = entry.node
-        where = location(self.module, node)
+        where = location(entry.module, node)
         if isinstance(node, ast.Constant) and node.value is None:
             return None
         value = string(self.resolver, node, entry.scope, entry.line)
@@ -747,7 +874,7 @@ class _AgentBuilder:
                     return Instruction(
                         kind=kind, dynamic=True, text=template, function=None, expression=None, location=where
                     )
-        text = self.text(node)
+        text = entry.module.text(node)
         what = "instructions" if kind == "instructions" else "system prompts"
         if isinstance(target, External):
             self.warn(
@@ -776,7 +903,7 @@ class _AgentBuilder:
         modes: list[str] = []
         labels: list[str] = []
         schemas: list[dict[str, Any]] = []
-        self._output_member(Expression(node, self.scope, self.line), builder, modes, labels, schemas, 0)
+        self._output_member(Expression(node, *self.where(node)), builder, modes, labels, schemas, 0)
         if not modes or "tool" in modes:
             mode = "tool" if modes else "unknown"
         else:
@@ -874,7 +1001,7 @@ class _AgentBuilder:
         node = self.arguments.get("capabilities")
         if node is None or (isinstance(node, ast.Constant) and node.value is None):
             return []
-        entries = self._listed(node, self.scope, self.line, "capabilities")
+        entries = self._listed(node, *self.where(node), "capabilities")
         if entries is None:
             self.warn(
                 f"the capabilities are built by `{brief(self.text(node))}`; they are only known when the code runs"
@@ -969,7 +1096,7 @@ class _AgentBuilder:
         node = self.arguments.get("builtin_tools")
         if node is None or (isinstance(node, ast.Constant) and node.value is None):
             return []
-        entries = self._listed(node, self.scope, self.line, "builtin tools")
+        entries = self._listed(node, *self.where(node), "builtin tools")
         if entries is None:
             self.warn(
                 f"the builtin tools are built by `{brief(self.text(node))}`; they are only known when the code runs"
@@ -991,9 +1118,11 @@ class _AgentBuilder:
         node = self.arguments.get("model_settings")
         if node is None or (isinstance(node, ast.Constant) and node.value is None):
             return None
-        target = self.resolver.resolve(node, self.scope, self.line)
+        target = self.resolver.resolve(node, *self.where(node))
         pairs: list[tuple[str, Expression]] | None = None
-        if isinstance(target, Expression) and not self.resolver.changed():  # ``settings["k"] = v`` afterwards
+        scope, _ = self.where(node)
+        until = (self.scope, self.line) if scope is self.scope else None
+        if isinstance(target, Expression) and not self.resolver.changed(until=until):  # ``settings["k"] = v``
             inner = target.node
             if isinstance(inner, ast.Dict):
                 pairs = []
@@ -1037,13 +1166,17 @@ class _AgentBuilder:
             node = self.arguments.get(key)
             if node is None or (isinstance(node, ast.Constant) and node.value is None):
                 continue
-            listed = self._listed(node, self.scope, self.line, "toolsets")
+            listed = self._listed(node, *self.where(node), "toolsets")
             if listed is None:
                 text = self.text(node)
                 self.warn(f"the toolsets are built by `{brief(text)}`; they are only known when the code runs")
                 entries.append(
                     _ToolsetEntry(
-                        kind="other", label=text, opaque=True, expression=text, where=location(self.module, node)
+                        kind="other",
+                        label=text,
+                        opaque=True,
+                        expression=text,
+                        where=location(self.where(node)[0].module, node),
                     )
                 )
             else:
@@ -1090,7 +1223,7 @@ class _AgentBuilder:
         own: list[_ToolSpec] = []
         node = self.arguments.get("tools")
         if node is not None:
-            listed = self._listed(node, self.scope, self.line, "tools")
+            listed = self._listed(node, *self.where(node), "tools")
             if listed is None:
                 self.warn(f"the tools are built by `{brief(self.text(node))}`; they are only known when the code runs")
             for item in listed or []:

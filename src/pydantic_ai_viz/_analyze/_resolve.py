@@ -333,12 +333,16 @@ class Resolver:
             binding = _closest(found, END_OF_MODULE)
         return None
 
-    def changes(self, node: ast.expr, scope: Scope, line: int) -> list[Mutation]:
+    def changes(self, node: ast.expr, scope: Scope, line: int, *, until: int | None = None) -> list[Mutation]:
         """In-place changes made to the value ``node`` names before it is used at ``line`` in ``scope``.
 
         ``node`` is a plain name, or an attribute of ``self``. A change counts when
         it is made before the use. Where the two stand in different scopes, the
         order they run in is not known, and every change counts.
+
+        ``until`` is a later line of the same scope at which the value is really
+        used: a list put into a dict at ``line`` and passed on at ``until`` is still
+        the same list, with everything appended to it in between.
         """
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
             owner = _receiver_class(node.value.id, scope)
@@ -351,7 +355,9 @@ class Resolver:
         return [
             change
             for change in binding.scope.mutations.get(binding.name, ())
-            if change.scope is not scope or binding.scope is not scope or binding.line < change.line <= line
+            if change.scope is not scope
+            or binding.scope is not scope
+            or binding.line < change.line <= max(line, until or line)
         ]
 
     def each(self, node: ast.AST, scope: Scope, line: int) -> Iterator[None]:
@@ -424,16 +430,18 @@ class Resolver:
             if depth == 0:
                 self.trail = trail
 
-    def changed(self) -> list[Mutation]:
+    def changed(self, *, until: tuple[Scope, int] | None = None) -> list[Mutation]:
         """In-place changes to any name the last ``resolve`` passed through on its way to a value.
 
         ``tools = [a]`` followed by ``tools.append(b)`` resolves to the list ``[a]``,
         which is not what ``tools`` holds when it is used. A caller that reads the
-        value has to ask here first.
+        value has to ask here first. ``until`` is the scope and the line at which
+        the value is used, when that is further down than where it was resolved.
         """
         found: list[Mutation] = []
         for hop in self.trail:
-            found.extend(self.changes(unwrap(hop.node), hop.scope, hop.line))
+            later = until[1] if until is not None and until[0] is hop.scope else None
+            found.extend(self.changes(unwrap(hop.node), hop.scope, hop.line, until=later))
         return found
 
     def _step(self, current: Expression, depth: int) -> Resolved | _Stop:

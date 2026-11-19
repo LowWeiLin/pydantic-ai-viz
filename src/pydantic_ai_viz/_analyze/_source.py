@@ -87,6 +87,10 @@ class Mutation:
     """Whether the statement stands inside an ``if``, a loop, a ``try`` or a ``match``: it may not happen."""
     elsewhere: bool = False
     """Whether it stands in another function than the one that binds the name: when it runs is not known."""
+    key: ast.expr | None = None
+    """``name[key] = value``: the key. ``None`` for every other change."""
+    value: ast.expr | None = None
+    """``name[key] = value``: the value."""
 
 
 @dataclass(slots=True, eq=False)
@@ -324,17 +328,31 @@ class _Indexer:
                 innermost = False
                 current = current.parent
 
-    def _mutation(self, target: ast.expr, method: str, call: ast.Call | None, scope: Scope, line: int) -> None:
-        """Record that ``target`` (a name, or an attribute of ``self``) is changed in place."""
+    def _mutation(
+        self,
+        target: ast.expr,
+        method: str,
+        call: ast.Call | None,
+        scope: Scope,
+        line: int,
+        item: tuple[ast.expr, ast.expr] | None = None,
+    ) -> None:
+        """Record that ``target`` (a name, or an attribute of ``self``) is changed in place.
+
+        ``item`` is the key and the value of ``target[key] = value``.
+        """
+        key, value = item or (None, None)
+        maybe = self._maybe > 0
         if isinstance(target, ast.Name):
-            self._mutations.append((Mutation(target.id, line, method, call, scope, self._maybe > 0), None))
+            self._mutations.append((Mutation(target.id, line, method, call, scope, maybe, key=key, value=value), None))
         elif (
             isinstance(target, ast.Attribute)
             and isinstance(target.value, ast.Name)
             and scope.receiver is not None
             and target.value.id == scope.receiver
         ):
-            self._mutations.append((Mutation(target.attr, line, method, call, scope, self._maybe > 0), target.attr))
+            change = Mutation(target.attr, line, method, call, scope, maybe, key=key, value=value)
+            self._mutations.append((change, target.attr))
 
     def block(self, statements: list[ast.stmt], scope: Scope) -> None:
         for statement in statements:
@@ -376,7 +394,7 @@ class _Indexer:
         elif isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Subscript):
-                    self._mutation(target.value, "[]", None, scope, line)
+                    self._mutation(target.value, "[]", None, scope, line, item=(target.slice, node.value))
                 self._assign(target, node.value, scope, line)
             self._assigned(node.targets[0], node.value, scope)
         elif isinstance(node, ast.AnnAssign):
