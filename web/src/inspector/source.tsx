@@ -82,7 +82,11 @@ export function ProvenanceChip({ source }: { source: Provenance }) {
 export const formatLocation = (location: SourceLocation): string =>
   `${location.file}:${location.line}`;
 
-/** Where something is defined in the analysed source, with a button that copies it. */
+/**
+ * Where something is defined in the analysed source, with a button that copies it. A long path
+ * gives way from its folder: the file name and the line are what an editor needs, so they are
+ * the last to be cut. The whole location is the title and what is copied.
+ */
 export function SourceRef({
   location,
   prefix = "Defined at",
@@ -93,13 +97,15 @@ export function SourceRef({
 }) {
   if (!location) return null;
   const text = formatLocation(location);
+  const cut = location.file.lastIndexOf("/") + 1;
   return (
-    <span className="inline-flex max-w-full items-center gap-1 text-faint text-meta">
+    <span className="inline-flex min-w-0 max-w-full items-center gap-1 text-faint text-meta">
       {prefix !== "" && <span className="shrink-0">{prefix}</span>}
-      <code className="min-w-0 truncate text-[11px] text-muted" title={text}>
-        {text}
+      <code className="flex min-w-0 text-[11px] text-muted" title={text}>
+        {cut > 0 && <span className="min-w-0 truncate">{location.file.slice(0, cut)}</span>}
+        <span className="max-w-full shrink-0 truncate">{text.slice(cut)}</span>
       </code>
-      <CopyButton text={text} label={`Copy ${text}`} compact className="h-5 px-1" />
+      <CopyButton text={text} label={`Copy ${text}`} compact className="h-5 shrink-0 px-1" />
     </span>
   );
 }

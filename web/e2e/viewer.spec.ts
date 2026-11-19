@@ -1033,6 +1033,49 @@ test.describe("blueprint-only view", () => {
     await expect(list.getByRole("link")).toHaveCount(36);
   });
 
+  test("a deep source path keeps its file and line in the panel", async ({ page }, testInfo) => {
+    // A scan of a real repository gives paths like this one; the fixture's are short.
+    const deep = readFileSync(fixturePath("blueprint/newsroom"), "utf8").replaceAll(
+      '"file":"newsroom/',
+      '"file":"examples/pydantic_ai_examples/services/newsroom/',
+    );
+    const file = testInfo.outputPath("deep-paths.html");
+    await page.setViewportSize({ width: 1024, height: 720 });
+    await page.goto(
+      `${writeEmbeddedExport(
+        deep
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line)),
+        file,
+      )}#/agents/a2`,
+    );
+    const inspector = page.getByRole("complementary", { name: "Blueprint details" });
+    const panel = inspector.getByRole("region", { name: "Agent blueprint" });
+    await expect(inspector.locator("code[title]:has(> span)").first()).toBeVisible();
+    // Nothing in the panel is pushed past its right edge...
+    expect(await panel.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+    // ...and every location shows its file and line whole: only the folder is cut.
+    const tails = await inspector.locator("code[title]:has(> span)").evaluateAll((codes) =>
+      codes.map((code) => {
+        const tail = code.lastElementChild as HTMLElement;
+        return {
+          title: code.getAttribute("title"),
+          tail: tail.textContent,
+          whole: tail.scrollWidth <= tail.clientWidth,
+          inside:
+            tail.getBoundingClientRect().right <=
+            (code.closest("aside")?.getBoundingClientRect().right ?? 0),
+        };
+      }),
+    );
+    expect(tails.length).toBeGreaterThan(2);
+    for (const tail of tails) {
+      expect(tail.title).toContain(`/${tail.tail}`);
+      expect(tail).toMatchObject({ whole: true, inside: true });
+    }
+  });
+
   test("a file can be dropped on a blueprint-only view, and replaces it", async ({ page }) => {
     await page.goto(blueprintOnly());
     await page.waitForURL(/#\/agents\/a1/);

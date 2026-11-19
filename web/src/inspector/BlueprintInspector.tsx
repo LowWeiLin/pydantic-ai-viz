@@ -100,7 +100,8 @@ function InstructionItem({ item }: { item: Instruction }) {
       <div className="flex flex-wrap items-center gap-1.5">
         <Chip>{item.kind === "system_prompt" ? "System prompt" : "Instructions"}</Chip>
         {item.dynamic && <Chip tone="accent">{template ? "Template" : "Dynamic"}</Chip>}
-        <span className="ml-auto">
+        {/* min-w-0: on a line of its own, a long path is cut to the panel, not pushed past it. */}
+        <span className="ml-auto flex min-w-0 max-w-full">
           <SourceRef location={item.location} prefix="" />
         </span>
       </div>

@@ -10,6 +10,7 @@ import { App } from "../App";
 import type { BootPlan } from "../boot";
 import { runs } from "../data/selectors";
 import { useViewer } from "../data/store";
+import { SourceRef } from "../inspector/source";
 import { fixture } from "../test/factory";
 
 const NEWSROOM = "blueprint/newsroom.pviz.jsonl";
@@ -63,7 +64,7 @@ describe("a blueprint read from source", () => {
     const toolsets = section("Toolsets");
     expect(within(toolsets).getByText('MCPServerStdio("uvx", args=["mcp-archive"])')).toBeVisible();
     expect(within(toolsets).getByText("PrefixedToolset")).toBeInTheDocument();
-    expect(within(toolsets).getByText("newsroom/reporters.py:22")).toBeInTheDocument();
+    expect(within(toolsets).getByTitle("newsroom/reporters.py:22")).toBeInTheDocument();
     // Static analysis fills in no default, and the panel does not list rows of dashes.
     expect(section("Settings")).toHaveTextContent("The code sets none");
     expect(within(details).queryByText("Capabilities")).toBeNull();
@@ -84,7 +85,7 @@ describe("a blueprint read from source", () => {
     expect(within(details).getByText("DESK.temperature", { selector: "dd code" })).toBeVisible();
     expect(within(details).getByText("max_tokens")).toBeInTheDocument();
     expect(within(details).queryByText("End strategy")).toBeNull();
-    expect(within(details).getByText("newsroom/desk.py:12")).toBeInTheDocument();
+    expect(within(details).getByTitle("newsroom/desk.py:12")).toBeInTheDocument();
     // A delegate in another file says where it is.
     expect(within(details).getByText("reporters.py:31")).toBeInTheDocument();
 
@@ -114,7 +115,7 @@ describe("a blueprint read from source", () => {
     expect(
       within(checker).getByRole("table", { name: "Parameters of lookup_source" }),
     ).toHaveTextContent("Claim[Source]");
-    expect(within(checker).getByText("newsroom/checks.py:27")).toBeInTheDocument();
+    expect(within(checker).getByTitle("newsroom/checks.py:27")).toBeInTheDocument();
   });
 });
 
@@ -155,5 +156,34 @@ describe("Copy Mermaid", () => {
     await openRun(pipeline?.traceId, "pipeline");
     await user.click(screen.getByRole("button", { name: "Copy Mermaid" }));
     expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining("stateDiagram-v2"));
+  });
+});
+
+describe("SourceRef", () => {
+  test("a long path gives way from its folder; the file and line are cut last", () => {
+    const location = { file: "pydantic_ai_examples/medical_agent_delegation.py", line: 161 };
+    const { container } = render(<SourceRef location={location} />);
+    const code = screen.getByTitle("pydantic_ai_examples/medical_agent_delegation.py:161");
+    const [folder, tail] = [...code.children] as HTMLElement[];
+    expect(folder).toHaveTextContent(/^pydantic_ai_examples\/$/);
+    expect(folder).toHaveClass("min-w-0", "truncate");
+    // The tail does not shrink while the folder still can; it is cut only when it alone is
+    // wider than the panel.
+    expect(tail).toHaveTextContent(/^medical_agent_delegation\.py:161$/);
+    expect(tail).toHaveClass("shrink-0", "max-w-full", "truncate");
+    expect(container).toHaveTextContent("Defined at");
+    expect(
+      screen.getByRole("button", {
+        name: "Copy pydantic_ai_examples/medical_agent_delegation.py:161",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  test("a file at the top of the analysed tree is one part", () => {
+    render(<SourceRef location={{ file: "01_tools.py", line: 22 }} prefix="" />);
+    const code = screen.getByTitle("01_tools.py:22");
+    expect(code.children).toHaveLength(1);
+    expect(code).toHaveTextContent(/^01_tools\.py:22$/);
+    expect(screen.queryByText("Defined at")).toBeNull();
   });
 });
