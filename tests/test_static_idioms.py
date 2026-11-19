@@ -491,3 +491,109 @@ def test_a_toolset_class_that_is_handed_a_toolset_is_a_wrapper_around_it(tmp_pat
     assert toolsets("not_a_toolset") == [("Registry", "other", [], True)]
     assert toolsets("nothing_known_inside") == [("CodeExecutionToolset", "other", [], True)]
     assert agent(found, "not_a_toolset").tools == agent(found, "nothing_known_inside").tools == []
+
+
+def test_a_class_derived_from_function_toolset_has_the_tools_its_methods_register(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    (tmp_path / "checkpoints.py").write_text(
+        textwrap.dedent(
+            '''
+            from typing import Any
+
+            from pydantic_ai import RunContext
+            from pydantic_ai.toolsets import FunctionToolset
+
+
+            def helper(x: int) -> int:
+                """Help."""
+                return x
+
+
+            class CheckpointToolset(FunctionToolset[Any]):
+                def __init__(self, *, store=None, id: str = "checkpoints") -> None:
+                    super().__init__(id=id)
+
+                    @self.tool(description="Save a checkpoint.")
+                    async def save_checkpoint(ctx: RunContext[Any], label: str) -> str:
+                        return label
+
+                    @self.tool_plain
+                    def list_checkpoints() -> list[str]:
+                        """List them."""
+                        return []
+
+                    self.add_function(helper)
+                    self.add_function(make_tool())
+
+
+            class Unrelated:
+                def __init__(self) -> None:
+                    @self.tool
+                    def not_a_tool(x: int) -> int:
+                        return x
+            '''
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "app.py").write_text(
+        textwrap.dedent(
+            """
+            from pydantic_ai import Agent
+            from checkpoints import CheckpointToolset, Unrelated
+
+            checkpoints = CheckpointToolset(store=None)
+            agent = Agent("test", toolsets=[checkpoints, CheckpointToolset(id="second").prefixed("cp"), Unrelated()])
+            """
+        ),
+        encoding="utf-8",
+    )
+    (found,) = analyze(tmp_path / "app.py").agents
+    assert [(t.label, t.kind, t.toolset_id, t.wrappers, t.opaque) for t in found.toolsets] == [
+        ("CheckpointToolset", "function", None, [], False),
+        ("CheckpointToolset 'second'", "function", "second", ["PrefixedToolset"], False),
+        ("Unrelated", "other", None, [], True),
+    ]
+    assert [(t.name, t.toolset, t.takes_ctx) for t in found.tools] == [
+        ("save_checkpoint", "ts0", True),
+        ("list_checkpoints", "ts0", False),
+        ("helper", "ts0", False),
+        ("cp_save_checkpoint", "ts1", True),
+        ("cp_list_checkpoints", "ts1", False),
+        ("cp_helper", "ts1", False),
+    ]
+    save = tool(found, "save_checkpoint")
+    assert (save.description, save.function, save.is_async) == (
+        "Save a checkpoint.",
+        "checkpoints.CheckpointToolset.__init__.<locals>.save_checkpoint",
+        True,
+    )
+    assert list(properties(save.parameters_schema)) == ["label"]
+    assert save.location is not None
+    assert (save.location.file, save.location.line) == ("checkpoints.py", 18)
+    assert found.warnings == [
+        "a tool is added by `self.add_function(make_tool())`; which function that is is only known when the code runs"
+    ]
+
+
+def test_a_toolset_or_capability_held_in_a_variable_is_named_by_what_it_was_assigned(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+
+        todo_toolset = create_todo_toolset(storage=None, id="todo")
+        workspace = make_workspace() if shared else None
+        agent = Agent("test", toolsets=[todo_toolset], capabilities=[workspace])
+        """,
+    )
+    (toolset,) = found.toolsets
+    assert (toolset.label, toolset.expression, toolset.opaque) == (
+        'create_todo_toolset(storage=None, id="todo")',
+        'create_todo_toolset(storage=None, id="todo")',
+        True,
+    )
+    assert found.warnings == [
+        'a toolset is built by `create_todo_toolset(storage=None, id="todo")`; its tools are only known when the '
+        "code runs",
+        "a capability is built by `make_workspace() if shared else None`; its type is only known when the code runs",
+    ]

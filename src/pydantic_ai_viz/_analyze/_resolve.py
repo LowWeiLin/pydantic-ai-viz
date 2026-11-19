@@ -345,7 +345,7 @@ class Resolver:
         the same list, with everything appended to it in between.
         """
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-            owner = _receiver_class(node.value.id, scope)
+            owner = receiver_class(node.value.id, scope)
             return [] if owner is None else list(owner.attribute_mutations.get(node.attr, ()))
         if not isinstance(node, ast.Name):
             return []
@@ -531,7 +531,7 @@ class Resolver:
         names.reverse()
 
         scope = current.scope
-        owner = _receiver_class(base.id, scope) if isinstance(base, ast.Name) else None
+        owner = receiver_class(base.id, scope) if isinstance(base, ast.Name) else None
         if owner is not None:
             found = owner.attributes.get(names[0]) or owner.bindings.get(names[0])
             if not found:
@@ -595,7 +595,7 @@ class Resolver:
         return self.resolve(function, scope, node.lineno if line is None else line, depth=depth)
 
 
-def _receiver_class(name: str, scope: Scope) -> Scope | None:
+def receiver_class(name: str, scope: Scope) -> Scope | None:
     """The class whose instance ``name`` is: ``self`` in a method, also from a function nested in it."""
     current: Scope | None = scope
     while current is not None:

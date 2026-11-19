@@ -31,7 +31,7 @@ from .._models import (
     Toolset,
 )
 from ._docstring import describe
-from ._resolve import Definition, Expression, External, Project, Resolved, Resolver
+from ._resolve import Definition, Expression, External, Project, Resolved, Resolver, receiver_class
 from ._schema import NOT_FROM_THE_MODEL, SchemaBuilder
 from ._source import CallSite, Module, Mutation, Scope, clip_expression, unwrap
 from ._values import NotLiteral, fstring_template, literal, string
@@ -115,9 +115,10 @@ class _ToolSpec:
 
 @dataclass(slots=True, eq=False)
 class _ToolsetSite:
-    """A ``FunctionToolset(...)`` construction and the tools registered on it."""
+    """A ``FunctionToolset(...)`` construction, or a class derived from it, and the tools registered on it."""
 
-    site: CallSite
+    site: CallSite | None
+    """The construction; ``None`` for a class, whose methods register the tools on ``self``."""
     tools: list[_ToolSpec] = field(default_factory=list[_ToolSpec])
     notes: list[str] = field(default_factory=list[str])
     """Warnings about registrations that could not be read, for every agent that uses the toolset."""
@@ -165,6 +166,7 @@ class AgentExtractor:
         self.agents: dict[int, _AgentSite] = {}
         """``id(ast.Call)`` -> the agent constructed there, in discovery order."""
         self.toolsets: dict[int, _ToolsetSite] = {}
+        """``id(ast.Call)`` of a ``FunctionToolset(...)``, or ``id(ast.ClassDef)`` of a class derived from it."""
         self.conditional = False
         """Set by ``items`` when an entry it returned depends on a condition."""
         self.added_unread: list[str] = []
@@ -182,6 +184,16 @@ class AgentExtractor:
                         self.agents[id(site.node)] = _AgentSite(site)
                     elif callee.is_library("FunctionToolset"):
                         self.toolsets[id(site.node)] = _ToolsetSite(site)
+            for body in module.class_scopes.values():
+                # ``class SkillsToolset(FunctionToolset)``: its methods register tools with ``@self.tool``.
+                defined = body.node
+                if not isinstance(defined, ast.ClassDef) or body.parent is None:
+                    continue
+                for base in defined.bases[:_MAX_WRAPPERS]:
+                    written = base.value if isinstance(base, ast.Subscript) else base
+                    parent = self.resolver.resolve(written, body.parent, defined.lineno)
+                    if isinstance(parent, External) and parent.is_library("FunctionToolset"):
+                        self.toolsets[id(defined)] = _ToolsetSite(None)
         for module in self.project.modules:
             self._registrations(module)
 
@@ -217,7 +229,24 @@ class AgentExtractor:
             return None
         return f"a{list(self.agents).index(id(found.site.node)) + 1}"
 
+    def toolset_made_by(self, call: ast.Call, scope: Scope, line: int) -> tuple[_ToolsetSite, str | None] | None:
+        """The function toolset a call constructs, with the name of its class when that is one of the project's."""
+        found = self.toolsets.get(id(call))
+        if found is not None:
+            return found, None
+        callee = self.resolver.callee(call, scope, line)
+        if isinstance(callee, Definition) and isinstance(callee.node, ast.ClassDef):
+            found = self.toolsets.get(id(callee.node))
+            if found is not None:
+                return found, callee.node.name
+        return None
+
     def _receiver(self, node: ast.expr, scope: Scope, line: int) -> _AgentSite | _ToolsetSite | None:
+        if isinstance(node, ast.Name):
+            # ``@self.tool`` in a method of a class derived from ``FunctionToolset``.
+            owner = receiver_class(node.id, scope)
+            if owner is not None and id(owner.node) in self.toolsets:
+                return self.toolsets[id(owner.node)]
         target = self.resolver.resolve(node, scope, line)
         if isinstance(target, Expression) and isinstance(target.node, ast.Call):
             key = id(target.node)
@@ -1012,9 +1041,18 @@ class _AgentBuilder:
             name = self._class_name(entry)
             if name is None:
                 name = entry.module.text(entry.node)
-                self.warn(f"a capability is built by `{brief(name)}`; its type is only known when the code runs")
+                built = brief(self._as_assigned(entry))
+                self.warn(f"a capability is built by `{built}`; its type is only known when the code runs")
             found.append(CapabilityInfo(name=name, builtin=name in _compat.BUILTIN_CAPABILITIES))
         return found
+
+    def _as_assigned(self, entry: Expression) -> str:
+        """The text of an entry; for a name, the text of what the name was assigned, which says more."""
+        if isinstance(unwrap(entry.node), ast.Name):
+            binding = self.resolver.lookup(cast("ast.Name", unwrap(entry.node)).id, entry.scope, entry.line)
+            if binding is not None and binding.kind == "assign" and isinstance(binding.node, ast.expr):
+                return binding.scope.module.text(binding.node)
+        return entry.module.text(entry.node)
 
     def _class_name(self, entry: Expression) -> str | None:
         """The class an expression constructs (or is), when that can be read."""
@@ -1237,7 +1275,7 @@ class _AgentBuilder:
 
     def _toolset(self, entry: Expression, depth: int) -> list[_ToolsetEntry]:
         """Describe one entry of ``toolsets=[...]``, looking through wrappers to the toolset inside."""
-        text = entry.module.text(entry.node)
+        text = self._as_assigned(entry)
         wrappers: list[str] = []
         prefixes: list[str] = []
         current: Resolved = self.resolver.resolve(entry.node, entry.scope, entry.line)
@@ -1262,7 +1300,7 @@ class _AgentBuilder:
                     inner = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
                     if inner is None:
                         inner = next((item.value for item in call.keywords if item.arg == "wrapped"), None)
-                elif self.extractor.toolsets.get(id(call)) is None:
+                elif self.extractor.toolset_made_by(call, current.scope, current.line) is None:
                     # Any other class called ``...Toolset`` that is handed a toolset wraps that toolset:
                     # ``CodeExecutionToolset(toolset=tools)``, or a project's own subclass of a wrapper.
                     name = self._toolset_class(callee)
@@ -1282,15 +1320,18 @@ class _AgentBuilder:
         result = _ToolsetEntry(kind="other", label=text, opaque=True, wrappers=wrappers, where=where, prefixes=prefixes)
         if isinstance(current, Expression) and isinstance(current.node, ast.Call):
             call = current.node
-            site = self.extractor.toolsets.get(id(call))
+            made = self.extractor.toolset_made_by(call, current.scope, current.line)
             callee = self.resolver.callee(call, current.scope, current.line)
             toolset_id = self._keyword_string(call, "id", current)
             result.toolset_id = toolset_id
             result.where = location(current.module, call)
-            if site is not None:
+            if made is not None:
+                site, own_class = made
                 result.kind, result.opaque = "function", False
-                result.label = "FunctionToolset" + (f" {toolset_id!r}" if toolset_id else "")
-                result.tools = [*self._constructor_tools(call, current), *site.tools]
+                result.label = (own_class or "FunctionToolset") + (f" {toolset_id!r}" if toolset_id else "")
+                # A class of the project takes whatever its own ``__init__`` asks for, not a list of tools.
+                given = [] if own_class is not None else self._constructor_tools(call, current)
+                result.tools = [*given, *site.tools]
                 for note in site.notes:
                     self.warn(note)
                 return [result]
@@ -1349,7 +1390,7 @@ class _AgentBuilder:
             for _ in range(_MAX_WRAPPERS):
                 if not isinstance(target, Expression) or not isinstance(target.node, ast.Call):
                     break
-                if id(target.node) in self.extractor.toolsets:
+                if self.extractor.toolset_made_by(target.node, target.scope, target.line) is not None:
                     return candidate
                 function = target.node.func
                 if not (isinstance(function, ast.Attribute) and function.attr in _WRAPPER_METHODS):
