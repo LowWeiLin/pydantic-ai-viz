@@ -40,7 +40,7 @@ _MAX_HINT_CHARS = 500
 _MAX_REACHABLE = 2_000
 _TYPING = frozenset({"typing", "typing_extensions"})
 _USE_IMPORT = "run `pydantic-ai-viz view --import` on trusted code to see the whole graph"
-_RUN_METHODS = frozenset({"run", "run_sync", "iter"})
+_RUN_METHODS = frozenset({"run", "run_sync", "iter", "next"})
 """Methods of a ``Graph(nodes=[...])`` whose first argument is the node the run starts at."""
 
 
@@ -736,6 +736,11 @@ class GraphExtractor:
         started = self.resolver.resolve(argument, context.scope, context.line)
         if isinstance(started, Expression) and isinstance(started.node, ast.Call):
             started = self.resolver.callee(started.node, started.scope, started.line)
+        if not isinstance(started, Definition):
+            # ``node = await graph.next(node, ...)``: the argument is what ``node`` was before this line.
+            started = self.resolver.resolve(argument, context.scope, context.line - 1)
+            if isinstance(started, Expression) and isinstance(started.node, ast.Call):
+                started = self.resolver.callee(started.node, started.scope, started.line)
         if not isinstance(started, Definition):
             return
         node = builder.steps.get(id(started.node))

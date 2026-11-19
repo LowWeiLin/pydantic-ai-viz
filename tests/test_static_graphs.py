@@ -425,3 +425,34 @@ def test_what_a_list_of_node_classes_does_not_say_is_warned_about() -> None:
     ]
     # The installed pydantic-graph cannot import this style of graph, so no warning sends the reader to --import.
     assert not any("--import" in warning for g in found.graphs for warning in g.warnings)
+
+
+def test_a_graph_stepped_through_by_hand_starts_at_the_node_first_handed_to_next(tmp_path: Path) -> None:
+    source = """
+        from __future__ import annotations
+        from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+
+
+        class Ask(BaseNode[None, None, str]):
+            async def run(self, ctx: GraphRunContext) -> Answer: ...
+
+
+        class Answer(BaseNode[None, None, str]):
+            async def run(self, ctx: GraphRunContext) -> End[str]: ...
+
+
+        stepped = Graph(nodes=[Ask, Answer])
+
+
+        async def main() -> None:
+            node = Ask()
+            while not isinstance(node, End):
+                node = await stepped.next(node, history)
+        """
+    (found,) = analyze_source(tmp_path, source).graphs
+    assert [(e.source, e.target) for e in found.edges] == [
+        ("__start__", "Ask"),
+        ("Ask", "Answer"),
+        ("Answer", "__end__"),
+    ]
+    assert found.warnings == []
