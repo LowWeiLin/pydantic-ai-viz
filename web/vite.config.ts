@@ -172,9 +172,12 @@ function licenceNotices(): Plugin {
           .map((dir) => {
             const manifest = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"));
             const file = readdirSync(dir).find((name) => /^licen[cs]e/i.test(name));
-            const text = file
-              ? readFileSync(path.join(dir, file), "utf8").trim()
-              : mitFromManifest(manifest);
+            // Line breaks as the rest of the page has them, whatever the licence file was saved with.
+            const text = (
+              file ? readFileSync(path.join(dir, file), "utf8") : mitFromManifest(manifest)
+            )
+              .replace(/\r\n?/g, "\n")
+              .trim();
             return { name: String(manifest.name), version: String(manifest.version), text };
           })
           // One entry per package, even when two copies of it are bundled.

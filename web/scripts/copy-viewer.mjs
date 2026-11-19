@@ -46,6 +46,8 @@ if (!notices) fail("viewer.html does not open with the third-party licence notic
 for (const name of ["@xyflow/react", "react", "react-dom", "tailwindcss"]) {
   if (!new RegExp(`^${name} \\d`, "m").test(notices[1])) fail(`the notices do not list ${name}`);
 }
+// A carriage return from a licence file would make the page differ from copies written as text.
+if (html.includes("\r")) fail("viewer.html has a carriage return; its line breaks must be \\n");
 
 if (!existsSync(path.join(targetDir, ".gitignore"))) {
   fail(`${targetDir} does not look like the package static directory`);
