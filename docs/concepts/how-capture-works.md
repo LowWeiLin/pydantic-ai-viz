@@ -121,7 +121,7 @@ Model requests have no such ambiguity. Every token is spent in exactly one model
 
 > A run's token total is the sum of usage over all `model_request` spans in the run.
 
-That is what the sidebar and the Usage tabs show. The usage on an individual agent run in the inspector is that agent's own model requests, without its sub-agents.
+That is what the sidebar and the Usage sections of the inspector show. The usage on an individual agent run in the inspector is that agent's own model requests, without its sub-agents.
 
 ## Graphs take a different path
 

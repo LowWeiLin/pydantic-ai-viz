@@ -17,6 +17,6 @@ These patterns are not read by `view` today; see [How view works](concepts/how-v
 - **Tools registered on an agent that is passed in as an argument.** They are counted in a notice and placed on no agent.
 - **Toolsets that a capability builds at run time** and returns from `get_toolset`.
 - **Agents not constructed in the source**: `Agent` subclasses, `Agent.from_spec(...)` and agents returned by library functions.
-- **Types from installed packages.** Their schema could be read from the package's source without importing it, but installed packages are never opened today, on purpose.
+- **Types from installed packages.** Their schema could be read from the package's source without importing it, but installed packages are not opened today, on purpose; the one exception is the installed Pydantic AI, for the tools it defines.
 
 Until then, `view --import` reads the live objects instead, on code you trust: whatever exists once the module has been imported is shown, computed or not.

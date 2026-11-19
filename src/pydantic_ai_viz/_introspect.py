@@ -669,22 +669,22 @@ def blueprint(target: AnyAgent | AnyGraph) -> AgentBlueprint | GraphBlueprint:
     """Describe an agent or a graph without running it.
 
     Pure: no model call, no server, no session, nothing global is touched. The
-    result is a pydantic model; ``.model_dump(mode="json")`` gives the wire form.
+    result is a pydantic model; `.model_dump(mode="json")` gives the wire form.
 
-    The blueprint's ``id`` is ``"a1"`` (agent) or ``"g1"`` (graph). Sub-agents found
-    by the static delegation heuristic are referenced from ``delegates`` as ``"a2"``,
-    ``"a3"``, ... in discovery order; a tool that calls its own agent points at
-    ``"a1"``.
+    The blueprint's `id` is `"a1"` (agent) or `"g1"` (graph). Sub-agents found
+    by reading the tools' code are referenced from `delegates` as `"a2"`,
+    `"a3"`, ... in discovery order; a tool that calls its own agent points at
+    `"a1"`.
 
     Args:
-        target: A ``pydantic_ai.Agent`` or a ``pydantic_graph.Graph``.
+        target: A `pydantic_ai.Agent` or a `pydantic_graph.Graph`.
 
     Returns:
-        An ``AgentBlueprint`` or a ``GraphBlueprint``. Anything that could not be
-        read from the installed pydantic-ai version is listed in ``warnings``.
+        An `AgentBlueprint` or a `GraphBlueprint`. Anything that could not be
+        read from the installed pydantic-ai version is listed in `warnings`.
 
     Raises:
-        TypeError: If ``target`` is neither an agent nor a graph.
+        TypeError: If `target` is neither an agent nor a graph.
     """
     if isinstance(target, Agent):
         agents = agent_closure(target)

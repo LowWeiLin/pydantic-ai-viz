@@ -62,9 +62,10 @@ class Analysis:
         notices: Messages about the analysis as a whole, such as a file that was
             skipped because it is not valid Python, or the commit a GitHub
             repository was read at.
-        files: The files that were read, relative to their common directory (for a
-            GitHub repository, to the top of the repository): the targets' own
-            files first, then the files read because those import them. Targets
+        files: The files that were read, relative to the directory of the targets
+            (for a GitHub repository, to the top of the repository): the targets'
+            own files first, then the files read because those import them, which
+            start with `../` when they lie outside that directory. Targets
             that share no directory, such as a GitHub repository and a local file,
             have their files named under a label each: `owner/repo@abc1234/...`,
             or the name of the target's project directory. A path is never absolute.
@@ -122,7 +123,8 @@ def analyze(*targets: str | os.PathLike[str], limits: Limits | None = None) -> A
     file. A file that is read only because another one imports it adds no
     blueprints of its own, except for the agents and graphs a target's file
     knows by name and the agents those delegate to. Installed packages are
-    never opened.
+    never opened, except the source of the installed Pydantic AI, for the tools
+    it defines.
 
     Args:
         *targets: Files, directories, module names or GitHub repositories, as above.

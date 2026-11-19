@@ -4,7 +4,7 @@ A **blueprint** is a picture of what an agent *is*: its model, instructions, too
 
 <figure class="screenshot" markdown="span">
   ![pydantic-ai-viz view on the demos' own source: their files in the sidebar, the triage agent with its tools, output and a dashed delegation edge to the refunds agent, and the inspector on a tool with its parameters and the line it is defined at](../assets/screenshots/view-dark.png)
-  <figcaption>What <code>pydantic-ai-viz view src/pydantic_ai_viz/demos</code> shows, here in the hosted demo, whose title and Gallery button are the demo site's</figcaption>
+  <figcaption>What <code>pydantic-ai-viz view src/pydantic_ai_viz/demos</code> shows</figcaption>
 </figure>
 
 ## From the command line
@@ -96,7 +96,7 @@ Opaque toolsets
 
 Output node
 
-:   The output mode (`text`, `tool`, `native`, `prompted` or `auto`) and the output type name. Select it for the JSON schema as a field table. Output tools such as `final_result` are part of this node, not tool nodes.
+:   The output mode (`text`, `tool`, `native`, `prompted` or `auto`, or `unknown` when it could not be read) and the output type name. Select it for the JSON schema as a field table. Output tools such as `final_result` are part of this node, not tool nodes.
 
 Delegation edges
 

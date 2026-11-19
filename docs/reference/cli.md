@@ -64,7 +64,7 @@ Draw blueprints by **reading source files**. The code is parsed, never imported 
 | `--import` | Import the targets and read the live objects instead of the source. **This executes the target code**; see [below](#view-import). |
 | `--export OUT.html` | Write a blueprint-only HTML file and exit, without starting a server. |
 | `--port N` | Port for the server. Default `8765`. If it is busy, a free port is used. |
-| `--no-open` | Do not open a browser. |
+| `--no-open` | Do not open a browser. The URL is printed. |
 
 ```bash
 pydantic-ai-viz view .
@@ -146,7 +146,7 @@ If you stop the script with ++ctrl+c++ while it is running (the only way to end 
 | `--record OUT.pviz.jsonl` | Write a recording when the script ends. |
 | `--export OUT.html` | Write a single-file HTML export when the script ends. |
 | `--port N` | Port for the server. Default `8765`. If it is busy, a free port is used. |
-| `--no-open` | Do not open a browser. |
+| `--no-open` | Do not open a browser. The URL is printed. |
 
 ```bash
 pydantic-ai-viz run my_script.py
@@ -172,7 +172,7 @@ Convert a recording to a single self-contained HTML file.
 | Argument | Description |
 |---|---|
 | `FILE.pviz.jsonl` | The recording to convert. |
-| `-o OUT.html` | Where to write the export. Required. |
+| `-o OUT.html`, `--output OUT.html` | Where to write the export. Required. |
 
 ## Global options
 

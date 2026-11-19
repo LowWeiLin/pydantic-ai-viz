@@ -101,12 +101,12 @@ The run's token total in the sidebar is the sum over its model requests, includi
 
 Select a row in the timeline (or press ++j++ and ++k++) to inspect it. A click on a canvas node selects the latest span of that tool, model or agent. With nothing selected, the inspector shows the run itself.
 
-| Selection | Inspector tabs |
+| Selection | Inspector tabs (and the sections in them) |
 |---|---|
-| Agent run | Conversation, Output, Usage, Raw |
-| Model request | Response, Input messages, Instructions, Usage, Raw |
-| Tool call | Arguments, Result, Error / Retry, Raw |
-| Graph run, graph node | Inputs, Output, Raw |
+| Agent run | **Conversation**; **Output** (Output, Usage); **Raw** |
+| Model request | **Response** (Request, Response); **Input** (Instructions, Input messages); **Raw** |
+| Tool call | **Details** (Retry or Error, Arguments, Result); **Raw** |
+| Graph run, graph node | **Details** (Inputs, Output); **Raw** |
 
 **Raw** shows the OpenTelemetry attributes of the span that were not turned into something more readable, which is useful when you want to know exactly what Pydantic AI recorded.
 

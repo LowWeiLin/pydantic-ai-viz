@@ -119,7 +119,7 @@ async def run_graph(
         output = await pviz.run_graph(graph, inputs="hello")
     ```
 
-    Known limits, while several nodes run in parallel (after a fork): an agent run
+    Known limits, while several nodes run in parallel (after a broadcast or a map): an agent run
     started by one of the nodes of a batch is shown under the graph run, not under its
     node; and a failure is shown on the graph run only, because the graph does not
     say which of the running nodes raised.

@@ -16,7 +16,7 @@ Pydantic AI 1.x is not supported. The 2.0 release renamed and removed much of wh
 
 A declared range is a promise; this section is the evidence. It lists only combinations that were run.
 
-All runs below are the full Python test suite (`pytest`, 507 tests), on Windows 11, on 18 and 19 November 2026. The suite includes the three demos recorded through the real command line and a live demo server followed over HTTP.
+The version sweep below ran the full Python test suite (`pytest`, 507 tests at the time) on Windows 11 on 18 November 2026. The suite includes the three demos recorded through the real command line and a live demo server followed over HTTP.
 
 | Python | pydantic-ai-slim | opentelemetry-sdk | Result |
 |---|---|---|---|
@@ -35,11 +35,11 @@ All runs below are the full Python test suite (`pytest`, 507 tests), on Windows 
 | 3.12.9 | 2.20.0 | 1.45.2 | **Fails**: 30 tests, and 20 more stop with an error |
 | 3.12.9 | 2.0.0 | 1.45.2 | **Fails**: 34 tests, and 23 more stop with an error |
 
-The run with 1 skipped was made in a clean copy of the repository, which has no `web/node_modules`; the test that opens the viewer in a browser is skipped there. The CI test matrix has no built viewer either, so it will skip that test and the demo site builder test.
+The skipped test opens the viewer in a browser, which needs a built viewer.
 
-The suite has grown since, mostly with tests of static analysis. On 19 November 2026 it was run again on Python 3.12.9: with 2.70.0, 1,023 passed and 1 skipped (this account cannot create a symbolic link to a file, which one test needs); with 2.60.0, 1,021 passed and 3 skipped (that test, and two of a graph built with `GraphBuilder.add_reachable`, which 2.60.0's pydantic-graph does not have). The 12 tests of the real-world set, which fetch from GitHub, were run apart and passed.
+The suite has grown since, mostly with tests of static analysis, and was run again in full on 19 November 2026 with both ends of the range: 2.70.0 and 2.60.0 pass. With 2.60.0, two more tests are skipped, because they need `GraphBuilder.add_reachable`, which its pydantic-graph does not have. The 12 tests of the real-world set, which fetch from GitHub, pass as well.
 
-That is the complete list. Releases between the ones named were not run.
+Releases between the ones named were not run.
 
 ### Why the floor is 2.60 { #why-the-floor-is-2-60 }
 
@@ -51,7 +51,7 @@ The floor is the oldest release on which the whole suite passes, found by runnin
 
 The package still imports on 2.0.0 and most of it works there, but "most" is not what a declared range promises, so `pip` will refuse anything older than 2.60.
 
-**Linux and macOS were not run.** The CI test matrix is configured to run them, but it had not run when this page was written. Until it has, treat both as expected to work, not as verified.
+**Operating systems.** The suite passes in CI on Linux (Python 3.11 to 3.14), Windows and macOS (Python 3.12), and the viewer's browser tests run on Linux.
 
 CI is set up to keep this honest going forward:
 

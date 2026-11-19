@@ -24,7 +24,7 @@ Five minutes, no API key. You will play a demo, draw the blueprint of an agent f
 
     `uvx` runs the command in a throwaway environment. That is all `demo` and `view` need: `view` reads your code without importing it, so it does not have to share an environment with it. To watch your agents run, install the package next to them.
 
-It needs Python 3.11 or newer. It installs `pydantic-ai-slim` and `opentelemetry-sdk` and nothing else, so it adds no model provider and no web framework to your project.
+It needs Python 3.11 or newer. Its only direct dependencies are `pydantic-ai-slim` and `opentelemetry-sdk`, so it adds no model provider and no web framework to your project.
 
 ## 1. Play the demo
 

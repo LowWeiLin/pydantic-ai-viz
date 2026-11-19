@@ -6,7 +6,7 @@ A session lives in memory and ends with your process. To keep a run, or to show 
 |---|---|---|
 | File | `name.pviz.jsonl` | `name.html` |
 | Contains | The session's event log, one JSON object per line | The viewer plus the event log, in one file |
-| Open it with | `pydantic-ai-viz open name.pviz.jsonl`, or drop it on any viewer | A double-click. Any browser, offline, no install |
+| Open it with | `pydantic-ai-viz open name.pviz.jsonl`, or drop it on a viewer that is not showing a live session | A double-click. Any browser, offline, no install |
 | Good for | Keeping, diffing, test fixtures, converting later | Sending to someone, attaching to an issue or a pull request |
 
 Both hold the same data, and a recording can be turned into an export at any time. Both replay in the viewer exactly as a live session does: the canvas, the timeline, the inspector and the playback bar all work.
@@ -69,7 +69,7 @@ pydantic-ai-viz open refund-flow.pviz.jsonl
 
 This converts the recording to an export in a temporary directory and opens it in your browser. No server is started.
 
-You can also drop a `.pviz.jsonl` file onto a viewer that is showing its gallery or its empty state, including the [hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/). The file is read by your browser and is not uploaded anywhere.
+You can also drop a `.pviz.jsonl` file anywhere on a viewer that is not showing a live session, such as an export or the [hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/). The file is read by your browser and is not uploaded anywhere.
 
 ## Share a run
 

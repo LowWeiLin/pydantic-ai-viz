@@ -41,4 +41,4 @@ A way to make `view` or `analyze` execute any part of the code it reads, write o
 ### Out of scope
 
 - Attacks that need a non-loopback `host`, or an attacker who already runs code as your user.
-- The security of the agents, tools and models you visualise. pydantic-ai-viz observes your tools; it does not sandbox them.
+- The security of the agents, tools and models you visualize. pydantic-ai-viz observes your tools; it does not sandbox them.

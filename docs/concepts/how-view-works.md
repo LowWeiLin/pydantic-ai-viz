@@ -6,7 +6,7 @@ You do not need this page to use `view`. It is here for when you want to know wh
 
 Three consequences are worth knowing first:
 
-- **Nothing in the code runs.** Not the top-level code, not a decorator, not a default argument, not an `import`. Pointing `view` at code is as safe as opening it in an editor.
+- **Nothing in the code runs.** Not the top-level code, not a decorator, not a default argument, not an `import`. Pointing `view` at a local directory is as safe as opening it in an editor. (Fetching a GitHub target runs `git`, with your git configuration.)
 - **Nothing the code imports has to be installed.** A file that starts with `from dotenv import load_dotenv` is read the same whether or not `python-dotenv` is there. Providers, API keys and environment variables do not matter either.
 - **Only what the source spells out is known.** `Agent("openai:gpt-5.2")` names its model. `Agent(get_model())` does not, unless `get_model` returns a value written in your code, and otherwise the viewer shows the expression `get_model()` instead of pretending to know what it returns.
 
@@ -14,7 +14,7 @@ The rule behind the third point runs through the whole analyser: **a value is re
 
 <figure class="screenshot" markdown="span">
   ![The demos read from source: their three files in the sidebar, the triage agent with its tools, output and a dashed delegation edge to the refunds agent, and the inspector on the escalate_refund tool with its parameters and the file and line it is defined at](../assets/screenshots/view-dark.png)
-  <figcaption>The demos read from source, as <code>pydantic-ai-viz view src/pydantic_ai_viz/demos</code> shows them, here in the hosted demo (its title and Gallery button are the demo site's). Every part says where it is defined; the edge from <code>escalate_refund</code> to <code>refunds</code> was found by reading the tool's code.</figcaption>
+  <figcaption>The demos read from source, as <code>pydantic-ai-viz view src/pydantic_ai_viz/demos</code> shows them. Every part says where it is defined; the edge from <code>escalate_refund</code> to <code>refunds</code> was found by reading the tool's code.</figcaption>
 </figure>
 
 ## The pipeline
@@ -171,7 +171,7 @@ A file that is read only because another one imports it contributes its definiti
 
 An import is looked up the way Python would look it up from the importing file: relative imports from its package, absolute ones from the directories above it up to the **project root**. The project root is the nearest directory above the target that holds a project file (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, a lock file, or `.git`), or the directory above the outermost package when there is none. Your home directory, the directory for temporary files and the root of a drive are never taken for one, since many projects live below them: for a file directly in one of them, no import is followed. A `src` layout works. Imports never leave the project: installed packages, virtual environments and `site-packages` are never opened, even when a copy of a package lies inside the project. The one exception is the source of the installed Pydantic AI, for the [tools it defines](#tools-that-pydantic-ai-defines).
 
-Run this to see it on the demos that ship with pydantic-ai-viz, three files with seven agents and a graph:
+Run this to see it on the demos that ship with pydantic-ai-viz: seven agents and a graph, defined in three files. The summary line counts more files than that, because the demos import the rest of the package and those imports are followed:
 
 ```bash
 pydantic-ai-viz view src/pydantic_ai_viz/demos

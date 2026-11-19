@@ -11,7 +11,7 @@ See what your [Pydantic AI](https://ai.pydantic.dev/) agents **are** (the bluepr
 
     pydantic-ai-viz is a community project. It is not affiliated with or endorsed by Pydantic.
 
-## Start in ten seconds
+## Try it in 10 seconds
 
 <div class="grid cards" markdown>
 
@@ -35,7 +35,7 @@ See what your [Pydantic AI](https://ai.pydantic.dev/) agents **are** (the bluepr
 
 <figure class="screenshot" markdown="span">
   [![pydantic-ai-viz view on the demos' own source: their files in the sidebar, the triage agent with its tools, output and a delegation edge to the refunds agent, and the inspector on a tool with its parameters and the line it is defined at](assets/screenshots/view-light.png#only-light)![pydantic-ai-viz view on the demos' own source: their files in the sidebar, the triage agent with its tools, output and a delegation edge to the refunds agent, and the inspector on a tool with its parameters and the line it is defined at](assets/screenshots/view-dark.png#only-dark)](https://lowweilin.github.io/pydantic-ai-viz/demo/?src=recordings/source.pviz.jsonl)
-  <figcaption><code>pydantic-ai-viz view src/pydantic_ai_viz/demos</code>: three files read, none of them run. Click the image to open it in the hosted viewer.</figcaption>
+  <figcaption><code>pydantic-ai-viz view src/pydantic_ai_viz/demos</code>: the demos' source read, none of it run. Click the image to open it in the hosted viewer.</figcaption>
 </figure>
 
 <figure class="screenshot" markdown="span">

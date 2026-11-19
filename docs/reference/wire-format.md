@@ -450,7 +450,7 @@ data: {"seq":1,...}
 - Before any envelope, one event named `backlog`, without an `id`: `last_seq` is the `seq` of the newest event in the log when the connection was opened (`-1` for none). Envelopes up to it are history the client was not there for; the ones after it happen while it watches. The viewer follows a new run only when it is news in this sense, or still going, so a run that starts and ends between two of its frames is followed too. A reader that wants only the envelopes skips events with a name.
 - On a connection without `Last-Event-ID`, the server sends every retained event in order and then follows the log. There is no separate snapshot endpoint.
 - With `Last-Event-ID: <session_id>:n`, the server sends retained events with `seq > n`. If the session id is not the server's own, the server has restarted since the client last heard from it, and it sends everything from the start. It does the same for an id it cannot parse and for an `n` beyond its highest `seq`.
-- A `: ping` comment is sent every 15 seconds.
+- A `: ping` comment is sent after 15 seconds without an event.
 - **Reader rule:** on a `session.started` whose `session_id` differs from the current one, discard all state and start over.
 
 ### Eviction { #eviction }
@@ -473,7 +473,7 @@ type Boot =
   | { mode: "embedded"; events: Envelope[] };
 ```
 
-In the embedded JSON, `<`, `>` and `&` are written as `<`, `>` and `&`, and U+2028 and U+2029 are escaped, so captured content cannot end the script element.
+In the embedded JSON, `<`, `>` and `&` are written as the JSON escapes `\u003c`, `\u003e` and `\u0026`, and U+2028 and U+2029 are escaped, so captured content cannot end the script element.
 
 When the placeholder has not been replaced, the viewer runs in **static mode** and looks for data in this order:
 
@@ -484,7 +484,15 @@ When the placeholder has not been replaced, the viewer runs in **static mode** a
 
 ```ts
 // recordings/index.json
-type RecordingIndex = { recordings: { id: string; title: string; description: string; src: string }[] };
+type RecordingIndex = {
+  recordings: {
+    id: string;
+    title: string;
+    description: string;
+    src: string;
+    kind?: "run" | "blueprint"; // "blueprint": a recording without runs, opened rather than played
+  }[];
+};
 ```
 
 ## Compatibility of the format { #versioning }

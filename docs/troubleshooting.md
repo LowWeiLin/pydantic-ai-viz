@@ -109,7 +109,7 @@ Note that without `defer_model_check=True`, `Agent("openai:gpt-5.2")` raises `Im
 
 For example `pydantic-ai-viz: error: ModuleNotFoundError: No module named 'dotenv'`.
 
-Plain `pydantic-ai-viz view` cannot raise this: it reads the source and imports nothing, so the packages your code imports do not have to be installed. The error comes from importing the code, which happens only with `view --import` (and with `run`, or in versions of pydantic-ai-viz before static analysis).
+Plain `pydantic-ai-viz view` cannot raise this: it reads the source and imports nothing, so the packages your code imports do not have to be installed. The error comes from importing the code, which happens only with `view --import` (and with `run`, which runs your script).
 
 - Leave out `--import`: `pydantic-ai-viz view my_app/agents.py`. What the source computes when it runs is then shown as an expression; see [How view works](concepts/how-view-works.md).
 - If you need `--import`, run it in the environment where your code's dependencies are installed, for example with `uv run pydantic-ai-viz view --import my_app.agents` from your project.
@@ -128,7 +128,7 @@ The source computes it instead of spelling it out: a model read from an environm
 - An agent is found where the source calls Pydantic AI's `Agent(...)`. An agent that comes out of a library function, or out of a class that subclasses `Agent`, is not visible in the source. Use `--import`, or pass the object to `pviz.serve(...)` or `pviz.export_html(...)` in Python.
 - `file.py:name` selects a name assigned at the **top level** of the file. Without `:name`, agents made inside functions and classes are drawn too.
 - A file read only because another one imports it adds no blueprints of its own. To see every agent of a project, give its directory.
-- In a directory, virtual environments, `node_modules`, `site-packages`, `build`, `dist` and hidden directories are passed over. A `build` or `dist` that holds `.py` files is named in a note; give it as a target to read it.
+- In a directory, virtual environments, `node_modules`, `site-packages`, `__pycache__`, `build`, `dist` and hidden directories are passed over. A `build` or `dist` that holds `.py` files is named in a note; give it as a target to read it.
 - The message "no agents or graphs found in the source" means exactly that. If a file was skipped, the line before it says why.
 
 With `--import`:
@@ -169,7 +169,7 @@ Agent runs inside a graph are captured automatically, but the graph's own nodes 
 ## Windows console
 
 - **Garbled characters.** The classic Windows console uses the cp1252 code page. pydantic-ai-viz prints ASCII only, so its own output is safe, but text printed by your script or by other libraries may not be. Set `PYTHONUTF8=1`, or use Windows Terminal.
-- **A large ASCII-art banner.** That is Pydantic AI's start-up banner. The CLI suppresses it; in your own scripts set `PYDANTIC_AI_NO_BANNER=1`.
+- **A large ASCII-art banner.** That is Pydantic AI's start-up banner. The CLI, `serve` and `record` suppress it by setting `PYDANTIC_AI_NO_BANNER=1` unless you have set the variable yourself; set it yourself to quiet the runs your code makes before a session is open.
 - **++ctrl+c++ seems slow.** `session.wait()` polls so that ++ctrl+c++ works on Windows; it can take a fraction of a second to react.
 - **`RuntimeError: This event loop is already running`.** This comes from calling `agent.run_sync()` inside a running event loop and is unrelated to the viewer. Use `await agent.run(...)` there.
 

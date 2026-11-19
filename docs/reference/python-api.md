@@ -59,11 +59,15 @@ with pviz.serve(agent, open_browser=True) as session:
 | `open_browser` | Open the viewer in the default browser. |
 | `include_content` | Capture prompts, instructions, tool arguments, tool results and outputs. `False` captures structure, timing and token counts only. Applies when `instrument=True`. |
 | `stream` | Capture tokens as they arrive. This switches the agents' model requests to streaming; see [Token streaming](../guides/token-streaming.md). Has no effect with `include_content=False`, because tokens are content. |
-| `instrument` | `True`: call `Agent.instrument_all(...)` with a private tracer provider. `False`: touch nothing global; you add `session.span_processor` to your own provider. See [Use with Logfire](../guides/logfire.md). |
+| `instrument` | `True`: call `Agent.instrument_all(...)` with a private tracer provider, and set `PYDANTIC_AI_NO_BANNER=1` unless it is set, because Pydantic AI's banner would report observability as off. `False`: touch nothing global; you add `session.span_processor` to your own provider. See [Use with Logfire](../guides/logfire.md). |
 | `title` | Session title, shown in the viewer and used for download file names. |
 | `max_events` | Upper bound on the in-memory event log. Past it, the oldest finished runs are dropped whole. |
 
-**Raises** `RuntimeError("a pydantic-ai-viz session is already active; close it first")` if another instrumenting session is active.
+**Raises**
+
+- `RuntimeError("a pydantic-ai-viz session is already active; close it first")` if another instrumenting session is active.
+- `TypeError` if a target is not an agent, a graph, a module or an `Analysis`.
+- `OSError` if the server cannot bind `host` at all.
 
 Guide: [Watch live runs](../guides/live-runs.md).
 
@@ -88,7 +92,7 @@ with pviz.record(agent) as session:
     session.save("run.pviz.jsonl")
 ```
 
-The parameters mean the same as for `serve`, and the same rule applies: one instrumenting session at a time. Sessions opened with `instrument=False` are not limited.
+The parameters mean the same as for `serve`, and the same rule applies: one instrumenting session at a time (`RuntimeError`). Sessions opened with `instrument=False` are not limited. A target of the wrong kind raises `TypeError`.
 
 Guide: [Export and share](../guides/export-and-share.md).
 
@@ -119,7 +123,7 @@ pviz.export_html(found, "blueprint.html")
 
 What the source spells out is reported as a value. What it computes at run time, such as `Agent(get_model())`, is reported as the source text that computes it and named in the blueprint's `warnings`; nothing is guessed. A file that cannot be read or parsed is skipped and named in `Analysis.notices`.
 
-Imports between the project's own files are followed, so a tool, an output model, a toolset or a delegate defined in another file is described from that file. A file that is read only because another one imports it adds no blueprints of its own, except for the agents and graphs that a target's file knows by name and the agents those delegate to. Installed packages are never opened.
+Imports between the project's own files are followed, so a tool, an output model, a toolset or a delegate defined in another file is described from that file. A file that is read only because another one imports it adds no blueprints of its own, except for the agents and graphs that a target's file knows by name and the agents those delegate to. Installed packages are never opened, except the source of the installed Pydantic AI, for the tools it defines.
 
 **Raises** `ValueError` if a target does not exist, cannot be fetched, or selects a name that no agent or graph is assigned to.
 
@@ -147,7 +151,7 @@ class Analysis:
 | `agents` | One blueprint per `Agent(...)` in the source, with ids `a1`, `a2`, ... in the order they appear. `delegates` refer to these ids. |
 | `graphs` | One blueprint per `GraphBuilder(...)` or `Graph(nodes=[...])`, with ids `g1`, `g2`, ... |
 | `notices` | Messages about the analysis as a whole: a file that was skipped because it is not valid Python, the commit a GitHub repository was read at, or how many tools were found that belong to no agent the source shows. |
-| `files` | The files that were read, relative to their common directory (for a GitHub repository, to the top of the repository): the targets' own files first, then the files read because those import them. Targets that share no directory, such as a GitHub repository and a local file, have their files named under a label each: `owner/repo@abc1234/...`, or the name of the target's project directory. |
+| `files` | The files that were read, relative to the directory of the targets (for a GitHub repository, to the top of the repository): the targets' own files first, then the files read because those import them, which start with `../` when they lie outside that directory. Targets that share no directory, such as a GitHub repository and a local file, have their files named under a label each: `owner/repo@abc1234/...`, or the name of the target's project directory. |
 | `title` | A short name for what was analysed: the file, directory or module, or `owner/repo@commit`. `None` when there were several targets. |
 | `blueprints` | The agents, then the graphs. |
 
@@ -244,6 +248,7 @@ class Session:
     url: str | None
     title: str
     session_id: str
+    mode: Literal["capture", "blueprint"]
     include_content: bool
     stream: bool
 
@@ -264,8 +269,9 @@ class Session:
 | Member | Description |
 |---|---|
 | `url` | Address of the viewer, for example `"http://127.0.0.1:8765"`. `None` for a session from `record`. |
-| `title` | The session title. |
+| `title` | The session title. Without a `title` argument, the name of the first named target, or `"pydantic-ai-viz"`. |
 | `session_id` | 32 hexadecimal characters, new for every session. It is the `session_id` of the `session.started` event. |
+| `mode` | `"capture"` for a session from `serve` or `record`, where runs can appear; `"blueprint"` for one that only ever holds blueprints, such as `view`'s. |
 | `include_content`, `stream` | What the session captures. `stream` is `False` whenever `include_content` is `False`. |
 | `events` | A snapshot of the event log: a new list of JSON-ready dictionaries, one per event, in order. Still readable after `close()`. Treat the dictionaries as read-only. The shapes are in the [wire format](wire-format.md). |
 | `span_processor` | An OpenTelemetry `SpanProcessor` that feeds this session. Only needed with `instrument=False`: add it to your own tracer provider. |
@@ -286,13 +292,13 @@ bp.model_dump()  # a plain dict
 bp.model_dump_json()  # JSON, the same shape as on the wire
 ```
 
-Main fields: `id`, `name`, `label`, `description`, `source`, `model`, `deps_type`, `instructions`, `toolsets`, `tools`, `native_tools`, `output`, `capabilities`, `settings`, `delegates` and `warnings`. Each is specified under [Blueprints](wire-format.md#blueprints) in the wire format reference.
+Main fields: `id`, `name`, `label`, `description`, `source`, `location`, `model`, `deps_type`, `instructions`, `toolsets`, `tools`, `native_tools`, `output`, `capabilities`, `settings`, `delegates` and `warnings`. Each is specified under [Blueprints](wire-format.md#blueprints) in the wire format reference.
 
 ## GraphBlueprint { #graphblueprint }
 
 A Pydantic model describing one graph. Returned by [`blueprint`](#blueprint) for a `Graph`, and carried by `blueprint.graph` events.
 
-Fields: `id`, `name`, `label`, `state_type`, `input_type`, `output_type`, `nodes`, `edges`, `mermaid` and `warnings`. See [Blueprints](wire-format.md#blueprints).
+Fields: `id`, `name`, `label`, `source`, `location`, `state_type`, `input_type`, `output_type`, `nodes`, `edges`, `mermaid` and `warnings`. See [Blueprints](wire-format.md#blueprints).
 
 ## Docstrings
 

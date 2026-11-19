@@ -94,6 +94,6 @@ Sequential graphs, including ones with decisions and loops, nest and time exactl
 ## Other things to know
 
 - **Only `run_graph` produces graph spans.** A plain `graph.run(...)` still shows the agent runs inside it, as separate runs, but no graph nodes.
-- **Node inputs and the graph output are captured as JSON.** Values that are not JSON-serialisable are shown as their `repr`. With `include_content=False` they are left out.
+- **Node inputs and the graph output are captured as JSON.** Values that are not JSON-serializable are shown as their `repr`. With `include_content=False` they are left out.
 - **If you already send graph spans to Logfire,** those are Logfire's own spans. In the viewer they appear as plain rows, not as graph nodes. See [Use with Logfire](logfire.md).
 - The `pipeline` [demo](../demos.md#pipeline) is a graph with a review loop and an agent inside each step: `pydantic-ai-viz demo pipeline`.

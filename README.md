@@ -107,7 +107,7 @@ Read more in the [documentation](https://lowweilin.github.io/pydantic-ai-viz/):
 | Python | 3.11, 3.12, 3.13, 3.14 |
 | Pydantic AI | `pydantic-ai-slim>=2.60,<3` |
 | OpenTelemetry SDK | `opentelemetry-sdk>=1.30` |
-| OS | Windows (tested). Linux and macOS are expected to work, but had not been run when this was written. |
+| OS | Linux, macOS and Windows (all tested in CI) |
 
 A few blueprint fields are read from private Pydantic AI attributes. If a Pydantic AI release changes them, those fields degrade to a warning in the viewer and the rest keeps working. The [compatibility page](https://lowweilin.github.io/pydantic-ai-viz/reference/compatibility/) lists them and says exactly which versions were tested.
 
@@ -119,7 +119,7 @@ Bug reports and pull requests are welcome. [CONTRIBUTING.md](https://github.com/
 
 The canvas is drawn with [React Flow](https://reactflow.dev) and laid out with [dagre](https://github.com/dagrejs/dagre). The viewer is also built on [React](https://react.dev), [Radix UI](https://www.radix-ui.com), [Zustand](https://github.com/pmndrs/zustand) and [Tailwind CSS](https://tailwindcss.com). The licence of every library bundled into the viewer is at the top of the viewer's HTML file, and of every export made from it.
 
-## Licence
+## License
 
 [MIT](https://github.com/LowWeiLin/pydantic-ai-viz/blob/main/LICENSE).
 
