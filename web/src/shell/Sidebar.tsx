@@ -69,7 +69,10 @@ function BlueprintLink({ entry, route }: { entry: BlueprintEntry; route: Route }
         className={cx(toneClass[entry.kind], rowClass(active))}
       >
         <Icon name={entry.kind} size={14} className="tone-text" />
-        <span className="min-w-0 flex-1 truncate font-medium text-ui">{entry.label}</span>
+        {/* The title gives the whole name where the column cuts it short. */}
+        <span className="min-w-0 flex-1 truncate font-medium text-ui" title={entry.label}>
+          {entry.label}
+        </span>
         {entry.warnings > 0 && (
           <Badge>
             <span className="sr-only">Warnings: </span>
@@ -293,8 +296,13 @@ export function AboutView({ about }: { about: AboutBlueprints }) {
         <p className="m-0">{HOW[about.origin]}</p>
         <p className="m-0">
           To see a run, call{" "}
-          <code className="break-words text-fg">pydantic_ai_viz.serve(agent)</code> in your program,
-          then run the agent.
+          {/* A narrow sidebar breaks the call after the module, not in the middle of a word. */}
+          <code className="break-words text-fg">
+            pydantic_ai_viz.
+            <wbr />
+            serve(agent)
+          </code>{" "}
+          in your program, then run the agent.
         </p>
       </div>
     </section>
