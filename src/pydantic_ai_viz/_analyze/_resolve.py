@@ -22,7 +22,7 @@ import builtins
 import os
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeAlias
@@ -38,6 +38,9 @@ MAX_DEPTH = 12
 
 MAX_STEPS = 512
 """How many steps one resolution may take in all, nested ones included."""
+
+_MAX_LOOP_ITEMS = 64
+"""How many items of a ``for`` loop over a written-out list are gone through one by one."""
 
 _MAX_STAR_DEPTH = 4
 """How many ``from ... import *`` statements a name is followed through."""
@@ -291,6 +294,8 @@ class Resolver:
         """Whether a resolution was refused because the deadline had passed."""
         self.trail: list[Expression] = []
         """The names the last top-level ``resolve`` passed through, in order."""
+        self._standing_for: dict[int, Expression] = {}
+        """``id(Binding)`` of a loop variable -> the item it stands for while ``each`` goes through the loop."""
         self._steps_left = MAX_STEPS
 
     # ------------------------------------------------------------- lookup
@@ -347,6 +352,44 @@ class Resolver:
             for change in binding.scope.mutations.get(binding.name, ())
             if change.scope is not scope or binding.scope is not scope or binding.line < change.line <= line
         ]
+
+    def each(self, node: ast.AST, scope: Scope, line: int) -> Iterator[None]:
+        """Go through a statement once for every item its loop variable stands for.
+
+        ``for tool in (search, fetch): agent.tool_plain(tool)`` registers two tools.
+        Iterating over this method makes ``tool`` resolve to each item in turn.
+        A statement outside a loop, or in a loop over something that is not a
+        list written out in the source, is gone through once, the variable unknown.
+        """
+        loop: Binding | None = None
+        for index, part in enumerate(ast.walk(node)):
+            if index > MAX_STEPS:
+                break
+            if isinstance(part, ast.Name):
+                binding = self.lookup(part.id, scope, line)
+                if binding is not None and binding.kind == "loop" and id(binding) not in self._standing_for:
+                    loop = binding
+                    break
+        items: Expression | None = None
+        if loop is not None and isinstance(loop.node, ast.expr):
+            looped = self.resolve(loop.node, loop.scope, loop.line - 1, depth=1)
+            if (
+                isinstance(looped, Expression)
+                and isinstance(looped.node, ast.List | ast.Tuple)
+                and len(looped.node.elts) <= _MAX_LOOP_ITEMS
+                and not any(isinstance(item, ast.Starred) for item in looped.node.elts)
+                and not self.changes(unwrap(loop.node), loop.scope, loop.line)
+            ):
+                items = looped
+        if loop is None or items is None or not isinstance(items.node, ast.List | ast.Tuple):
+            yield
+            return
+        try:
+            for item in items.node.elts:
+                self._standing_for[id(loop)] = Expression(item, items.scope, items.line)
+                yield
+        finally:
+            self._standing_for.pop(id(loop), None)
 
     # ------------------------------------------------------------ resolve
 
@@ -436,6 +479,8 @@ class Resolver:
             binding.node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
         ):
             return Definition(binding.node, binding.scope)
+        if binding.kind == "loop":
+            return self._standing_for.get(id(binding))  # unknown, unless ``each`` is going through the items
         if binding.kind == "import":
             # Two files that import a name from each other never lead to a value: stop where the trail closes.
             if id(binding) in trail or len(trail) >= MAX_HOPS:

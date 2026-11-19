@@ -229,6 +229,39 @@ def test_only_pydantic_graph_builders_are_graphs(tmp_path: Path) -> None:
     assert found.graphs == []
 
 
+def test_nodes_added_in_a_loop_over_a_written_out_list_are_all_added(tmp_path: Path) -> None:
+    source = """
+        from __future__ import annotations
+        from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext
+
+
+        class Draft(BaseNode[None, None, str]):
+            async def run(self, ctx: GraphRunContext) -> Review: ...
+
+
+        class Review(BaseNode[None, None, str]):
+            async def run(self, ctx: GraphRunContext) -> Draft | End[str]: ...
+
+
+        builder = GraphBuilder(output_type=str)
+        builder.add(builder.edge_from(builder.start_node).to(Draft))
+        for node in (Draft, Review):
+            builder.add(builder.node(node))
+        looped = builder.build()
+        """
+    (found,) = analyze_source(tmp_path, source).graphs
+    # As pydantic-graph builds it: a node that can go two ways goes through a decision.
+    assert [node.id for node in found.nodes] == ["__start__", "Draft", "Review", "decision", "__end__"]
+    assert [(e.source, e.target) for e in found.edges] == [
+        ("__start__", "Draft"),
+        ("Draft", "Review"),
+        ("Review", "decision"),
+        ("decision", "Draft"),
+        ("decision", "__end__"),
+    ]
+    assert found.warnings == []
+
+
 # ------------------------------------------------- what cannot be read is said
 
 

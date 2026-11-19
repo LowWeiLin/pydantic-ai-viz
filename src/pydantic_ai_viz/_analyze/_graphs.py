@@ -203,7 +203,9 @@ class GraphExtractor:
         if not site.statement:
             return
         before = len(builder.edges)
-        self._add(builder, site, method.attr, context)
+        # ``for node in (A, B, C): builder.add(builder.node(node))`` adds three nodes.
+        for _ in self.resolver.each(call, site.scope, call.lineno):
+            self._add(builder, site, method.attr, context)
         # As pydantic-graph does after every addition: a step that was just made a destination
         # and whose return type names only nodes goes on to those nodes.
         for destination in _unique([edge.target for edge in builder.edges[before:]]):

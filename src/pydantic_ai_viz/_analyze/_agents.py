@@ -119,6 +119,8 @@ class _ToolsetSite:
 
     site: CallSite
     tools: list[_ToolSpec] = field(default_factory=list[_ToolSpec])
+    notes: list[str] = field(default_factory=list[str])
+    """Warnings about registrations that could not be read, for every agent that uses the toolset."""
 
 
 @dataclass(slots=True, eq=False)
@@ -130,6 +132,8 @@ class _AgentSite:
     instructions: list[Instruction] = field(default_factory=list[Instruction])
     system_prompts: list[Instruction] = field(default_factory=list[Instruction])
     toolset_functions: list[Definition] = field(default_factory=list[Definition])
+    notes: list[str] = field(default_factory=list[str])
+    """Warnings about registrations that could not be read."""
 
     @property
     def module(self) -> Module:
@@ -231,7 +235,12 @@ class AgentExtractor:
             if site.statement:
                 events.append((site.node.lineno, site.node, site.scope, None))
         for line, expression, scope, definition in sorted(events, key=lambda event: event[0]):
-            self._register(expression, scope, line, definition)
+            if definition is None:
+                # A registration call inside ``for tool in (a, b):`` is one registration per item.
+                for _ in self.resolver.each(expression, scope, line):
+                    self._register(expression, scope, line, None)
+            else:
+                self._register(expression, scope, line, definition)
 
     def _register(self, expression: ast.expr, scope: Scope, line: int, decorated: Definition | None) -> None:
         call = expression if isinstance(expression, ast.Call) else None
@@ -253,9 +262,13 @@ class AgentExtractor:
                 spec = self.tool_of(call.args[0], scope, line)
                 if spec is not None and isinstance(receiver, _ToolsetSite):
                     receiver.tools.append(spec)
+                elif spec is None:
+                    self._unread(receiver, call, scope)
                 return
             target = self.resolver.resolve(call.args[0], scope, line)
             if not isinstance(target, Definition) or isinstance(target.node, ast.ClassDef):
+                if method.attr in ("tool", "tool_plain", "add_function"):
+                    self._unread(receiver, call, scope)
                 return
             function = target
         elif call is not None and call.args:
@@ -286,6 +299,14 @@ class AgentExtractor:
                 (receiver.instructions if name == "instructions" else receiver.system_prompts).append(prompt)
             elif name == "toolset":
                 receiver.toolset_functions.append(function)
+
+    @staticmethod
+    def _unread(receiver: _AgentSite | _ToolsetSite, call: ast.Call, scope: Scope) -> None:
+        """Note a registration whose function cannot be traced: the tool exists, and is not shown."""
+        text = brief(scope.module.text(call))
+        _compat.add_warning(
+            receiver.notes, f"a tool is added by `{text}`; which function that is is only known when the code runs"
+        )
 
     def _overrides(self, spec: _ToolSpec, keywords: dict[str, ast.expr], scope: Scope, line: int) -> None:
         """Apply the keyword arguments of a registration that change how the tool is presented."""
@@ -476,6 +497,8 @@ class _AgentBuilder:
         self.module = agent.module
         self.line = self.call.lineno
         self.warnings: list[str] = []
+        for note in agent.notes:
+            self.warn(note)
         self.arguments: dict[str, ast.expr] = {}
         if self.call.args and not isinstance(self.call.args[0], ast.Starred):
             self.arguments["model"] = self.call.args[0]
@@ -1106,6 +1129,8 @@ class _AgentBuilder:
                 result.kind, result.opaque = "function", False
                 result.label = "FunctionToolset" + (f" {toolset_id!r}" if toolset_id else "")
                 result.tools = [*self._constructor_tools(call, current), *site.tools]
+                for note in site.notes:
+                    self.warn(note)
                 return [result]
             if isinstance(callee, External) and callee.is_library("CombinedToolset") and depth < 4 and call.args:
                 children = self._listed(call.args[0], current.scope, current.line, "toolsets")
@@ -1168,7 +1193,10 @@ class _AgentBuilder:
         found: list[_ToolSpec] = []
         for item in listed:
             spec = self.extractor.tool_of(item.node, item.scope, item.line)
-            if spec is not None:
+            if spec is None:
+                text = item.module.text(item.node)
+                self.warn(f"a tool is built by `{brief(text)}`; it cannot be described without running the code")
+            else:
                 found.append(spec)
         return found
 

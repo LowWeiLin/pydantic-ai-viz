@@ -245,3 +245,103 @@ def test_a_method_of_an_object_made_in_the_source_is_a_tool_without_its_self(tmp
         "a tool is built by `db.missing`; it cannot be described without running the code",
         "a tool is built by `unknown.method`; it cannot be described without running the code",
     ]
+
+
+# ------------------------------------------------- tools registered in a loop
+
+
+LOOPS = """
+from pydantic_ai import Agent
+from pydantic_ai.toolsets import FunctionToolset
+
+
+def search(query: str) -> str:
+    \"\"\"Search the web.\"\"\"
+    return query
+
+
+def fetch(url: str) -> str:
+    return url
+
+
+def summarise(text: str) -> str:
+    return text
+
+
+written_out = Agent("test")
+for function in (search, fetch):
+    written_out.tool_plain(function)
+
+TOOLS = [search, summarise]
+named = Agent("test")
+for function in TOOLS:
+    named.tool_plain(function, retries=2)
+
+twice = Agent("test")
+for function in (search, fetch):
+    for attempt in (1, 2):
+        twice.tool_plain(function)
+
+toolset = FunctionToolset()
+for function in [fetch, summarise]:
+    toolset.add_function(function)
+through_a_toolset = Agent("test", toolsets=[toolset])
+
+computed = Agent("test")
+for function in load_tools():
+    computed.tool_plain(function)
+
+GROWN = [search]
+GROWN.append(fetch)
+grown = Agent("test")
+for function in GROWN:
+    grown.tool_plain(function)
+
+paired = Agent("test")
+for name, function in registry.items():
+    paired.tool_plain(function)
+
+unknown_toolset = FunctionToolset()
+unknown_toolset.add_function(make_tool())
+unknown_toolset.add_tool(make_tool())
+unknown_toolset.add_function(search)
+partly = Agent("test", toolsets=[unknown_toolset, FunctionToolset([fetch, make_tool()])])
+"""
+
+
+def test_a_tool_registered_in_a_loop_over_a_written_out_list_is_one_tool_per_item(tmp_path: Path) -> None:
+    found = analyze_source(tmp_path, LOOPS)
+
+    def tools(label: str) -> list[str]:
+        return [item.name for item in agent(found, label).tools]
+
+    assert tools("written_out") == ["search", "fetch"]
+    assert tool(agent(found, "written_out"), "search").description == "Search the web."
+    assert tools("named") == ["search", "summarise"]
+    assert [item.max_retries for item in agent(found, "named").tools] == [2, 2]
+    # Only a loop whose variable the registration names multiplies it.
+    assert tools("twice") == ["search", "fetch"]
+    assert tools("through_a_toolset") == ["fetch", "summarise"]
+    for label in ("written_out", "named", "twice", "through_a_toolset"):
+        assert agent(found, label).warnings == []
+
+
+def test_a_tool_whose_function_cannot_be_traced_is_said_to_be_there(tmp_path: Path) -> None:
+    found = analyze_source(tmp_path, LOOPS)
+    unread = "which function that is is only known when the code runs"
+    # A loop over something computed, over a list that is added to afterwards, and one that unpacks pairs.
+    for label, call in (
+        ("computed", "computed.tool_plain(function)"),
+        ("grown", "grown.tool_plain(function)"),
+        ("paired", "paired.tool_plain(function)"),
+    ):
+        assert agent(found, label).tools == []
+        assert agent(found, label).warnings == [f"a tool is added by `{call}`; {unread}"]
+    # A toolset says so on every agent that uses it, and keeps the tools that can be read.
+    partly = agent(found, "partly")
+    assert [item.name for item in partly.tools] == ["search", "fetch"]
+    assert partly.warnings == [
+        f"a tool is added by `unknown_toolset.add_function(make_tool())`; {unread}",
+        f"a tool is added by `unknown_toolset.add_tool(make_tool())`; {unread}",
+        "a tool is built by `make_tool()`; it cannot be described without running the code",
+    ]

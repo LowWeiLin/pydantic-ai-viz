@@ -26,7 +26,7 @@ from typing import Literal, TypeAlias, cast
 
 FunctionNode: TypeAlias = ast.FunctionDef | ast.AsyncFunctionDef
 ScopeNode: TypeAlias = ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
-BindingKind: TypeAlias = Literal["assign", "def", "class", "import", "opaque"]
+BindingKind: TypeAlias = Literal["assign", "def", "class", "import", "loop", "opaque"]
 
 MAX_EXPRESSION_CHARS = 200
 """Source text of an expression is cut to this many characters on the wire."""
@@ -63,7 +63,7 @@ class Binding:
     line: int
     scope: Scope
     node: ast.AST | None = None
-    """``assign``: the value expression. ``def`` and ``class``: the definition. Otherwise ``None``."""
+    """``assign``: the value expression. ``def`` and ``class``: the definition. ``loop``: what is looped over."""
     module: str | None = None
     """``import``: the dotted module named in the statement (without leading dots)."""
     attr: str | None = None
@@ -413,7 +413,10 @@ class _Indexer:
             for target in node.targets:
                 if isinstance(target, ast.Subscript):
                     self._mutation(target.value, "[]", None, scope, line)
-        if isinstance(node, ast.For | ast.AsyncFor | ast.AugAssign):
+        if isinstance(node, ast.For) and isinstance(node.target, ast.Name):
+            # ``for tool in (a, b, c):`` the name stands for each item in turn, which a reader can follow.
+            scope.bind(Binding(node.target.id, "loop", line, scope, node=node.iter))
+        elif isinstance(node, ast.For | ast.AsyncFor | ast.AugAssign):
             self._opaque(node.target, scope, line)
         elif isinstance(node, ast.With | ast.AsyncWith):
             for item in node.items:
