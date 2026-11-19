@@ -16,7 +16,7 @@ A blueprint with no runs is an architecture diagram. A run with no blueprint is 
 
 ### Read from source code
 
-`pydantic-ai-viz view file.py` and `pviz.analyze("file.py")` parse the file and describe the agents and graphs written in it. The file is never imported or executed. The result has `source: "code"`, says where each thing is defined, and shows a value the code computes at run time as the expression that computes it. See [How static analysis works](how-static-analysis-works.md).
+`pydantic-ai-viz view file.py` and `pviz.analyze("file.py")` parse the file and describe the agents and graphs written in it. The file is never imported or executed. The result has `source: "code"`, says where each thing is defined, and shows a value the code computes at run time as the expression that computes it. See [How view works](how-view-works.md).
 
 ### Read from the object
 

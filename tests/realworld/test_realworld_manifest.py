@@ -84,6 +84,17 @@ def test_the_set_covers_the_ways_pydantic_ai_is_used() -> None:
     assert sum(expect.min_files >= 100 for expect in expectations) >= 3  # whole applications, not only scripts
 
 
+def test_the_docs_page_lists_every_project_of_the_manifest_and_nothing_else() -> None:
+    page = (Path(__file__).resolve().parents[2] / "docs" / "real-world.md").read_text(encoding="utf-8")
+    projects = load_manifest()
+    # The command each row offers runs as written, and pins the same commit as the manifest.
+    offered = re.findall(r"`(gh:[^`]+)`", page)
+    assert sorted(set(offered)) == sorted(project.target for project in projects)
+    # The results table has one row per project, linked to the commit it was made at.
+    rows = re.findall(r"^\| [^|]+ \| \[`([0-9a-f]{7})`\]\((\S+)\) \|", page, flags=re.MULTILINE)
+    assert rows == [(project.sha[:7], project.url) for project in projects]
+
+
 def manifest(tmp_path: Path, text: str) -> Path:
     path = tmp_path / "manifest.toml"
     path.write_text(textwrap.dedent(text), encoding="utf-8")

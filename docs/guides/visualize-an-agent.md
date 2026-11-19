@@ -19,7 +19,7 @@ A target is a Python file, or one agent or graph in it:
 | `path/to/file.py` | Every agent and graph in that file |
 | `path/to/file.py:support_agent` | The agent assigned to `support_agent`, and the agents it delegates to |
 
-You can pass several files. `view` **reads the source and never runs it**: the file is not imported, so it does not matter whether its dependencies are installed, and a script that calls its agent at the bottom is safe to view. What the source computes at run time, such as `Agent(get_model())`, is shown as the expression, with a warning on the agent card. [How static analysis works](../concepts/how-static-analysis-works.md) has the details.
+You can pass several files. `view` **reads the source and never runs it**: the file is not imported, so it does not matter whether its dependencies are installed, and a script that calls its agent at the bottom is safe to view. What the source computes at run time, such as `Agent(get_model())`, is shown as the expression, with a warning on the agent card. [How view works](../concepts/how-view-works.md) has the details.
 
 `view` serves the viewer and opens your browser. To write a file instead:
 
@@ -96,7 +96,7 @@ The inspector on the right shows the details for whatever is selected. For an ag
 
 ## What a blueprint cannot show
 
-A blueprint is drawn without running an agent, so some things are out of reach by design. (A blueprint read from source has a few more gaps, each marked with a warning: see [what cannot be read](../concepts/how-static-analysis-works.md#what-cannot-be-read-and-how-you-can-tell).)
+A blueprint is drawn without running an agent, so some things are out of reach by design. (A blueprint read from source has a few more gaps, each marked with a warning: see [what cannot be read](../concepts/how-view-works.md#what-shows-as-decided-at-run-time-and-why).)
 
 - **The text of dynamic instructions.** A function decorated with `@agent.instructions` or `@agent.system_prompt` is listed by name, marked dynamic. Its output depends on the run; you see the resolved text on each run's model requests.
 - **Tools of MCP and dynamic toolsets,** as described above.

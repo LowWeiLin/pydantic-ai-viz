@@ -56,7 +56,7 @@ pydantic-ai-viz demo pipeline --speed 0 --export pipeline.html
 pydantic-ai-viz view TARGET... [--import] [--export OUT.html] [--port N] [--no-open]
 ```
 
-Draw blueprints by **reading source files**. The code is parsed, never imported or executed: nothing in it runs, and nothing it imports has to be installed. What the source spells out is shown as a value; what it computes at run time is shown as the expression that computes it. [How static analysis works](../concepts/how-static-analysis-works.md) explains what can and cannot be read this way.
+Draw blueprints by **reading source files**. The code is parsed, never imported or executed: nothing in it runs, and nothing it imports has to be installed. What the source spells out is shown as a value; what it computes at run time is shown as the expression that computes it. [How view works](../concepts/how-view-works.md) explains what can and cannot be read this way.
 
 | Argument | Description |
 |---|---|

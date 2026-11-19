@@ -67,6 +67,7 @@ nav:
   - Home: index.md
   - Quickstart: quickstart.md
   - Demos: demos.md
+  - Real-world examples: real-world.md
   - Guides:
       - Visualize an agent: guides/visualize-an-agent.md
       - Watch live runs: guides/live-runs.md
@@ -77,7 +78,7 @@ nav:
       - Privacy: guides/privacy.md
   - Concepts:
       - Blueprint vs run: concepts/blueprint-vs-run.md
-      - How static analysis works: concepts/how-static-analysis-works.md
+      - How view works: concepts/how-view-works.md
       - How capture works: concepts/how-capture-works.md
   - Reference:
       - Python API: reference/python-api.md

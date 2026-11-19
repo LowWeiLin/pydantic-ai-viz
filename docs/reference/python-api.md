@@ -125,7 +125,7 @@ Imports between the project's own files are followed, so a tool, an output model
 
 The result can be passed to [`export_html`](#export_html), [`serve`](#serve), [`record`](#record) and `Session.register` like any other target. Runs of an agent are then drawn on the blueprint read from source that carries its name.
 
-Concept: [How static analysis works](../concepts/how-static-analysis-works.md).
+Concept: [How view works](../concepts/how-view-works.md).
 
 ### Analysis { #analysis }
 
