@@ -109,6 +109,9 @@ def _read(resolver: Resolver, expression: Expression, depth: int, budget: _Budge
             return _read(resolver, target, depth + 1, budget)
         raise NotLiteral
     if isinstance(node, ast.Call):
+        inside = resolver.cast_value(node, expression.scope, expression.line)
+        if inside is not None:
+            return child(inside)
         return _string_helper(resolver, expression, node, depth, budget)
     raise NotLiteral
 

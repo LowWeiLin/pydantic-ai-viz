@@ -97,6 +97,100 @@ def test_a_model_held_in_a_variable_is_shown_as_what_the_variable_was_assigned(t
         ]
 
 
+def test_a_cast_is_looked_through_to_the_value_it_wraps(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        import os
+        import typing
+        from typing import cast
+        from pydantic_ai import Agent
+        from pydantic_ai.models import KnownModelName
+
+        literal = Agent(cast(KnownModelName, "openai:gpt-5.2"), retries=typing.cast(int, 3))
+        from_environment = Agent(cast(KnownModelName, os.getenv("PYDANTIC_AI_MODEL", "openai:gpt-5.2")))
+        another_cast = Agent(numpy.cast(KnownModelName, "openai:gpt-5.2"))
+        """,
+    )
+    literal = agent(found, "literal")
+    assert literal.model is not None
+    assert (literal.model.id, literal.model.expression, literal.settings.tool_retries) == ("openai:gpt-5.2", None, 3)
+    assert literal.warnings == []
+    from_environment = agent(found, "from_environment").model
+    assert from_environment is not None
+    assert (from_environment.id, from_environment.provider, from_environment.name) == (None, "openai", "gpt-5.2")
+    assert agent(found, "from_environment").warnings == [
+        "the model is read from the environment variable `PYDANTIC_AI_MODEL` when the code runs; "
+        "`openai:gpt-5.2` is the default the source gives"
+    ]
+    # Only the cast of the typing module is known to hand its argument back.
+    assert agent(found, "another_cast").warnings == [
+        'the model is set by `numpy.cast(KnownModelName, "openai:gpt-5.2")`, so it is only known when the code runs'
+    ]
+
+
+def test_a_model_written_as_an_f_string_gives_the_provider_it_spells_out(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+
+        provider_given = Agent(f"openai:{settings.model}")
+        offline = Agent(f"test:{settings.model}")
+        provider_computed = Agent(f"{settings.vendor}:{settings.model}")
+        no_provider = Agent(f"gpt-{settings.version}")
+        NAME = f"anthropic:claude-{settings.tier}-5"
+        through_a_name = Agent(NAME)
+        """,
+    )
+
+    def model(label: str) -> tuple[str | None, str | None, str | None, bool, str | None]:
+        info = agent(found, label).model
+        assert info is not None
+        return info.id, info.provider, info.name, info.offline, info.expression
+
+    assert model("provider_given") == (None, "openai", "{settings.model}", False, 'f"openai:{settings.model}"')
+    assert agent(found, "provider_given").warnings == [
+        'the model name is computed by `f"openai:{settings.model}"`, so it is only known when the code runs; '
+        "the provider `openai` is what the source gives"
+    ]
+    assert model("offline")[:4] == (None, "test", "{settings.model}", True)
+    assert model("through_a_name")[:3] == (None, "anthropic", "claude-{settings.tier}-5")
+    for label in ("provider_computed", "no_provider"):
+        expression = model(label)[4]
+        assert model(label) == (None, None, expression, False, expression)
+        assert agent(found, label).warnings == [
+            f"the model is set by `{expression}`, so it is only known when the code runs"
+        ]
+
+
+def test_a_prompt_filled_in_with_format_is_shown_as_its_template(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+
+        PROMPT = \"\"\"You are a researcher.
+        Today is {date}.\"\"\"
+
+        researcher = Agent(
+            "test",
+            instructions=PROMPT.format(date=today()),
+            system_prompt=["Call the user {name}.".format(name=name), load_prompt().format(date=today())],
+        )
+        """,
+    )
+    assert [(i.kind, i.dynamic, i.text, i.expression) for i in found.instructions] == [
+        ("instructions", True, "You are a researcher.\nToday is {date}.", None),
+        ("system_prompt", True, "Call the user {name}.", None),
+        ("system_prompt", True, None, "load_prompt().format(date=today())"),
+    ]
+    assert found.warnings == [
+        "one of the system prompts is the expression `load_prompt().format(date=today())`; its text is only "
+        "known at run time"
+    ]
+
+
 # ------------------------------------------------------ agents that are wrapped
 
 

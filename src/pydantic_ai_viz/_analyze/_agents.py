@@ -584,6 +584,18 @@ class _AgentBuilder:
             # ``Agent(model)``: what ``model`` was assigned says more than its name does.
             text = target.module.text(target.node)
         variable: str | None = None
+        if isinstance(target, Expression) and isinstance(target.node, ast.JoinedStr):
+            # ``f"openai:{settings.model}"``: the provider is spelled out, the name is computed.
+            written, separator, rest = fstring_template(target.node).partition(":")
+            first = target.node.values[0] if target.node.values else None
+            spelled_out = isinstance(first, ast.Constant) and str(first.value).startswith(f"{written}:")
+            if separator and rest and spelled_out:
+                self.warn(
+                    f"the model name is computed by `{brief(text)}`, so it is only known when the code runs; "
+                    f"the provider `{written}` is what the source gives"
+                )
+                offline = written in _compat.OFFLINE_PROVIDERS
+                return ModelInfo(id=None, name=rest, provider=written, offline=offline, expression=text)
         if isinstance(target, Expression):
             environment = self._environment(target)
             if environment is not None:
@@ -726,6 +738,15 @@ class _AgentBuilder:
         if isinstance(target, Expression) and isinstance(target.node, ast.JoinedStr):
             template = fstring_template(target.node)
             return Instruction(kind=kind, dynamic=True, text=template, function=None, expression=None, location=where)
+        if isinstance(target, Expression) and isinstance(target.node, ast.Call):
+            # ``PROMPT.format(date=today())``: the text with its placeholders still in it, as for an f-string.
+            method = target.node.func
+            if isinstance(method, ast.Attribute) and method.attr == "format":
+                template = string(self.resolver, method.value, target.scope, target.line)
+                if template is not None:
+                    return Instruction(
+                        kind=kind, dynamic=True, text=template, function=None, expression=None, location=where
+                    )
         text = self.text(node)
         what = "instructions" if kind == "instructions" else "system prompts"
         if isinstance(target, External):

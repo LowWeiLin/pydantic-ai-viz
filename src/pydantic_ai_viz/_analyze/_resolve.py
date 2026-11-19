@@ -49,6 +49,7 @@ END_OF_MODULE = 10**9
 """A line number after every line: what a name means once its module has finished running."""
 
 _BUILTINS = frozenset(dir(builtins))
+_CASTS = frozenset({"typing.cast", "typing_extensions.cast"})
 _LIBRARIES = frozenset({"pydantic_ai", "pydantic_ai_slim", "pydantic_graph"})
 _NEVER_PROJECT = _LIBRARIES | {"pydantic", "pydantic_core", "pydantic_settings", "typing_extensions"}
 """Packages whose names are recognised by the analysis. A project file never stands in for one of them."""
@@ -556,13 +557,27 @@ class Resolver:
         return value
 
     def _factory(self, node: ast.Call, current: Expression, depth: int) -> Resolved | _Stop:
-        """The value a call returns, when it calls a function here that has exactly one ``return``."""
+        """The value a call returns: of a function here that has exactly one ``return``, or of ``typing.cast``."""
         callee = self.callee(node, current.scope, current.line, depth=depth + 1)
         if isinstance(callee, Definition) and not isinstance(callee.node, ast.ClassDef):
             returns = callee.body.returns
             if len(returns) == 1:
                 return Expression(returns[0], callee.body, END_OF_MODULE)
+        if isinstance(callee, External) and callee.name in _CASTS and len(node.args) == 2 and not node.keywords:
+            # ``cast(KnownModelName, value)`` is ``value``: the cast only tells the type checker something.
+            value = node.args[1]
+            if not isinstance(value, ast.Starred):
+                return Expression(value, current.scope, current.line)
         return _STOP
+
+    def cast_value(self, node: ast.Call, scope: Scope, line: int) -> ast.expr | None:
+        """The value inside ``typing.cast(type, value)``; ``None`` for any other call."""
+        if len(node.args) != 2 or node.keywords or isinstance(node.args[1], ast.Starred):
+            return None
+        if not isinstance(node.func, ast.Name | ast.Attribute):
+            return None
+        callee = self.resolve(node.func, scope, line, depth=1)
+        return node.args[1] if isinstance(callee, External) and callee.name in _CASTS else None
 
     def callee(self, node: ast.Call, scope: Scope, line: int | None = None, *, depth: int = 0) -> Resolved:
         """What a call expression calls. ``Agent[Deps, Out](...)`` calls ``Agent``."""
