@@ -44,7 +44,7 @@ export type ShellStatus = {
   chip: ModeChip | null;
   /** The strip under the top bar. */
   banner: "reconnecting" | "server-stopped" | null;
-  /** The strip above a blueprint screen. */
+  /** The strip between a blueprint screen's bar and its canvas. */
   strip: "waiting-for-run" | null;
   /** `skeleton` while a live session connects; `lists` once there is something to list. */
   sidebar: "skeleton" | "lists" | null;

@@ -871,6 +871,17 @@ test.describe("live", () => {
     await page.goto("/live-hold-5/");
     await expect(page.getByText("Waiting for a run")).toBeVisible();
     await expect(page.locator('[data-mode="live"]')).toHaveText("Live");
+    // It sits under the blueprint's bar, which keeps the inspector toggle at its end.
+    const [bar, strip, toggle] = await Promise.all([
+      page.locator("main header").first().boundingBox(),
+      page.getByRole("status").filter({ hasText: "Waiting for a run" }).boundingBox(),
+      page.getByRole("button", { name: /blueprint details$/ }).boundingBox(),
+    ]);
+    expect(strip?.y).toBeGreaterThanOrEqual((bar?.y ?? 0) + (bar?.height ?? 0) - 1);
+    expect(toggle?.y).toBeGreaterThanOrEqual(bar?.y ?? Number.NaN);
+    expect((toggle?.y ?? 0) + (toggle?.height ?? 0)).toBeLessThanOrEqual(
+      (bar?.y ?? 0) + (bar?.height ?? 0),
+    );
     // The empty run list does not say it a second time.
     await expect(page.getByRole("navigation", { name: /^Runs/ })).toHaveText("Runs0");
     await expect(page.getByText(/No runs/)).toHaveCount(0);

@@ -112,7 +112,7 @@ export function Welcome() {
   );
 }
 
-/** A live session with blueprints and no run so far: shown above the blueprint. */
+/** A live session with blueprints and no run so far: shown above the blueprint's canvas. */
 export function WaitingForRun() {
   const { strip } = useShellStatus();
   if (strip !== "waiting-for-run") return null;

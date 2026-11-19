@@ -39,7 +39,6 @@ function AgentBlueprintView({ id }: { id: string }) {
       inspectorLabel="Blueprint details"
       main={
         <div className="flex h-full flex-col">
-          <WaitingForRun />
           <ScreenBar
             icon="agent"
             tone="agent"
@@ -58,6 +57,8 @@ function AgentBlueprintView({ id }: { id: string }) {
             }
             aside={<CopyButton text={() => agentMermaid(model)} label="Copy Mermaid" />}
           />
+          {/* Under the bar, so the inspector toggle keeps its place at the bar's end. */}
+          <WaitingForRun />
           <div className="min-h-0 flex-1">
             <AgentCanvas
               model={model}

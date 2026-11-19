@@ -36,7 +36,6 @@ function GraphBlueprintView({ id }: { id: string }) {
       inspectorLabel="Blueprint details"
       main={
         <div className="flex h-full flex-col">
-          <WaitingForRun />
           <ScreenBar
             icon="graph"
             tone="graph"
@@ -61,6 +60,8 @@ function GraphBlueprintView({ id }: { id: string }) {
               ) : undefined
             }
           />
+          {/* Under the bar, so the inspector toggle keeps its place at the bar's end. */}
+          <WaitingForRun />
           <div className="min-h-0 flex-1">
             <GraphCanvas
               model={model}
