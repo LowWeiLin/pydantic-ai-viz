@@ -171,7 +171,13 @@ def test_computed_values_are_reported_as_source_text_never_guessed() -> None:
         return (instruction.dynamic, instruction.text, instruction.function, instruction.expression)
 
     assert [shape(i) for i in computed.instructions] == [
-        (True, None, None, "PREAMBLE"),  # dedent(...).strip(): a call of a library function is not evaluated
+        # What PREAMBLE was given, as it would read inline: a call of a library function is not evaluated.
+        (
+            True,
+            None,
+            None,
+            'dedent(\n    """\n    You are part of the support team.\n    Stay polite.\n    """\n).strip()',
+        ),
         (True, "You work for the {TEAM} team, tier {os.environ.get('TIER', 'basic')!r}.", None, None),
         (True, None, None, 'PROMPTS["support"]'),
         (True, None, None, "house_style"),
@@ -197,7 +203,8 @@ def test_computed_values_are_reported_as_source_text_never_guessed() -> None:
         'the name is computed by `f"support-{TEAM}"`, so it is only known when the code runs',
         'the description is computed by `house_style("support")`, so it is only known when the code runs',
         "the model is set by `get_model()`, so it is only known when the code runs",
-        "one of the instructions is the expression `PREAMBLE`; its text is only known when the code runs",
+        'one of the instructions is the expression `dedent( """ You are part of the support team. Stay polite. """ )'
+        ".strip()`; its text is only known when the code runs",
         'one of the instructions is the expression `PROMPTS["support"]`; its text is only known when the code runs',
         "one of the instructions is `house_style` (my_company.prompts.house_style), which is defined outside the "
         "analysed source; whether it is text or a function is not known",

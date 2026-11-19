@@ -535,3 +535,28 @@ def test_a_decorator_applied_before_the_tool_is_registered_is_named_in_a_warning
         "`def`, which `@logged` may change",
     ]
     assert agent(found, "other").warnings == []
+
+
+def test_a_computed_value_reads_the_same_whether_it_is_written_inline_or_through_a_name(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+        from prompts import load
+
+        PROMPT = load("support")
+        NAME = load("name")
+
+        through_names = Agent("test", instructions=PROMPT, description=NAME)
+        inline = Agent("test", instructions=load("support"), description=load("name"))
+        """,
+    )
+    rows = [
+        ([(i.dynamic, i.text, i.expression) for i in b.instructions], b.description, b.warnings) for b in found.agents
+    ]
+    assert rows[0] == rows[1]
+    assert rows[0][0] == [(True, None, 'load("support")')]
+    assert rows[0][2] == [
+        'the description is computed by `load("name")`, so it is only known when the code runs',
+        'one of the instructions is the expression `load("support")`; its text is only known when the code runs',
+    ]

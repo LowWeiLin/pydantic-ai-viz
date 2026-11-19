@@ -1240,7 +1240,9 @@ class _AgentBuilder:
             return None
         value = string(self.resolver, node, *self.where(node))
         if value is None:
-            self.warn(f"the {key} is computed by `{brief(self.text(node))}`, so it is only known when the code runs")
+            shown = self._as_assigned_to(Expression(node, *self.where(node)))
+            text = brief(shown.module.text(shown.node))
+            self.warn(f"the {key} is computed by `{text}`, so it is only known when the code runs")
         return value or None
 
     def _model(self) -> ModelInfo | None:
@@ -1357,7 +1359,8 @@ class _AgentBuilder:
                         kind=kind, dynamic=True, text=template, function=None, expression=None, location=where
                     )
         # The source as written, line breaks and all: a prompt built by a call is still readable in it.
-        text = entry.module.raw_text(node)
+        shown = self._as_assigned_to(entry)
+        text = shown.module.raw_text(shown.node)
         if len(text) > _MAX_VERBATIM_CHARS:
             text = text[: _MAX_VERBATIM_CHARS - 3] + "..."
         what = "instructions" if kind == "instructions" else "system prompts"
@@ -1565,6 +1568,19 @@ class _AgentBuilder:
                 item.wrappers = ["CapabilityOwnedToolset", *item.wrappers]
                 found.append(item)
         return found
+
+    def _as_assigned_to(self, entry: Expression) -> Expression:
+        """What to show for a value computed at run time: for a name given it in one place, what it was given.
+
+        ``PROMPT = load("support")`` then ``instructions=PROMPT`` reads as ``load("support")``, as
+        it does written inline. A name given a value in several places is shown as itself.
+        """
+        if not isinstance(unwrap(entry.node), ast.Name | ast.Attribute):
+            return entry
+        target = self.resolver.resolve(entry.node, entry.scope, entry.line)
+        if self.resolver.reassigned() or not isinstance(target, Expression):
+            return entry
+        return target
 
     def _as_assigned(self, entry: Expression) -> str:
         """The text of an entry; for a name, the text of what the name was assigned, which says more."""
