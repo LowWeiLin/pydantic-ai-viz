@@ -28,13 +28,16 @@ import type { CanvasTarget } from "./targets";
 
 /**
  * Fitting leaves room for what floats over the canvas: the subject switcher and the inspector
- * toggle on top, the zoom buttons on the left, the legend and the attribution underneath.
+ * toggle on top, the zoom buttons on the left, the legend underneath.
  */
 const FIT = {
   padding: { top: "56px", right: "24px", bottom: "44px", left: "56px" },
   maxZoom: 1,
   minZoom: 0.3,
 } as const;
+
+/** React Flow's documented switch for its corner attribution (the library is MIT licensed). */
+const PRO_OPTIONS = { hideAttribution: true } as const;
 
 const reducedMotion = (): boolean =>
   typeof window.matchMedia === "function" &&
@@ -149,6 +152,8 @@ export function CanvasFrame({
           zoomActivationKeyCode={null}
           panActivationKeyCode={null}
           onPaneClick={onClear}
+          // React Flow is credited in the docs' acknowledgements rather than on every canvas.
+          proOptions={PRO_OPTIONS}
         >
           <Background
             variant={BackgroundVariant.Dots}
@@ -161,11 +166,7 @@ export function CanvasFrame({
           <Panel position="bottom-left">
             <CanvasControls />
           </Panel>
-          {bottomRight && (
-            <Panel position="bottom-right" className="mb-6!">
-              {bottomRight}
-            </Panel>
-          )}
+          {bottomRight && <Panel position="bottom-right">{bottomRight}</Panel>}
         </ReactFlow>
       </ReactFlowProvider>
     </CanvasPick.Provider>

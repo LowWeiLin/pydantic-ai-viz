@@ -1042,6 +1042,13 @@ test.describe("blueprint-only view", () => {
     await expect(page).toHaveURL(/#\/agents\/a4$/);
   });
 
+  test("the canvas carries no attribution of its own", async ({ page }) => {
+    await page.goto(blueprintOnly("#/agents/a2"));
+    await expect(canvasNode(page, "Agent reporter")).toBeVisible();
+    await expect(page.locator(".react-flow__attribution")).toHaveCount(0);
+    await expect(page.locator(".react-flow")).not.toContainText("React Flow");
+  });
+
   test("a long list of blueprints is grouped by file and can be filtered", async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 720 });
     await page.goto(manyBlueprints());
