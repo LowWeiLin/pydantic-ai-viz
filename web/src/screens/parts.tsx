@@ -9,6 +9,9 @@ import { cx, type Tone, toneClass } from "../ui/tone";
 /**
  * The strip above a canvas: what this screen shows, with a few facts and actions. The right
  * padding keeps clear of the inspector toggle that `Workspace` puts in that corner.
+ *
+ * In a narrow window the facts wrap within their own column; the title and the actions stay
+ * on the first line, so the bar grows by a line of chips, never by a line holding one button.
  */
 export function ScreenBar({
   icon,
@@ -27,7 +30,7 @@ export function ScreenBar({
   aside?: ReactNode;
 }) {
   return (
-    <header className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-line border-b bg-surface py-1.5 pr-12 pl-3">
+    <header className="flex min-h-11 shrink-0 items-center gap-3 border-line border-b bg-surface py-1.5 pr-12 pl-3">
       <span
         className={cx(
           toneClass[tone],
@@ -42,8 +45,8 @@ export function ScreenBar({
         </p>
         <h2 className="m-0 truncate font-semibold text-em leading-tight">{title}</h2>
       </div>
-      {chips && <div className="flex flex-wrap items-center gap-1.5">{chips}</div>}
-      {aside && <div className="ml-auto flex items-center gap-2">{aside}</div>}
+      {chips && <div className="flex min-w-40 flex-1 flex-wrap items-center gap-1.5">{chips}</div>}
+      {aside && <div className="ml-auto flex shrink-0 items-center gap-2">{aside}</div>}
     </header>
   );
 }

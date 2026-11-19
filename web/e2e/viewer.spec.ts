@@ -340,6 +340,25 @@ test.describe("replay", () => {
     ).toBeVisible();
   });
 
+  test("in a narrow window the run's facts wrap beside its title, not under it", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1024, height: 720 });
+    await openRun(page, "sample", TRIAGE);
+    await skipToEnd(page);
+    const bar = page.locator("main header").first();
+    const [title, copy, retry] = await Promise.all([
+      bar.getByRole("heading", { level: 2 }).boundingBox(),
+      bar.getByRole("button", { name: "Copy Mermaid" }).boundingBox(),
+      bar.getByText("1 retry").boundingBox(),
+    ]);
+    // The facts take more than one line here...
+    expect(retry?.y ?? 0).toBeGreaterThan((title?.y ?? 0) + (title?.height ?? 0));
+    // ...and the action stays level with the title, right of the facts, not on a line of its own.
+    expect(copy?.y ?? Number.NaN).toBeLessThan((title?.y ?? 0) + (title?.height ?? 0));
+    expect(copy?.x ?? 0).toBeGreaterThan((retry?.x ?? 0) + (retry?.width ?? 0));
+  });
+
   test("a very long error message leaves the tabs and their content in view", async ({
     page,
   }, testInfo) => {
