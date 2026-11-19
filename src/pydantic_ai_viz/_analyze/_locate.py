@@ -101,13 +101,15 @@ def skipped_directory(name: str) -> bool:
     return name in SKIPPED_DIRECTORIES or name.startswith(".") or name.endswith(".egg-info")
 
 
-def project_root(start: Path, *, within: Path | None = None) -> Path:
-    """The directory where the project around ``start`` begins.
+def project_root(start: Path, *, within: Path | None = None) -> Path | None:
+    """The directory where the project around ``start`` begins; ``None`` when there is none.
 
     That is the nearest directory, from ``start`` upwards, that holds a project
-    file such as ``pyproject.toml`` or a ``.git``. The home directory, the directory
-    for temporary files and the root of a drive are never taken for one. Without such a directory it is the parent
-    of the outermost package ``start`` is in, and ``start`` itself otherwise.
+    file such as ``pyproject.toml`` or a ``.git``. Without such a directory it is the
+    parent of the outermost package ``start`` is in, and ``start`` itself otherwise.
+    The home directory, the directory for temporary files and the root of a drive
+    are never taken for one: many projects live below them. Where the answer would
+    be one of those, it is ``start``, or ``None`` when ``start`` is one itself.
 
     With ``within``, the search ends at that directory, which is the answer when
     nothing nearer is found: a fetched repository is one project at most.
@@ -132,6 +134,12 @@ def project_root(start: Path, *, within: Path | None = None) -> Path:
         if not (current / "__init__.py").is_file() or current.parent == current:
             break
         current = current.parent
+
+    def shared_or_drive(directory: Path) -> bool:
+        return directory in shared or directory.parent == directory
+
+    if shared_or_drive(current):
+        return None if shared_or_drive(start) else start
     return current
 
 

@@ -483,6 +483,32 @@ def test_where_a_project_starts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert project_root(deep, within=tmp_path / "repo" / "services" / "api" / "src") == (
         tmp_path / "repo" / "services" / "api" / "src"
     )
+    # The home directory itself, or a package directly in it, is never the place imports may go.
+    write(home, "pkg/__init__.py")
+    assert project_root(home) is None
+    assert project_root(home / "pkg") == home / "pkg"
+
+
+def test_a_file_in_the_home_directory_does_not_open_the_rest_of_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    write(home, "Documents/work/other/settings.py", "API_KEY = 'sk-live-from-another-project'\n")
+    target = write(
+        home,
+        "agent.py",
+        """
+        from pydantic_ai import Agent
+        from Documents.work.other.settings import API_KEY
+        agent = Agent('test', instructions=API_KEY)
+        """,
+    )
+    monkeypatch.setattr(Path, "home", lambda: home)
+    found = analyze(target)
+    assert found.files == ["agent.py"]
+    assert "sk-live" not in found.agents[0].model_dump_json()
+    # The same for a directory target that is the home directory: only what lies below it is read.
+    assert analyze(home).files == ["agent.py", "Documents/work/other/settings.py"]
 
 
 def test_installed_packages_are_never_opened_even_when_a_copy_lies_in_the_project(project: Path) -> None:
