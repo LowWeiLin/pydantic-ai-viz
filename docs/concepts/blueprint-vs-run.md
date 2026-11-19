@@ -14,9 +14,19 @@ A blueprint with no runs is an architecture diagram. A run with no blueprint is 
 
 ## Three ways to get a blueprint
 
+Every blueprint, and every tool and delegation edge in it, records how it was learnt. There are three ways, called **provenances**, and the viewer marks each one:
+
+| Provenance | Made by | Runs the code | Knows | Marked in the viewer |
+|---|---|---|---|---|
+| `code` | `pydantic-ai-viz view`, `pviz.analyze(...)` | No | What the source spells out, and where each part is defined | "From source" |
+| `object` | `serve`, `record` or `blueprint` with an agent, `view --import` | The import did, before | Everything introspection can reach, including Pydantic AI's defaults | "From a live object" |
+| `observed` | Runs of an agent nobody registered | Yes, it is a run | What the runs have shown so far | "Observed in runs" |
+
+The same three values appear as a blueprint's `source`, a tool's `origin` and a delegation edge's `evidence` in the [wire format](../reference/wire-format.md#provenance).
+
 ### Read from source code
 
-`pydantic-ai-viz view file.py` and `pviz.analyze("file.py")` parse the file and describe the agents and graphs written in it. The file is never imported or executed. The result has `source: "code"`, says where each thing is defined, and shows a value the code computes at run time as the expression that computes it. See [How view works](how-view-works.md).
+`pydantic-ai-viz view` and `pviz.analyze(...)` parse a file, a directory, a module or a GitHub repository and describe the agents and graphs written in it, following imports between the project's files. Nothing is imported or executed. The result has `source: "code"`, says where each thing is defined, and shows a value the code computes when it runs as the expression that computes it. See [How view works](how-view-works.md).
 
 ### Read from the object
 
@@ -24,7 +34,7 @@ When you pass an agent to `serve`, `record` or `blueprint` (or use `view --impor
 
 ### Observed: pieced together from runs
 
-Capture is process-wide, so the viewer also sees runs of agents nobody told it about: one created inside a function, one built by a framework, one you forgot to pass. For those there is no object to read, so a blueprint is assembled from what the runs reveal. It has `source: "observed"` and the viewer marks it "Observed from runs".
+Capture is process-wide, so the viewer also sees runs of agents nobody told it about: one created inside a function, one built by a framework, one you forgot to pass. For those there is no object to read, so a blueprint is assembled from what the runs reveal. It has `source: "observed"` and the viewer marks it "Observed in runs".
 
 | When this happens | The observed blueprint gains |
 |---|---|
@@ -47,10 +57,11 @@ An edge from a tool to another agent says "this tool runs that agent". Because t
 
 | Evidence | Drawn as | How it was found | How far to trust it |
 |---|---|---|---|
-| `object` | Dashed | The tool function's code refers to an `Agent` object: a module-level variable or one from an enclosing scope | A good guess. The reference might be on a branch that never runs. |
-| `observed` | Solid | During a run, an agent run started inside that tool call | A fact about at least one run. |
+| `code` | Dashed, "in code" | Reading the source: the tool runs an agent the analyser can trace, through a variable, an import, a written-out dict or list, or `ctx.deps` when the source shows which agent is passed as that dependency | A good guess. The call might be on a branch that never runs. |
+| `object` | Dashed, "in code" | Introspecting the live tool function: its code refers to an `Agent` object in a module-level variable or an enclosing scope | A good guess, for the same reason. |
+| `observed` | Solid, "in a run" | During a run, an agent run started inside that tool call | A fact about at least one run. |
 
-A dashed edge turns solid the first time the delegation actually happens. An edge that static analysis missed, because the agent is reached through `ctx.deps`, an attribute or a helper function, simply appears, solid, when it first happens.
+A dashed edge turns solid the first time the delegation actually happens. An edge that reading the code missed, for example because a helper function runs the agent for the tool, simply appears, solid, when it first happens.
 
 Reading a canvas after a few runs:
 
@@ -78,4 +89,7 @@ What a run can show depends on when you look: a span that has started but not en
 
 ## Warnings
 
-When part of a blueprint could not be read, the blueprint says so. Its `warnings` list holds a plain sentence per problem, the agent card shows a badge, and the inspector lists them. The usual cause is a Pydantic AI release that renamed an internal attribute; the affected field is left empty and everything else works. See [Compatibility](../reference/compatibility.md).
+When part of a blueprint could not be read, the blueprint says so. Its `warnings` list holds a plain sentence per problem, the agent card shows a badge, and the inspector lists them.
+
+- In a blueprint read **from source**, a warning names a value that only running the code could tell, such as "the model is set by `get_model()`, so it is only known when the code runs". See [How view works](how-view-works.md#what-shows-as-decided-at-run-time-and-why).
+- In a blueprint read **from an object**, the usual cause is a Pydantic AI release that renamed an internal attribute; the affected field is left empty and everything else works. See [Compatibility](../reference/compatibility.md).

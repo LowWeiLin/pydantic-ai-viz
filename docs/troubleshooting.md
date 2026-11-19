@@ -130,7 +130,7 @@ The agent has no `name`, and the viewer was not given a variable name to fall ba
 Runs are matched to blueprints by agent name. An agent created without `name=` gets a name from Pydantic AI on its first run, but only when it is called through a plain variable, as in `agent.run(...)`. Called through an attribute or a container (`self.agent.run(...)`, `agents[0].run(...)`), it stays unnamed, and its runs are reported under the placeholder name `agent`.
 
 - With **one** unnamed registered agent, those runs are shown on it.
-- With **several**, nothing says which of them ran. The runs are collected on a separate blueprint called `agent`, marked "Observed from runs", and each unnamed blueprint carries a warning.
+- With **several**, nothing says which of them ran. The runs are collected on a separate blueprint called `agent`, marked "Observed in runs", and each unnamed blueprint carries a warning.
 
 The fix is to name each agent when you create it: `Agent(model, name="support")`.
 
