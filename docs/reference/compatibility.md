@@ -37,6 +37,8 @@ All runs below are the full Python test suite (`pytest`, 507 tests), on Windows 
 
 The run with 1 skipped was made in a clean copy of the repository, which has no `web/node_modules`; the test that opens the viewer in a browser is skipped there. The CI test matrix has no built viewer either, so it will skip that test and the demo site builder test.
 
+The suite has grown since, mostly with tests of static analysis. On 19 November 2026 it was run again on Python 3.12.9: with 2.70.0, 1,023 passed and 1 skipped (this account cannot create a symbolic link to a file, which one test needs); with 2.60.0, 1,021 passed and 3 skipped (that test, and two of a graph built with `GraphBuilder.add_reachable`, which 2.60.0's pydantic-graph does not have). The 12 tests of the real-world set, which fetch from GitHub, were run apart and passed.
+
 That is the complete list. Releases between the ones named were not run.
 
 ### Why the floor is 2.60 { #why-the-floor-is-2-60 }
