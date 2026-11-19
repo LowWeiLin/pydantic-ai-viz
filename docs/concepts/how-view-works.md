@@ -14,7 +14,7 @@ The rule behind the third point runs through the whole analyser: **a value is re
 
 <figure class="screenshot" markdown="span">
   ![The demos read from source: their three files in the sidebar, the triage agent with its tools, output and a dashed delegation edge to the refunds agent, and the inspector on the escalate_refund tool with its parameters and the file and line it is defined at](../assets/screenshots/view-dark.png)
-  <figcaption><code>pydantic-ai-viz view src/pydantic_ai_viz/demos</code>. Every part says where it is defined; the edge from <code>escalate_refund</code> to <code>refunds</code> was found by reading the tool's code.</figcaption>
+  <figcaption>The demos read from source, as <code>pydantic-ai-viz view src/pydantic_ai_viz/demos</code> shows them, here in the hosted demo (its title and Gallery button are the demo site's). Every part says where it is defined; the edge from <code>escalate_refund</code> to <code>refunds</code> was found by reading the tool's code.</figcaption>
 </figure>
 
 ## The pipeline

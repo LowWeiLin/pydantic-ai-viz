@@ -4,7 +4,7 @@ A **blueprint** is a picture of what an agent *is*: its model, instructions, too
 
 <figure class="screenshot" markdown="span">
   ![pydantic-ai-viz view on the demos' own source: their files in the sidebar, the triage agent with its tools, output and a dashed delegation edge to the refunds agent, and the inspector on a tool with its parameters and the line it is defined at](../assets/screenshots/view-dark.png)
-  <figcaption><code>pydantic-ai-viz view src/pydantic_ai_viz/demos</code></figcaption>
+  <figcaption>What <code>pydantic-ai-viz view src/pydantic_ai_viz/demos</code> shows, here in the hosted demo, whose title and Gallery button are the demo site's</figcaption>
 </figure>
 
 ## From the command line
