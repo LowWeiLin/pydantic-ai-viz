@@ -294,6 +294,63 @@ def test_running_an_agent_picked_from_a_written_out_dict_or_list_is_delegation_t
     assert gp.delegates == cardiology.delegates == neurology.delegates == []
 
 
+def test_running_the_agent_a_run_is_given_as_its_dependencies_is_delegation_to_that_agent(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from dataclasses import dataclass
+
+        from pydantic_ai import Agent, RunContext
+        from pydantic_ai.agent import AbstractAgent
+
+        search = Agent("test", name="search")
+        summarise = Agent("test", name="summarise")
+        unused = Agent("test", name="unused")
+
+
+        @dataclass
+        class Deps:
+            searcher: AbstractAgent
+            limit: int = 3
+
+
+        analysis = Agent("test", name="analysis", deps_type=AbstractAgent)
+
+
+        @analysis.tool
+        async def extra_search(ctx: RunContext[AbstractAgent], query: str) -> str:
+            return (await ctx.deps.run(query)).output
+
+
+        @analysis.tool_plain
+        def not_a_context(deps: AbstractAgent, query: str) -> str:
+            return deps.run_sync(query).output
+
+
+        report = Agent("test", name="report", deps_type=Deps)
+
+
+        @report.tool
+        async def look_further(ctx: RunContext[Deps], query: str) -> str:
+            return (await ctx.deps.searcher.run(query)).output
+
+
+        async def main() -> None:
+            await analysis.run("first", deps=search)
+            await analysis.run("again", deps=summarise)
+            await report.run("report", deps=Deps(searcher=search, limit=5))
+            await report.run("report", deps=Deps(search))
+        """,
+    )
+    search, summarise, _, analysis, report = found.agents
+    # Each agent that a run in the source hands over as the dependencies; a field of them is followed by keyword.
+    assert [(d.tool_name, d.agent_id) for d in analysis.delegates] == [
+        ("extra_search", search.id),
+        ("extra_search", summarise.id),
+    ]
+    assert [(d.tool_name, d.agent_id) for d in report.delegates] == [("look_further", search.id)]
+
+
 # ------------------------------------------------------- tools that are not defs
 
 

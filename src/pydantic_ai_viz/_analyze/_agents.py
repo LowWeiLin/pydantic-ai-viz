@@ -90,6 +90,8 @@ _MAX_HANDED_ON = 4
 _TOOL_RECEIVERS = ("Agent", "FunctionToolset", "AbstractToolset")
 _MAX_WRAPPERS = 4
 _MAX_EXPANSION_DEPTH = 6
+_MAX_DEPS_PATH = 3
+"""How long ``ctx.deps.a.b`` may be, ``deps`` included, for the agent it holds to be looked for."""
 
 
 def _class_around(scope: Scope) -> ast.ClassDef | None:
@@ -270,6 +272,45 @@ class AgentExtractor:
             f"{len(self.unattached)} tools are {handed} (for example {where}); which agent gets them is decided "
             "when the code runs, so they are shown on none"
         ]
+
+    @cached_property
+    def _deps_given(self) -> dict[int, list[Expression]]:
+        """``id`` of an agent's construction -> the ``deps=`` values that the source's runs of it are given."""
+        given: dict[int, list[Expression]] = {}
+        for module in self.project.modules:
+            for site in module.calls:
+                call = site.node
+                if not isinstance(call.func, ast.Attribute) or call.func.attr not in RUN_METHODS:
+                    continue
+                deps = next((keyword.value for keyword in call.keywords if keyword.arg == "deps"), None)
+                if deps is None:
+                    continue
+                agent = self.agent_at(call.func.value, site.scope, call.lineno)
+                if agent is not None:
+                    given.setdefault(id(agent.site.node), []).append(Expression(deps, site.scope, call.lineno))
+        return given
+
+    def agents_in_deps(self, agent: _AgentSite, path: list[str]) -> list[_AgentSite]:
+        """The agents that runs of ``agent`` are given as their dependencies, or as a field of them.
+
+        ``path`` is the attributes after ``ctx.deps``: ``[]`` for ``deps=other_agent``,
+        ``["searcher"]`` for ``deps=Deps(searcher=other_agent)``.
+        """
+        found: list[_AgentSite] = []
+        for deps in self._deps_given.get(id(agent.site.node), [])[:_MAX_LIST_ITEMS]:
+            node: ast.expr | None = deps.node
+            scope, line = deps.scope, deps.line
+            for attribute in path:
+                target = self.resolver.resolve(node, scope, line) if node is not None else None
+                if not isinstance(target, Expression) or not isinstance(target.node, ast.Call):
+                    node = None
+                    break
+                node = next((keyword.value for keyword in target.node.keywords if keyword.arg == attribute), None)
+                scope, line = target.scope, target.line
+            given = None if node is None else self.agent_at(node, scope, line)
+            if given is not None and given not in found:
+                found.append(given)
+        return found
 
     def blueprints(self) -> list[AgentBlueprint]:
         ids = {key: f"a{index}" for index, key in enumerate(self.agents, start=1)}
@@ -1749,12 +1790,35 @@ class _AgentBuilder:
                 agent = self.extractor.agent_at(unwrap(candidate), body, node.lineno)
                 agents = [agent] if agent is not None else []
                 if agent is None and candidate is receiver:
-                    agents = self._chosen_from(candidate, body, node.lineno)
+                    path = self._deps_path(candidate, spec)
+                    if path is not None:
+                        agents = self.extractor.agents_in_deps(self.agent, path)
+                    else:
+                        agents = self._chosen_from(candidate, body, node.lineno)
                 for agent in agents:
                     agent_id = self.ids[id(agent.site.node)]
                     if agent_id not in found:
                         found.append(agent_id)
         return found
+
+    def _deps_path(self, node: ast.expr, spec: _ToolSpec) -> list[str] | None:
+        """For ``ctx.deps`` or ``ctx.deps.field`` in a tool that takes the run context: what follows ``deps``."""
+        function = spec.function
+        if function is None or isinstance(function.node, ast.ClassDef):
+            return None
+        parameters = [*function.node.args.posonlyargs, *function.node.args.args]
+        parameters = parameters[self.extractor.receiver_count(function) :]
+        if not spec.takes_ctx or not parameters:
+            return None
+        names: list[str] = []
+        base = unwrap(node)
+        while isinstance(base, ast.Attribute) and len(names) <= _MAX_DEPS_PATH:
+            names.append(base.attr)
+            base = base.value
+        names.reverse()
+        if not isinstance(base, ast.Name) or base.id != parameters[0].arg or names[:1] != ["deps"]:
+            return None
+        return names[1:] if len(names) <= _MAX_DEPS_PATH else None
 
     def _chosen_from(self, node: ast.expr, scope: Scope, line: int) -> list[_AgentSite]:
         """The agents of a written-out dict or list that the agent being run is picked from.
