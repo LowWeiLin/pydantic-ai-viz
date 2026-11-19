@@ -7,6 +7,10 @@ writes
     <out>/index.html                      the built viewer, boot slot untouched (static mode)
     <out>/recordings/<name>.pviz.jsonl    one recording per demo, token streaming on
     <out>/recordings/index.json           the gallery the viewer fetches
+    <out>/recordings/source.pviz.jsonl    the demos' source code as `pydantic-ai-viz view`
+                                          reads it: blueprints only, opened with
+                                          ?src=recordings/source.pviz.jsonl and not in the
+                                          gallery, which lists runs to play
 
 The recordings are made here on every build and are never committed. The viewer
 must have been built first (``pnpm --dir web build``): a demo site made of the
@@ -25,9 +29,14 @@ from pathlib import Path
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
 import pydantic_ai_viz as pviz
+from pydantic_ai_viz import demos
 from pydantic_ai_viz._export import BOOT_TOKEN, VIEWER_PATH
+from pydantic_ai_viz._session import blueprint_session
 from pydantic_ai_viz.demos import DEMOS
 from pydantic_ai_viz.demos._base import Demo
+
+SOURCE_TITLE = "The demos, read from source"
+"""Title of the blueprint-only session made from the demos' source code."""
 
 
 def built_viewer() -> str:
@@ -67,6 +76,9 @@ def build(out: Path, speed: float) -> list[Path]:
         )
     index_file = recordings / "index.json"
     index_file.write_text(json.dumps({"recordings": index}, indent=2) + "\n", encoding="utf-8", newline="\n")
+    # What `pydantic-ai-viz view` shows of the same code: read, never imported or run.
+    with blueprint_session(pviz.analyze(Path(demos.__file__).parent), title=SOURCE_TITLE) as session:
+        written.append(session.save(recordings / "source.pviz.jsonl"))
     home = out / "index.html"
     home.write_bytes(page.encode("utf-8"))
     return [*written, index_file, home]
