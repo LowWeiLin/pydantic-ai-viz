@@ -21,6 +21,9 @@
  * A blueprint-only session (`session.mode == "blueprint"`, what `pydantic-ai-viz view` makes)
  * never gets a run, so nothing in it may say "live", "connected" or "waiting": the chip names
  * what it is, and the sidebar explains it where the runs would have been.
+ *
+ * In every mode, notices about the session as a whole (files static analysis skipped) are a
+ * count in the top bar that opens their list, each notice once.
  */
 import { useMemo } from "react";
 import type { DataState } from "../data/reduce";
@@ -108,7 +111,8 @@ export function shellStatus(state: Input): ShellStatus {
       source.kind === "recording" ? "recording" : source.kind === "embedded" ? "export" : null,
     about: blueprintOnly ? aboutOf(data) : null,
     contentOff: !blueprintOnly && data.session?.include_content === false,
-    notices: data.session?.notices ?? [],
+    // The same notice given twice is one fact.
+    notices: [...new Set(data.session?.notices ?? [])],
   };
 }
 

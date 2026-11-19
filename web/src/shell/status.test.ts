@@ -220,4 +220,12 @@ describe("what the shell says, by state", () => {
     expect(legacy.about).toBeNull();
     expect(legacy.notices).toEqual([]);
   });
+
+  test("a notice the session repeats is said once, in the order first given", () => {
+    const repeated = status(LIVE, [
+      session({ mode: "blueprint", notices: ["skipped a.py", "skipped b.py", "skipped a.py"] }),
+      blueprint("a1"),
+    ]);
+    expect(repeated.notices).toEqual(["skipped a.py", "skipped b.py"]);
+  });
 });

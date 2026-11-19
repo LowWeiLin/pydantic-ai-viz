@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { type Source, useViewer } from "../data/store";
+import { InlineCode } from "../inspector/source";
 import { Chip } from "../ui/Badge";
 import { Button, ButtonLink, IconButton } from "../ui/Button";
 import { Icon, type IconName } from "../ui/Icon";
@@ -84,16 +85,23 @@ export function Notices({ notices }: { notices: readonly string[] }) {
     <Popover
       label="Session notices"
       align="start"
+      wide
       trigger={
         <Button size="sm" variant="ghost" icon="info" className="border-line">
           {label}
         </Button>
       }
     >
-      <ul className="m-0 flex max-h-72 list-none flex-col gap-2 overflow-y-auto p-0 text-ui">
-        {notices.map((notice, i) => (
-          <li key={i} className="break-words text-fg">
-            {notice}
+      <p className="m-0 mb-2 font-semibold text-faint text-meta uppercase tracking-[0.06em]">
+        About the session as a whole
+      </p>
+      <ul className="m-0 flex max-h-80 list-none flex-col overflow-y-auto p-0 text-ui">
+        {notices.map((notice) => (
+          <li
+            key={notice}
+            className="break-words border-line border-t py-1.5 text-fg first:border-t-0 first:pt-0"
+          >
+            <InlineCode text={notice} />
           </li>
         ))}
       </ul>

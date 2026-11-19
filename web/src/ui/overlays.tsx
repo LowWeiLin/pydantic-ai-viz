@@ -198,12 +198,15 @@ export function Popover({
   trigger,
   align = "end",
   label,
+  wide = false,
   children,
 }: {
   trigger: ReactElement;
   align?: "start" | "center" | "end";
   /** Names the popover's content for assistive tech. */
   label: string;
+  /** Room for a list of long lines, such as file paths. */
+  wide?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -215,7 +218,7 @@ export function Popover({
           sideOffset={6}
           collisionPadding={8}
           aria-label={label}
-          className={cx(floating, "w-72 p-3")}
+          className={cx(floating, "p-3", wide ? "w-[min(32rem,calc(100vw-16px))]" : "w-72")}
         >
           {children}
         </RadixPopover.Content>
