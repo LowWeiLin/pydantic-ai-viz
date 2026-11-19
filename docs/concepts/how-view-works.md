@@ -182,6 +182,7 @@ Whichever way a blueprint was made, runs are drawn on it the same way when you l
 
 - **No code of the target runs.** The analyser contains no `eval`, no `exec`, no `compile` of the target and no import of it. Literal values are read by a small reader of its own that counts what it visits, not by `ast.literal_eval`. A test in the repository fails if any of these appears in the analyser.
 - **No process is started**, except `git` to fetch a GitHub target.
+- **Nothing outside the project is read.** Imports are followed only inside the [project root](#across-files), and never through a symbolic link or a junction, which could lead anywhere on the disk. A file you name as a target is read wherever it is.
 - **Hostile input ends in a notice, not a hang or a crash**: huge files, deep nesting, import cycles and bytes that are not text are covered by the limits above.
 - **A GitHub target is fetched, never built.** `git` fetches one commit, without history, into a fresh repository in the cache directory, writes out only `.py` files and the few files that mark where a project starts, writes symbolic links as plain files, and removes its own `.git` directory afterwards. No hook, build step or setup script of the repository runs, and `--import` is refused for it. Fetching uses the network and your git configuration; the fetched files stay in the cache (`PYDANTIC_AI_VIZ_CACHE_DIR`, or your user cache directory) until you delete them.
 - **The viewer shows source text as text.** A prompt or an expression that contains HTML or script is displayed, never interpreted.

@@ -284,7 +284,8 @@ def python_files(
 
     Directories of installed or generated code are passed over: virtual environments,
     ``node_modules``, ``site-packages``, ``__pycache__``, ``build``, ``dist`` and every
-    hidden directory. Links to directories are not followed. The search ends, with a
+    hidden directory. Links, to files or to directories, are not followed: either can
+    lead out of the directory, or back into it. The search ends, with a
     notice, at ``max_files`` files or at ``deadline`` (a ``time.monotonic()`` value).
     ``name`` is what the directory is called in notices.
     """
@@ -310,12 +311,10 @@ def python_files(
         below: list[tuple[Path, int]] = []
         for entry in entries:
             try:
-                if _is_link(entry):
-                    is_directory = False
-                    is_file = entry.is_file()
-                else:
-                    is_directory = entry.is_dir(follow_symlinks=False)
-                    is_file = not is_directory and entry.is_file()
+                if is_link(entry):
+                    continue
+                is_directory = entry.is_dir(follow_symlinks=False)
+                is_file = not is_directory and entry.is_file(follow_symlinks=False)
             except OSError:
                 continue
             if is_directory:
@@ -337,7 +336,7 @@ def python_files(
     return found, notices
 
 
-def _is_link(entry: os.DirEntry[str]) -> bool:
+def is_link(entry: os.DirEntry[str]) -> bool:
     """A symbolic link or, on Windows, a junction: either can lead out of the directory or back into it."""
     if entry.is_symlink():
         return True

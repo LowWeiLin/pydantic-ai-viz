@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeAlias
 
-from ._locate import skipped_directory
+from ._locate import is_link, skipped_directory
 from ._source import Binding, FunctionNode, Module, Mutation, Scope, unwrap
 
 MAX_HOPS = 32
@@ -253,14 +253,18 @@ class Project:
         return False
 
     def _entries(self, directory: str) -> dict[str, bool]:
-        """The names in a directory, each with whether it is a file. Empty when it cannot be listed."""
+        """The names in a directory, each with whether it is a file. Empty when it cannot be listed.
+
+        A link, to a file or a directory, is left out: it can lead out of the boundary.
+        """
         known = self._listings.get(directory)
         if known is None:
             known = {}
             try:
                 with os.scandir(directory) as scan:
                     for entry in scan:
-                        known[entry.name] = entry.is_file()
+                        if not is_link(entry):
+                            known[entry.name] = entry.is_file(follow_symlinks=False)
             except OSError:
                 known = {}
             self._listings[directory] = known

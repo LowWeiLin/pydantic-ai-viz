@@ -143,13 +143,56 @@ def test_a_link_to_a_directory_is_not_followed(tmp_path: Path) -> None:
     root = tmp_path / "shop"
     one_agent(root, "app.py", "mine")
     one_agent(tmp_path, "elsewhere/other.py", "elsewhere")
-    try:
-        os.symlink(tmp_path / "elsewhere", root / "linked", target_is_directory=True)
-        os.symlink(root, root / "loop", target_is_directory=True)
-    except OSError:
-        pytest.skip("this account cannot create symbolic links")
+    link_directory(root / "linked", tmp_path / "elsewhere")
+    link_directory(root / "loop", root)
     found = analyze(root)
     assert (found.files, labels(found)) == (["app.py"], ["mine"])
+
+
+def link_directory(link: Path, target: Path) -> None:
+    """A link to a directory: a symbolic link, or on Windows a junction, which needs no privilege."""
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return
+    except OSError:
+        pass
+    if sys.platform != "win32":
+        pytest.skip("this account cannot create symbolic links")
+    import _winapi
+
+    _winapi.CreateJunction(str(target), str(link))
+
+
+SECRET = "SECRET_TOKEN = 'sk-outside-the-target'\n"
+USES_SECRET = (
+    "from pydantic_ai import Agent\nfrom {module} import SECRET_TOKEN\n"
+    "agent = Agent('test', instructions=SECRET_TOKEN)\n"
+)
+
+
+def test_an_import_is_not_followed_through_a_link_that_leads_out_of_the_project(project: Path) -> None:
+    write(project.parent, "outside/secret.py", SECRET)
+    (project / "pkg").mkdir()
+    link_directory(project / "pkg" / "esc", project.parent / "outside")
+    write(project, "main.py", USES_SECRET.format(module="pkg.esc.secret"))
+    found = analyze(project)
+    assert found.files == ["main.py"]
+    assert found.agents[0].instructions[0].text is None
+    assert "sk-outside-the-target" not in found.agents[0].model_dump_json()
+    # Named as a target, the file behind the link is read: the user asked for it.
+    assert analyze(project.parent / "outside" / "secret.py").files == ["secret.py"]
+
+
+def test_a_linked_python_file_is_neither_listed_nor_imported(project: Path) -> None:
+    secret = write(project.parent, "outside/secret.py", SECRET)
+    try:
+        os.symlink(secret, project / "secret.py")
+    except OSError:
+        pytest.skip("this account cannot create symbolic links to files")
+    write(project, "main.py", USES_SECRET.format(module="secret"))
+    found = analyze(project)
+    assert found.files == ["main.py"]
+    assert "sk-outside-the-target" not in found.agents[0].model_dump_json()
 
 
 def test_broken_files_in_a_directory_are_skipped_and_the_rest_is_read(tmp_path: Path) -> None:
