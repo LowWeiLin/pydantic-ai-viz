@@ -10,7 +10,7 @@ import { App } from "../App";
 import type { BootPlan } from "../boot";
 import { runs } from "../data/selectors";
 import { useViewer } from "../data/store";
-import { trimBlankLines } from "../inspector/BlueprintInspector";
+import { firstLine, parameterCount, trimBlankLines } from "../inspector/BlueprintInspector";
 import { SourceRef } from "../inspector/source";
 import { agentBlueprint, fixture, log, sessionStarted } from "../test/factory";
 
@@ -117,6 +117,134 @@ describe("a blueprint read from source", () => {
       within(checker).getByRole("table", { name: "Parameters of lookup_source" }),
     ).toHaveTextContent("Claim[Source]");
     expect(within(checker).getByTitle("newsroom/checks.py:27")).toBeInTheDocument();
+  });
+});
+
+describe("a toolset, and the parts a panel names", () => {
+  const details = (): HTMLElement =>
+    screen.getByRole("complementary", { name: /Blueprint details|Span details/ });
+  const title = (): string | null =>
+    within(details()).getByRole("heading", { level: 3 }).textContent;
+
+  test("a toolset lists its tools, and each one is picked as on the canvas", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/agents/a2";
+    render(<App plan={embedded(NEWSROOM)} />);
+    await user.click(
+      screen.getByRole("button", { name: "Toolset FunctionToolset 'wires', 2 tools" }),
+    );
+    expect(title()).toBe("FunctionToolset 'wires'");
+    // The box is outlined on the canvas, as a picked tool is.
+    expect(document.querySelector(".react-flow__node-toolset .pviz-selected")).not.toBeNull();
+
+    const tools = within(details()).getByRole("list", { name: "Tools of FunctionToolset 'wires'" });
+    expect(
+      within(tools)
+        .getAllByRole("button")
+        .map((row) => row.textContent),
+    ).toEqual([
+      "search_wires3 parametersSearch the wire services.",
+      "fetch_article1 parameterFetch the full text of a wire article.",
+    ]);
+    expect(within(details()).getByText("Function toolset")).toBeInTheDocument();
+    expect(within(details()).getByTitle("newsroom/reporters.py:12")).toBeInTheDocument();
+
+    // A tool picked from the list: its panel, its node outlined, focus on its title.
+    await user.click(within(tools).getByRole("button", { name: /^search_wires/ }));
+    expect(title()).toBe("search_wires");
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(details()).getByRole("heading", { level: 3, name: "search_wires" }),
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Tool search_wires" }).parentElement).toHaveClass(
+      "pviz-selected",
+    );
+    expect(document.querySelector(".react-flow__node-toolset .pviz-selected")).toBeNull();
+
+    // The tool's panel leads back up: to its toolset, and to its agent.
+    const header = within(details()).getByRole("heading", { level: 3 }).parentElement;
+    expect(header?.querySelector("p:last-of-type")).toHaveTextContent(
+      /^in FunctionToolset 'wires' of reporter$/,
+    );
+    await user.click(within(details()).getByRole("button", { name: "FunctionToolset 'wires'" }));
+    expect(title()).toBe("FunctionToolset 'wires'");
+    await user.click(within(details()).getByRole("button", { name: "reporter" }));
+    expect(title()).toBe("reporter");
+
+    // The agent's own panel names every tool under its toolset, each one a way in.
+    const ownTools = within(details()).getByRole("list", { name: "Tools of Agent tools" });
+    await user.click(within(ownTools).getByRole("button", { name: "ask_stringer" }));
+    expect(title()).toBe("ask_stringer");
+    await user.click(within(details()).getByRole("button", { name: "reporter" }));
+    await user.click(within(details()).getByRole("button", { name: "MCPServerStdio" }));
+    expect(title()).toBe("MCPServerStdio");
+  });
+
+  test("a toolset that lists its tools only when the code runs says so, from its placeholder too", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/agents/a2";
+    render(<App plan={embedded(NEWSROOM)} />);
+    await user.click(
+      screen.getByRole("button", {
+        name: "Toolset MCPServerStdio: its tools are resolved at run time",
+      }),
+    );
+    expect(title()).toBe("MCPServerStdio");
+    expect(within(details()).getByText(/lists its tools only when the code runs/)).toBeVisible();
+    expect(within(details()).getByText("MCP server")).toBeInTheDocument();
+    expect(within(details()).getByText("PrefixedToolset")).toBeInTheDocument();
+    expect(within(details()).getByText('MCPServerStdio("uvx", args=["mcp-archive"])').tagName).toBe(
+      "CODE",
+    );
+    expect(within(details()).getByText("Decided at run time")).toBeInTheDocument();
+  });
+
+  test("a delegating tool is a way to its tool, and the delegate a link to its agent", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/agents/a1";
+    render(<App plan={embedded(NEWSROOM)} />);
+    const delegates = details().querySelector('[data-section="delegates"]') as HTMLElement;
+    await user.click(within(delegates).getByRole("button", { name: "check_facts" }));
+    expect(title()).toBe("check_facts");
+    expect(within(details()).getByRole("link", { name: "fact_checker" })).toHaveAttribute(
+      "href",
+      "#/agents/a4",
+    );
+  });
+
+  test("a graph's nodes, and the nodes an edge joins, are picked from the panel", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/graphs/g1";
+    render(<App plan={embedded(NEWSROOM)} />);
+    const nodes = details().querySelector('[data-section="nodes"]') as HTMLElement;
+    await user.click(within(nodes).getByRole("button", { name: "Review" }));
+    expect(title()).toBe("Review");
+    expect(screen.getByRole("button", { name: "Step Review" }).parentElement).toHaveClass(
+      "pviz-selected",
+    );
+    const leadsTo = details().querySelector('[data-section="to"]') as HTMLElement;
+    await user.click(within(leadsTo).getByRole("button", { name: "decision" }));
+    expect(title()).toBe("decision");
+    await user.click(within(details()).getByRole("button", { name: "publishing" }));
+    expect(title()).toBe("publishing");
+  });
+
+  test("on a run, a tool picked from its toolset's panel selects its latest call", async () => {
+    const user = userEvent.setup();
+    render(<App plan={embedded("sample.pviz.jsonl")} />);
+    const triage = runs(useViewer.getState().data).find((run) => run.name === "triage");
+    await openRun(triage?.traceId, "triage");
+    await user.click(await screen.findByRole("button", { name: "Skip to end" }));
+    await user.click(screen.getByRole("button", { name: "Toolset Agent tools, 3 tools" }));
+    expect(title()).toBe("Agent tools");
+    await user.click(within(details()).getByRole("button", { name: /^get_order/ }));
+    await vi.waitFor(() => expect(window.location.hash).toMatch(/\?span=/));
+    // The span of the last get_order call, as a click on the tool on the canvas selects it.
+    const spanId = new URLSearchParams(window.location.hash.split("?")[1]).get("span");
+    const span = spanId ? useViewer.getState().data.spans[spanId] : undefined;
+    expect(span?.kind === "tool_call" && span.data.tool_name).toBe("get_order");
+    expect(title()).toBe("get_order");
   });
 });
 
@@ -240,6 +368,27 @@ describe("SourceRef", () => {
       ":22",
     ]);
     expect(screen.queryByText("Defined at")).toBeNull();
+  });
+});
+
+describe("a tool in a toolset's list", () => {
+  test("counts the parameters its schema names, and says when that is not known", () => {
+    expect(parameterCount({ type: "object", properties: { a: {}, b: {} } })).toBe(2);
+    expect(parameterCount({ type: "object", properties: {}, additionalProperties: false })).toBe(0);
+    expect(parameterCount({ type: "object" })).toBe(0);
+    // Defined outside the files that were read, or a type the analysis could not follow.
+    expect(parameterCount(null)).toBeNull();
+    expect(parameterCount({ "x-python-type": "Params" })).toBeNull();
+    expect(parameterCount("string")).toBeNull();
+  });
+
+  test("is described by the first line of its docstring that has text", () => {
+    expect(firstLine("\n  Search the wires.\n\n  Args:\n    q: what to find\n")).toBe(
+      "Search the wires.",
+    );
+    expect(firstLine("One line")).toBe("One line");
+    expect(firstLine("  \n ")).toBeNull();
+    expect(firstLine(null)).toBeNull();
   });
 });
 

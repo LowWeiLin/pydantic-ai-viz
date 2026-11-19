@@ -16,11 +16,15 @@ export type CanvasTarget =
   /** The model chip on an agent card. */
   | { kind: "model"; agentId: string }
   | { kind: "tool"; agentId: string; name: string }
+  /** The box that groups a toolset's tools; its placeholder row picks it too. */
+  | { kind: "toolset"; agentId: string; toolsetId: string }
   | { kind: "output"; agentId: string }
   | { kind: "graphNode"; nodeId: string };
 
 export const agentNodeId = (agentId: string): string => `agent:${agentId}`;
 export const toolNodeId = (agentId: string, name: string): string => `tool:${agentId}:${name}`;
+export const toolsetNodeId = (agentId: string, toolsetId: string): string =>
+  `toolset:${agentId}:${toolsetId}`;
 export const outputNodeId = (agentId: string): string => `output:${agentId}`;
 export const graphNodeId = (nodeId: string): string => `node:${nodeId}`;
 
@@ -32,6 +36,8 @@ export function targetNodeId(target: CanvasTarget): string {
       return agentNodeId(target.agentId);
     case "tool":
       return toolNodeId(target.agentId, target.name);
+    case "toolset":
+      return toolsetNodeId(target.agentId, target.toolsetId);
     case "output":
       return outputNodeId(target.agentId);
     case "graphNode":
@@ -75,6 +81,9 @@ function agentActivity(model: CanvasModel, target: CanvasTarget): Activity | nul
   const agent = model.agents.find((a) => a.blueprint.id === target.agentId);
   if (!agent) return null;
   switch (target.kind) {
+    // A toolset is never a span of its own: picking it shows its blueprint, also in a run.
+    case "toolset":
+      return null;
     case "agent":
     case "output":
       return agent.run;

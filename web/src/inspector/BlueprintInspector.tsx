@@ -4,11 +4,14 @@
  *
  *   agent       Warnings · Model · Instructions · Toolsets · Output · Delegates to · Settings ·
  *               Capabilities · Mermaid
+ *   toolset     Tools · Definition
  *   tool        Parameters · Returns · Definition
  *   graph       Warnings · Types · Nodes · Mermaid
  *   graph node  Node · Comes from · Leads to
  *
  * A section with nothing to say is left out, and so is a setting the blueprint does not set.
+ * Every part a panel names (a tool, its toolset, its agent, a node an edge leads to) can be
+ * picked from the panel, as it can on the canvas (see `pick.tsx`).
  */
 import { type ReactNode, useMemo } from "react";
 import { graphNodeLabel, nodeKind } from "../canvas/layout";
@@ -33,6 +36,7 @@ import type {
   Toolset,
 } from "../wire";
 import { InspectorHeader, Note, type Reveal, type SectionItem, Sections, TextBlock } from "./parts";
+import { PickLink, PickRow } from "./pick";
 import { Expression, InlineCode, ProvenanceChip, SourceRef, TemplateText } from "./source";
 
 type Fact = [label: string, value: ReactNode];
@@ -142,6 +146,38 @@ function toolsetMeta(toolset: Toolset, count: number): string {
   if (toolset.opaque && count === 0) return "resolved at run time";
   return plural(count, "tool");
 }
+
+/**
+ * How many parameters a tool takes: the fields of its parameters schema. Null when that is not
+ * known: the tool is defined outside the files that were read, or its schema is not an object.
+ */
+export function parameterCount(schema: Json | null): number | null {
+  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return null;
+  const { properties } = schema;
+  if (properties && typeof properties === "object" && !Array.isArray(properties)) {
+    return Object.keys(properties).length;
+  }
+  return schema.type === "object" ? 0 : null;
+}
+
+const parameterWords = (count: number | null): string =>
+  count === null
+    ? "parameters not known"
+    : count === 0
+      ? "no parameters"
+      : plural(count, "parameter");
+
+/** The first line of a docstring that has text on it: what a list has room for. */
+export function firstLine(text: string | null): string | null {
+  const line = text
+    ?.split("\n")
+    .map((part) => part.trim())
+    .find((part) => part !== "");
+  return line ?? null;
+}
+
+const toolsOf = (agent: AgentBlueprint, toolset: Toolset): Tool[] =>
+  agent.tools.filter((tool) => tool.toolset === toolset.id);
 
 function modelSection(agent: AgentBlueprint): SectionItem {
   const { model } = agent;
@@ -338,20 +374,41 @@ function agentSections(agent: AgentBlueprint): SectionItem[] {
           {agent.toolsets.length === 0 ? (
             <Note>This agent has no tools.</Note>
           ) : (
-            <ul className="m-0 flex list-none flex-col gap-2 p-0">
+            <ul className="m-0 flex list-none flex-col gap-3 p-0">
               {agent.toolsets.map((toolset) => {
-                const count = agent.tools.filter((tool) => tool.toolset === toolset.id).length;
+                const tools = toolsOf(agent, toolset);
                 return (
                   <li key={toolset.id} className="flex flex-col gap-1 text-ui">
                     <div className="flex items-baseline gap-2">
                       <Icon name="toolset" size={13} className="shrink-0 self-center text-faint" />
                       <span className="min-w-0 flex-1 break-words font-medium">
-                        {toolset.label}
+                        <PickLink
+                          target={{ kind: "toolset", agentId: agent.id, toolsetId: toolset.id }}
+                        >
+                          {toolset.label}
+                        </PickLink>
                       </span>
                       <span className="shrink-0 text-faint text-meta">
-                        {toolsetMeta(toolset, count)}
+                        {toolsetMeta(toolset, tools.length)}
                       </span>
                     </div>
+                    {tools.length > 0 && (
+                      <ul
+                        aria-label={`Tools of ${toolset.label}`}
+                        className="m-0 flex list-none flex-wrap gap-x-3 gap-y-1 p-0 pl-[21px]"
+                      >
+                        {tools.map((tool) => (
+                          <li key={tool.name} className="min-w-0 max-w-full">
+                            <PickLink
+                              target={{ kind: "tool", agentId: agent.id, name: tool.name }}
+                              className="break-all font-mono text-data text-tool"
+                            >
+                              {tool.name}
+                            </PickLink>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     {toolset.wrappers.length > 0 && (
                       <p className="m-0 flex flex-wrap items-center gap-1.5 text-faint text-meta">
                         wrapped by
@@ -396,7 +453,12 @@ function agentSections(agent: AgentBlueprint): SectionItem[] {
               key={`${delegate.tool_name}-${delegate.agent_id}`}
               className="flex flex-wrap items-center gap-2 text-ui"
             >
-              <code className="text-tool">{delegate.tool_name}</code>
+              <PickLink
+                target={{ kind: "tool", agentId: agent.id, name: delegate.tool_name }}
+                className="font-mono text-data text-tool"
+              >
+                {delegate.tool_name}
+              </PickLink>
               <Icon name="arrowRight" size={14} className="text-faint" label="calls" />
               <DelegateTarget delegate={delegate} />
             </li>
@@ -478,9 +540,7 @@ export function ToolInspector({ agent, tool }: { agent: AgentBlueprint; tool: To
     <>
       <InspectorHeader tone="tool" icon="tool" kind="Tool" title={tool.name} mono>
         {tool.description && <p className="m-0 text-muted text-ui">{tool.description}</p>}
-        <p className="m-0 text-muted text-ui">
-          of agent <span className="font-medium text-fg">{agent.label}</span>
-        </p>
+        <OfAgent agent={agent} toolset={toolset} />
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <ProvenanceChip source={tool.origin} />
           <SourceRef location={tool.location} />
@@ -533,7 +593,6 @@ export function ToolInspector({ agent, tool }: { agent: AgentBlueprint; tool: To
               <>
                 <Facts
                   items={known([
-                    toolset && ["Toolset", toolset.label],
                     ["Kind", tool.kind],
                     tool.is_async !== null && ["Call style", tool.is_async ? "async" : "sync"],
                     tool.takes_ctx !== null && [
@@ -564,14 +623,42 @@ export function ToolInspector({ agent, tool }: { agent: AgentBlueprint; tool: To
   );
 }
 
+/**
+ * Whose part this is: "of agent triage", or "in Agent tools of triage" for a tool. Each name
+ * picks its part, so a panel always leads back up.
+ */
+function OfAgent({ agent, toolset }: { agent: AgentBlueprint; toolset?: Toolset | undefined }) {
+  const agentLink = (
+    <PickLink target={{ kind: "agent", agentId: agent.id }} className="font-medium text-fg">
+      {agent.label}
+    </PickLink>
+  );
+  return (
+    <p className="m-0 text-muted text-ui">
+      {toolset ? (
+        <>
+          in{" "}
+          <PickLink
+            target={{ kind: "toolset", agentId: agent.id, toolsetId: toolset.id }}
+            className="font-medium text-fg"
+          >
+            {toolset.label}
+          </PickLink>{" "}
+          of {agentLink}
+        </>
+      ) : (
+        <>of agent {agentLink}</>
+      )}
+    </p>
+  );
+}
+
 /** A tool a run called that no blueprint lists: there is nothing static to show. */
 export function UnlistedToolInspector({ agent, name }: { agent: AgentBlueprint; name: string }) {
   return (
     <>
       <InspectorHeader tone="tool" icon="tool" kind="Tool" title={name} mono>
-        <p className="m-0 text-muted text-ui">
-          of agent <span className="font-medium text-fg">{agent.label}</span>
-        </p>
+        <OfAgent agent={agent} />
       </InspectorHeader>
       <div className="p-3">
         <Note>
@@ -579,6 +666,109 @@ export function UnlistedToolInspector({ agent, name }: { agent: AgentBlueprint; 
           run time. Select one of its calls in the timeline to see arguments and results.
         </Note>
       </div>
+    </>
+  );
+}
+
+// ---------- toolset ----------
+
+const TOOLSET_KINDS: Record<string, string> = {
+  agent: "The agent's own tools",
+  function: "Function toolset",
+  mcp: "MCP server",
+  dynamic: "Built for each run",
+  other: "Other toolset",
+};
+
+export function ToolsetInspector({ agent, toolset }: { agent: AgentBlueprint; toolset: Toolset }) {
+  const tools = toolsOf(agent, toolset);
+  return (
+    <>
+      <InspectorHeader tone="tool" icon="toolset" kind="Toolset" title={toolset.label}>
+        <OfAgent agent={agent} />
+        <SourceRef location={toolset.location} />
+      </InspectorHeader>
+      <Sections
+        label="Toolset"
+        items={[
+          {
+            id: "tools",
+            title: "Tools",
+            aside: tools.length > 0 ? String(tools.length) : undefined,
+            content:
+              tools.length === 0 ? (
+                <Note>
+                  {toolset.opaque
+                    ? "This toolset lists its tools only when the code runs, so they are not known from the blueprint."
+                    : "No tools are registered on this toolset."}
+                </Note>
+              ) : (
+                // -mx-2: the rows' own padding lines their text up with the rest of the panel.
+                <ul aria-label={`Tools of ${toolset.label}`} className="-mx-2 m-0 list-none p-0">
+                  {tools.map((tool) => {
+                    const summary = firstLine(tool.description);
+                    const delegates = agent.delegates.some((d) => d.tool_name === tool.name);
+                    return (
+                      <li key={tool.name}>
+                        <PickRow target={{ kind: "tool", agentId: agent.id, name: tool.name }}>
+                          <span className="flex min-w-0 items-center gap-2">
+                            <Icon
+                              name={delegates ? "agent" : "tool"}
+                              size={13}
+                              className="shrink-0 text-tool"
+                            />
+                            <code className="min-w-0 flex-1 break-all text-data text-fg">
+                              {tool.name}
+                            </code>
+                            <span className="shrink-0 text-faint text-meta">
+                              {parameterWords(parameterCount(tool.parameters_schema))}
+                            </span>
+                          </span>
+                          {summary && (
+                            <span className="truncate pl-[21px] text-meta text-muted">
+                              {summary}
+                            </span>
+                          )}
+                        </PickRow>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ),
+          },
+          {
+            id: "definition",
+            title: "Definition",
+            content: (
+              <Facts
+                items={known([
+                  ["Kind", TOOLSET_KINDS[toolset.kind] ?? toolset.kind],
+                  toolset.toolset_id !== null && [
+                    "Id",
+                    <code key="id" className="break-all">
+                      {toolset.toolset_id}
+                    </code>,
+                  ],
+                  toolset.wrappers.length > 0 && [
+                    "Wrapped by",
+                    <span key="wrappers" className="flex flex-wrap gap-1.5">
+                      {toolset.wrappers.map((wrapper) => (
+                        <Chip key={wrapper} mono>
+                          {wrapper}
+                        </Chip>
+                      ))}
+                    </span>,
+                  ],
+                  toolset.expression !== null && [
+                    "Built by",
+                    <Expression key="expression" code={toolset.expression} />,
+                  ],
+                ])}
+              />
+            ),
+          },
+        ]}
+      />
     </>
   );
 }
@@ -621,12 +811,19 @@ export function GraphInspector({
                   {graph.nodes.map((node) => (
                     <li key={node.id} className="flex flex-wrap items-center gap-2 text-ui">
                       <Chip tone="graph">{nodeKind(node.kind)}</Chip>
-                      <span className="font-medium">{graphNodeLabel(node)}</span>
+                      <PickLink
+                        target={{ kind: "graphNode", nodeId: node.id }}
+                        className="font-medium"
+                      >
+                        {graphNodeLabel(node)}
+                      </PickLink>
                       {node.note && <span className="text-muted">{node.note}</span>}
                     </li>
                   ))}
                 </ul>
-                <Note>Select a node on the canvas to see what leads into and out of it.</Note>
+                <Note>
+                  Pick a node, here or on the canvas, to see what leads into and out of it.
+                </Note>
               </>
             ),
           },
@@ -661,7 +858,9 @@ export function GraphNodeInspector({ graph, node }: { graph: GraphBlueprint; nod
         {edges.map((edge, i) => (
           <li key={i} className="flex flex-wrap items-center gap-2 text-ui">
             <Icon name="arrowRight" size={14} className="text-faint" />
-            <span className="font-medium">{labelOf(edge[end])}</span>
+            <PickLink target={{ kind: "graphNode", nodeId: edge[end] }} className="font-medium">
+              {labelOf(edge[end])}
+            </PickLink>
             {edge.label && <Chip>{edge.label}</Chip>}
           </li>
         ))}
@@ -676,7 +875,10 @@ export function GraphNodeInspector({ graph, node }: { graph: GraphBlueprint; nod
         title={graphNodeLabel(node)}
       >
         <p className="m-0 text-muted text-ui">
-          in graph <span className="font-medium text-fg">{graph.label}</span>
+          in graph{" "}
+          <PickLink target={null} className="font-medium text-fg">
+            {graph.label}
+          </PickLink>
         </p>
         <SourceRef location={node.location} />
       </InspectorHeader>

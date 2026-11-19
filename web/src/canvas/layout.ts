@@ -10,7 +10,7 @@
 import dagre from "@dagrejs/dagre";
 import type { CanvasAgent, CanvasModel } from "../data/selectors";
 import type { GraphBlueprint } from "../wire";
-import { agentNodeId, graphNodeId, outputNodeId, toolNodeId } from "./targets";
+import { agentNodeId, graphNodeId, outputNodeId, toolNodeId, toolsetNodeId } from "./targets";
 
 export const SIZE = {
   agentWidth: 240,
@@ -92,8 +92,6 @@ export type AgentLayout = { nodes: LayoutNode[]; edges: LayoutEdge[] };
 /** The id of the group that collects tools seen in a run but not listed by the blueprint. */
 export const SEEN_GROUP = "~seen";
 
-export const toolsetNodeId = (agentId: string, toolsetId: string): string =>
-  `toolset:${agentId}:${toolsetId}`;
 export const placeholderNodeId = (agentId: string, toolsetId: string): string =>
   `placeholder:${agentId}:${toolsetId}`;
 

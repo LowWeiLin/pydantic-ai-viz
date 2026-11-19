@@ -11,6 +11,7 @@ import {
   GraphInspector,
   GraphNodeInspector,
   ToolInspector,
+  ToolsetInspector,
   UnlistedToolInspector,
 } from "./BlueprintInspector";
 import { Note, type Reveal } from "./parts";
@@ -57,6 +58,10 @@ export function BlueprintInspector({
       ) : (
         <UnlistedToolInspector agent={agent} name={target.name} />
       );
+    }
+    if (agent && target.kind === "toolset") {
+      const toolset = agent.toolsets.find((t) => t.id === target.toolsetId);
+      if (toolset) return <ToolsetInspector agent={agent} toolset={toolset} />;
     }
     if (agent) return <AgentInspector agent={agent} reveal={reveal} />;
   }

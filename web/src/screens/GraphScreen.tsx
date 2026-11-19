@@ -10,6 +10,7 @@ import { useViewer } from "../data/store";
 import { GraphInspector } from "../inspector/BlueprintInspector";
 import { BlueprintInspector } from "../inspector/Inspector";
 import type { Reveal } from "../inspector/parts";
+import { InspectorPick } from "../inspector/pick";
 import { plural } from "../shell/format";
 import { NotFound, WaitingForRun } from "../shell/states";
 import { Workspace } from "../shell/Workspace";
@@ -73,11 +74,13 @@ function GraphBlueprintView({ id }: { id: string }) {
         </div>
       }
       inspector={
-        picked ? (
-          <BlueprintInspector target={picked} graph={graph} />
-        ) : (
-          <GraphInspector graph={graph} reveal={reveal} />
-        )
+        <InspectorPick.Provider value={pick}>
+          {picked ? (
+            <BlueprintInspector target={picked} graph={graph} />
+          ) : (
+            <GraphInspector graph={graph} reveal={reveal} />
+          )}
+        </InspectorPick.Provider>
       }
       openRequest={reveal}
     />

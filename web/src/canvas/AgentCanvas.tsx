@@ -15,6 +15,7 @@ import {
   agentNodeTypes,
   Legend,
   type OutputNodeData,
+  type PlaceholderNodeData,
   type ToolNodeData,
   type ToolsetNodeData,
 } from "./nodes";
@@ -51,7 +52,12 @@ function nodeData(
         node.ref === SEEN_GROUP
           ? agent.unlisted.length
           : (group?.tools.length ?? 0) + (group?.toolset.opaque ? agent.unlisted.length : 0);
-      return { toolset: group?.toolset ?? null, count } satisfies ToolsetNodeData;
+      return {
+        agentId: node.agentId,
+        toolset: group?.toolset ?? null,
+        count,
+        selected: isChosen,
+      } satisfies ToolsetNodeData;
     }
     case "tool": {
       const entry = toolEntry(agent, node.ref);
@@ -78,8 +84,15 @@ function nodeData(
         selected: isChosen,
         overlay,
       } satisfies OutputNodeData;
-    case "placeholder":
-      return {};
+    case "placeholder": {
+      const toolset = agent.toolsets.find((g) => g.toolset.id === node.ref)?.toolset;
+      if (!toolset) return null;
+      return {
+        agentId: node.agentId,
+        toolsetId: toolset.id,
+        toolsetLabel: toolset.label,
+      } satisfies PlaceholderNodeData;
+    }
   }
 }
 
@@ -107,7 +120,8 @@ export function buildAgentFlow(
       height: node.height,
       data,
       ...(node.parentId ? { parentId: node.parentId, extent: "parent" as const } : {}),
-      // Toolset boxes sit behind their rows and take no clicks.
+      // Toolset boxes sit behind their rows. Only the box's own button takes clicks, so the
+      // group of tools seen in a run, which has none, lets them through to the canvas.
       ...(node.kind === "toolset" ? { zIndex: -1, style: { pointerEvents: "none" as const } } : {}),
     });
   }

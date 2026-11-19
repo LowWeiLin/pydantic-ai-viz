@@ -31,6 +31,7 @@ import {
 } from "../data/usePlayback";
 import { BlueprintInspector, SpanInspector } from "../inspector/Inspector";
 import { rememberTab } from "../inspector/parts";
+import { InspectorPick } from "../inspector/pick";
 import { formatCount, formatDuration, plural } from "../shell/format";
 import { navigate } from "../shell/router";
 import { useShortcuts } from "../shell/shortcuts";
@@ -148,6 +149,13 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
   const select = (id: string | null): void =>
     navigate({ name: "run", traceId, spanId: id }, { replace: true });
 
+  /** A part was picked; `latest` is the newest span on it, if the run has touched it. */
+  const pickPart = (target: CanvasTarget, latest: string | null): void => {
+    if (target.kind === "output") rememberTab("agent_run", "output");
+    setPicked(latest ? null : target);
+    select(latest);
+  };
+
   const move = (direction: 1 | -1): void => {
     if (!view || view.order.length === 0) return;
     const index = spanId ? view.order.indexOf(spanId) : -1;
@@ -205,6 +213,23 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
   // The blueprint the run is drawn on can be copied as Mermaid: the picture without the run.
   const hasMermaid = subject !== null && (subject.kind === "agent" || graph?.mermaid != null);
 
+  // A part named in a blueprint panel is picked as a click on the canvas picks it: its latest
+  // span if the run has touched it, else its blueprint. Null is the run itself.
+  const pickFromPanel = (target: CanvasTarget | null): void => {
+    if (target === null) {
+      setPicked(null);
+      select(null);
+      return;
+    }
+    const model =
+      subject?.kind === "agent"
+        ? canvasModel(data, subject.id, view)
+        : subject?.kind === "graph"
+          ? graphCanvasModel(data, subject.id, view)
+          : null;
+    pickPart(target, model ? latestSpanFor(model, target) : null);
+  };
+
   return (
     <Workspace
       inspectorLabel="Span details"
@@ -261,11 +286,7 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
                 onSubject={setChosenSubject}
                 spanId={spanId}
                 picked={picked}
-                onPick={(target, latest) => {
-                  if (target.kind === "output") rememberTab("agent_run", "output");
-                  setPicked(latest ? null : target);
-                  select(latest);
-                }}
+                onPick={pickPart}
                 onClear={() => {
                   setPicked(null);
                   select(null);
@@ -304,7 +325,9 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
         inspected ? (
           <SpanInspector span={inspected} view={view} now={now} />
         ) : picked ? (
-          <BlueprintInspector target={picked} graph={graph} />
+          <InspectorPick.Provider value={pickFromPanel}>
+            <BlueprintInspector target={picked} graph={graph} />
+          </InspectorPick.Provider>
         ) : (
           <EmptyState icon="span" title="Not started yet" className="px-4 py-8">
             <p className="m-0">

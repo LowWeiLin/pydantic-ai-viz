@@ -59,7 +59,11 @@ export function InspectorHeader({
         {status}
         {meta && <span className="ml-auto font-mono text-faint text-meta">{meta}</span>}
       </div>
-      <h3 className={cx("m-0 break-all font-semibold text-title", mono && "font-mono text-em")}>
+      {/* Focusable from script only: a link to another panel moves focus here (see pick.tsx). */}
+      <h3
+        tabIndex={-1}
+        className={cx("m-0 break-all font-semibold text-title", mono && "font-mono text-em")}
+      >
         {title}
       </h3>
       {children}

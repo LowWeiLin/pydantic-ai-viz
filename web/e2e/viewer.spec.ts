@@ -1042,6 +1042,39 @@ test.describe("blueprint-only view", () => {
     await expect(page).toHaveURL(/#\/agents\/a4$/);
   });
 
+  test("a toolset lists its tools, and each one opens as it does on the canvas", async ({
+    page,
+  }) => {
+    await page.goto(blueprintOnly("#/agents/a2"));
+    const inspector = page.getByRole("complementary", { name: "Blueprint details" });
+    // The box's header picks the toolset; its middle is the tools'.
+    await canvasNode(page, "Toolset FunctionToolset 'wires', 2 tools").click({
+      position: { x: 40, y: 12 },
+    });
+    await expect(inspector.getByRole("heading", { level: 3 })).toHaveText(
+      "FunctionToolset 'wires'",
+    );
+    const list = inspector.getByRole("list", { name: "Tools of FunctionToolset 'wires'" });
+    await expect(list.getByRole("button")).toHaveText([
+      /^search_wires\s*3 parameters\s*Search the wire services\.$/,
+      /^fetch_article\s*1 parameter\s*Fetch the full text of a wire article\.$/,
+    ]);
+    await list.getByRole("button", { name: /^fetch_article/ }).click();
+    await expect(inspector.getByRole("heading", { level: 3 })).toHaveText("fetch_article");
+    await expect(inspector.getByRole("heading", { level: 3 })).toBeFocused();
+    await expect(page.locator(".react-flow .pviz-selected")).toHaveCount(1);
+    await expect(page.locator(".react-flow .pviz-selected")).toContainText("fetch_article");
+    // And back up, by keyboard: the toolset, then the agent.
+    await inspector.getByRole("button", { name: "FunctionToolset 'wires'", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(inspector.getByRole("heading", { level: 3 })).toHaveText(
+      "FunctionToolset 'wires'",
+    );
+    await expect(inspector.getByRole("heading", { level: 3 })).toBeFocused();
+    await inspector.getByRole("button", { name: "reporter", exact: true }).click();
+    await expect(inspector.getByRole("heading", { level: 3 })).toHaveText("reporter");
+  });
+
   test("the canvas carries no attribution of its own", async ({ page }) => {
     await page.goto(blueprintOnly("#/agents/a2"));
     await expect(canvasNode(page, "Agent reporter")).toBeVisible();

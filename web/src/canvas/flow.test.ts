@@ -17,6 +17,7 @@ import {
   spanTargets,
   targetNodeId,
   toolNodeId,
+  toolsetNodeId,
 } from "./targets";
 
 const LIVE = Number.POSITIVE_INFINITY;
@@ -83,6 +84,29 @@ describe("a blueprint read from source", () => {
     expect(models.a3?.expression).not.toBeNull();
     expect(models.a3 && modelIsComputed(models.a3)).toBe(false);
     expect(models.a1 && modelIsComputed(models.a1)).toBe(false);
+  });
+
+  test("a toolset is a target: its box is outlined when picked, and its placeholder picks it", () => {
+    const { model } = flowOf("a2");
+    const box = toolsetNodeId("a2", "ts2");
+    const picked = { kind: "toolset", agentId: "a2", toolsetId: "ts2" } as const;
+    expect(targetNodeId(picked)).toBe(box);
+    const { nodes } = buildAgentFlow(model, false, [picked]);
+    const data = (id: string) => nodes.find((node) => node.id === id)?.data;
+    expect(data(box)).toMatchObject({ agentId: "a2", selected: true });
+    expect(data(toolsetNodeId("a2", "ts1"))).toMatchObject({ selected: false });
+    // The opaque MCP toolset has no tools to list, only a placeholder that stands for it.
+    expect(data("placeholder:a2:ts2")).toEqual({
+      agentId: "a2",
+      toolsetId: "ts2",
+      toolsetLabel: "MCPServerStdio",
+    });
+    // No span of a run is a toolset's own, so picking one shows its blueprint, while its tools
+    // select their latest call.
+    const run = agentFlow(triageEnd).model;
+    const toolset = run.agents[0]?.toolsets[0]?.toolset.id ?? "";
+    expect(latestSpanFor(run, { kind: "toolset", agentId: "a1", toolsetId: toolset })).toBeNull();
+    expect(latestSpanFor(run, { kind: "tool", agentId: "a1", name: "get_order" })).not.toBeNull();
   });
 });
 

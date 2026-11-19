@@ -180,6 +180,35 @@ const SCREENS: { name: string; open: (page: Page) => Promise<void> }[] = [
     },
   },
   {
+    name: "blueprint-only view: a toolset and the tools it lists",
+    open: async (page) => {
+      await page.goto(blueprintOnly("#/agents/a2"));
+      await canvasNode(page, "Toolset FunctionToolset 'wires', 2 tools").click({
+        position: { x: 40, y: 12 },
+      });
+      await expect(
+        page.getByRole("list", { name: "Tools of FunctionToolset 'wires'" }),
+      ).toBeVisible();
+    },
+  },
+  {
+    name: "blueprint-only view: a toolset that lists its tools only at run time",
+    open: async (page) => {
+      await page.goto(blueprintOnly("#/agents/a2"));
+      await canvasNode(page, "Toolset MCPServerStdio: its tools are resolved at run time").click();
+      await expect(page.getByText(/lists its tools only when the code runs/)).toBeVisible();
+    },
+  },
+  {
+    name: "run view, a toolset picked on the canvas",
+    open: async (page) => {
+      await openRun(page, "sample", TRIAGE);
+      await skipToEnd(page);
+      await canvasNode(page, "Toolset Agent tools, 3 tools").click({ position: { x: 40, y: 12 } });
+      await expect(page.getByRole("list", { name: "Tools of Agent tools" })).toBeVisible();
+    },
+  },
+  {
     name: "blueprint-only view: a graph, with the session notices open",
     open: async (page) => {
       await page.goto(blueprintOnly("#/graphs/g1"));

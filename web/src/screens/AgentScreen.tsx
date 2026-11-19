@@ -11,6 +11,7 @@ import { canvasModel } from "../data/selectors";
 import { useViewer } from "../data/store";
 import { BlueprintInspector } from "../inspector/Inspector";
 import type { Reveal } from "../inspector/parts";
+import { InspectorPick } from "../inspector/pick";
 import { NotFound, WaitingForRun } from "../shell/states";
 import { Workspace } from "../shell/Workspace";
 import { CopyButton } from "../ui/CopyButton";
@@ -69,7 +70,11 @@ function AgentBlueprintView({ id }: { id: string }) {
           </div>
         </div>
       }
-      inspector={<BlueprintInspector target={target} reveal={reveal} />}
+      inspector={
+        <InspectorPick.Provider value={pick}>
+          <BlueprintInspector target={target} reveal={reveal} />
+        </InspectorPick.Provider>
+      }
       openRequest={reveal}
     />
   );

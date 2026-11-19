@@ -226,21 +226,44 @@ export function AgentNode({ data }: NodeProps<Node<AgentNodeData, "agent">>) {
   );
 }
 
-export type ToolsetNodeData = { toolset: Toolset | null; count: number };
+export type ToolsetNodeData = {
+  agentId: string;
+  /** Null for the group of tools a run used that the blueprint does not list. */
+  toolset: Toolset | null;
+  count: number;
+  selected: boolean;
+};
 
-/** The box around a toolset's tools, with the toolset label as its header. Not interactive. */
+const toolsetCount = (toolset: Toolset | null, count: number): string =>
+  toolset?.opaque && count === 0 ? "dynamic" : plural(count, "tool");
+
+/**
+ * The box around a toolset's tools, with the toolset label as its header. The box picks the
+ * toolset: its tools sit on top of it and are picked on their own. The group of tools seen in a
+ * run is not a toolset and takes no clicks.
+ */
 export function ToolsetHeader({ data }: NodeProps<Node<ToolsetNodeData, "toolset">>) {
   const { toolset } = data;
+  const count = toolsetCount(toolset, data.count);
   return (
-    <div className="size-full rounded-card border border-line bg-surface-2/70">
-      <div className="flex h-[30px] items-center gap-1.5 px-2.5 text-meta">
+    <div
+      className={cx(
+        "relative size-full rounded-card border border-line bg-surface-2/70",
+        data.selected && "pviz-selected",
+      )}
+    >
+      {toolset && (
+        <Cover
+          label={`Toolset ${toolset.label}, ${count}`}
+          target={{ kind: "toolset", agentId: data.agentId, toolsetId: toolset.id }}
+        />
+      )}
+      <div className="pointer-events-none relative flex h-[30px] items-center gap-1.5 px-2.5 text-meta">
         <Icon name="toolset" size={12} className="text-faint" />
         <span className="min-w-0 flex-1 truncate font-medium text-muted">
           {toolset ? toolset.label : "Seen in this run"}
         </span>
-        <span className="shrink-0 text-faint">
-          {toolset?.opaque && data.count === 0 ? "dynamic" : plural(data.count, "tool")}
-        </span>
+        <span className="shrink-0 text-faint">{count}</span>
       </div>
     </div>
   );
@@ -290,13 +313,21 @@ export function ToolNode({ data }: NodeProps<Node<ToolNodeData, "tool">>) {
   );
 }
 
-/** Stands in for the tools of a toolset that can only list them during a run. */
-export function PlaceholderNode() {
+export type PlaceholderNodeData = { agentId: string; toolsetId: string; toolsetLabel: string };
+
+/** Stands in for the tools of a toolset that can only list them during a run. Picks the toolset. */
+export function PlaceholderNode({ data }: NodeProps<Node<PlaceholderNodeData, "placeholder">>) {
   return (
-    <div className="flex size-full items-center gap-2 rounded-control border border-line-strong border-dashed px-2.5 text-data text-muted">
+    <div className="relative size-full rounded-control border border-line-strong border-dashed">
       <Ports />
-      <Icon name="idle" size={14} className="text-faint" />
-      resolved at run time
+      <Cover
+        label={`Toolset ${data.toolsetLabel}: its tools are resolved at run time`}
+        target={{ kind: "toolset", agentId: data.agentId, toolsetId: data.toolsetId }}
+      />
+      <div className="pointer-events-none relative flex h-full items-center gap-2 px-2.5 text-data text-muted">
+        <Icon name="idle" size={14} className="text-faint" />
+        resolved at run time
+      </div>
     </div>
   );
 }
