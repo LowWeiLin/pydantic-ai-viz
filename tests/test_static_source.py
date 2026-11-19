@@ -693,13 +693,27 @@ def test_an_f_string_whose_placeholders_are_literals_is_folded() -> None:
         "9" * 30,
         "lambda: 1",
         "'%s' % 'x'",
-        "'{}'.format('x')",
+        "'{}'.format(name)",
+        "'{:>5}'.format(3)",  # a format spec is not applied
+        "'{0.real}'.format(1)",  # nor an attribute of a value read
+        "'{} {1}'.format(1, 2)",  # automatic and manual numbering together: an error when it runs
+        "'{}'.format()",
+        "'{x'.format(x=1)",
+        "'{x}'.format(**values)",
         "unbound_name",
     ],
 )
 def test_anything_that_needs_evaluating_is_not_a_literal(expression: str) -> None:
     with pytest.raises(NotLiteral):
         value(f"from textwrap import dedent\nimport os\nvalue = {expression}\n")
+
+
+def test_str_format_with_literal_values_is_read() -> None:
+    source = """
+        GREETING = "Hi {who}, {0} and {1}{0}"
+        value = [GREETING.format("a", "b", who="you"), "{!r}-{}".format("x", 2), "{{braces}} {}".format(0.5)]
+    """
+    assert value(source) == ["Hi you, a and ba", "'x'-2", "{braces} 0.5"]
 
 
 def test_a_name_assigned_more_than_once_is_not_a_literal() -> None:

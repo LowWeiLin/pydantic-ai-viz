@@ -205,6 +205,8 @@ def test_computed_values_are_reported_as_source_text_never_guessed() -> None:
         "the model is set by `get_model()`, so it is only known when the code runs",
         'one of the instructions is the expression `dedent( """ You are part of the support team. Stay polite. """ )'
         ".strip()`; its text is only known when the code runs",
+        "one of the instructions is the template `You work for the {TEAM} team, tier "
+        "{os.environ.get('TIER', 'basic')!r}.`; what is in braces is filled in when the code runs",
         'one of the instructions is the expression `PROMPTS["support"]`; its text is only known when the code runs',
         "one of the instructions is `house_style` (my_company.prompts.house_style), which is defined outside the "
         "analysed source; whether it is text or a function is not known",

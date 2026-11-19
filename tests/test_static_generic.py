@@ -560,3 +560,35 @@ def test_a_computed_value_reads_the_same_whether_it_is_written_inline_or_through
         'the description is computed by `load("name")`, so it is only known when the code runs',
         'one of the instructions is the expression `load("support")`; its text is only known when the code runs',
     ]
+
+
+def test_str_format_is_read_like_any_other_value(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from datetime import date
+        from pydantic_ai import Agent
+
+        PROMPT = "You are {role}."
+
+        pirate = Agent("test", instructions=PROMPT.format(role="a pirate"), name="{}-{n}".format("crew", n=1))
+        numbered = Agent("test", instructions="Hi {0} and {x!r}".format("a", x="b"))
+        today = Agent("test", instructions=PROMPT.format(role=date.today()))
+        written = Agent("test", instructions=f"Today is {date.today()}.")
+        """,
+    )
+    rows = {b.label: [(i.dynamic, i.text) for i in b.instructions] for b in found.agents}
+    assert rows == {
+        "crew-1": [(False, "You are a pirate.")],
+        "numbered": [(False, "Hi a and 'b'")],
+        "today": [(True, "You are {role}.")],
+        "written": [(True, "Today is {date.today()}.")],
+    }
+    assert agent(found, "crew-1").warnings == agent(found, "numbered").warnings == []
+    assert agent(found, "today").warnings == [
+        "one of the instructions is the template `You are {role}.`; what is in braces is filled in when the code runs"
+    ]
+    assert agent(found, "written").warnings == [
+        "one of the instructions is the template `Today is {date.today()}.`; what is in braces is filled in when "
+        "the code runs"
+    ]

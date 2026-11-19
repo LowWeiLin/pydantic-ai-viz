@@ -35,7 +35,7 @@ from ._docstring import describe
 from ._resolve import Definition, Expression, External, Project, Resolved, Resolver, receiver_class
 from ._schema import NOT_FROM_THE_MODEL, SchemaBuilder, typing_construct
 from ._source import CallSite, Module, Mutation, Scope, clip_expression, unwrap
-from ._values import NotLiteral, fstring_template, literal, string
+from ._values import NotLiteral, format_template, fstring_template, literal, string
 
 ToolKind: TypeAlias = Literal["function", "output", "external", "unapproved"]
 PromptKind: TypeAlias = Literal["instructions", "system_prompt"]
@@ -1346,24 +1346,27 @@ class _AgentBuilder:
                 expression=None,
                 location=location(target.module, target.node),
             )
-        if isinstance(target, Expression) and isinstance(target.node, ast.JoinedStr):
-            template = fstring_template(target.node)
-            return Instruction(kind=kind, dynamic=True, text=template, function=None, expression=None, location=where)
-        if isinstance(target, Expression) and isinstance(target.node, ast.Call):
-            # ``PROMPT.format(date=today())``: the text with its placeholders still in it, as for an f-string.
-            method = target.node.func
-            if isinstance(method, ast.Attribute) and method.attr == "format":
-                template = string(self.resolver, method.value, target.scope, target.line)
-                if template is not None:
-                    return Instruction(
-                        kind=kind, dynamic=True, text=template, function=None, expression=None, location=where
-                    )
+        what = "instructions" if kind == "instructions" else "system prompts"
+        if isinstance(target, Expression):
+            # ``f"Today is {today()}."`` or ``PROMPT.format(date=today())``: the text, placeholders left in.
+            template = (
+                fstring_template(target.node)
+                if isinstance(target.node, ast.JoinedStr)
+                else format_template(self.resolver, target.node, target.scope, target.line)
+            )
+            if template is not None:
+                self.warn(
+                    f"one of the {what} is the template `{brief(template)}`; what is in braces is filled in "
+                    "when the code runs"
+                )
+                return Instruction(
+                    kind=kind, dynamic=True, text=template, function=None, expression=None, location=where
+                )
         # The source as written, line breaks and all: a prompt built by a call is still readable in it.
         shown = self._as_assigned_to(entry)
         text = shown.module.raw_text(shown.node)
         if len(text) > _MAX_VERBATIM_CHARS:
             text = text[: _MAX_VERBATIM_CHARS - 3] + "..."
-        what = "instructions" if kind == "instructions" else "system prompts"
         if isinstance(target, External):
             self.warn(
                 f"one of the {what} is `{brief(text)}` ({target.name}), which is defined outside the analysed "

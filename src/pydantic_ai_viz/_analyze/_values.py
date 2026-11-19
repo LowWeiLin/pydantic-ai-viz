@@ -1,8 +1,8 @@
 """Reading literal values out of expressions, without evaluating anything.
 
 A value is read only when the source spells it out: constants, containers of
-constants, string concatenation, f-strings whose every placeholder is itself
-such a value, the ``strip`` methods of ``str``, ``a if condition else b`` whose
+constants, string concatenation, f-strings and ``"...".format(...)`` whose every
+placeholder is itself such a value, the ``strip`` methods of ``str``, ``a if condition else b`` whose
 condition is such a value, and a name that is assigned
 such a value once and whose value is not changed in place afterwards. A call of
 any function, of the standard library or not, is not evaluated. Everything else
@@ -16,6 +16,7 @@ deeper or larger than a prompt or a settings dict could plausibly be.
 from __future__ import annotations
 
 import ast
+import string as _string
 from collections.abc import Callable
 from typing import Any
 
@@ -114,6 +115,8 @@ def _read(resolver: Resolver, expression: Expression, depth: int, budget: _Budge
             return child(inside)
         if isinstance(node.func, ast.Attribute) and node.func.attr in _STR_METHODS:
             return _string_method(resolver, expression, node, depth, budget)
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "format":
+            return _format(node, child)
         # What a function or method of the analysed files returns, when it has one ``return``.
         return _followed(resolver, expression, depth, budget)
     raise NotLiteral
@@ -194,7 +197,56 @@ def _string_method(resolver: Resolver, expression: Expression, node: ast.Call, d
     raise NotLiteral
 
 
+def _format(node: ast.Call, read: Callable[[ast.expr], Any]) -> str:
+    """``"{} and {name!r}".format(a, name=b)``, the method of the ``str`` a literal is, with literal scalars."""
+    function = node.func
+    assert isinstance(function, ast.Attribute)
+    template = read(function.value)
+    if not isinstance(template, str) or any(isinstance(item, ast.Starred) for item in node.args):
+        raise NotLiteral
+    if any(keyword.arg is None for keyword in node.keywords):
+        raise NotLiteral  # ``**values``
+    positional = [read(item) for item in node.args]
+    named = {keyword.arg: read(keyword.value) for keyword in node.keywords if keyword.arg is not None}
+    parts: list[str] = []
+    numbering: set[str] = set()
+    automatic = 0
+    try:
+        fields = list(_string.Formatter().parse(template))
+    except ValueError:
+        raise NotLiteral from None  # unbalanced braces: what the running code raises on
+    for text, field, spec, conversion in fields:
+        parts.append(text)
+        if field is None:
+            continue
+        if spec:
+            raise NotLiteral  # a format spec is applied by the running code, as in an f-string
+        value: Any
+        if field == "" or field.isdigit():
+            numbering.add("automatic" if field == "" else "manual")
+            index = automatic if field == "" else int(field)
+            automatic += field == ""
+            if len(numbering) > 1 or index >= len(positional):
+                raise NotLiteral  # what the running code raises on
+            value = positional[index]
+        elif field.isidentifier() and field in named:
+            value = named[field]
+        else:
+            raise NotLiteral  # ``{0.name}``, ``{items[0]}``, or a name the call does not give
+        if not isinstance(value, str | int | float):
+            raise NotLiteral
+        parts.append(repr(value) if conversion == "r" else ascii(value) if conversion == "a" else str(value))
+    return _bounded("".join(parts))
+
+
 # --------------------------------------------------------------- templates
+
+
+def format_template(resolver: Resolver, node: ast.expr, scope: Scope, line: int) -> str | None:
+    """``"You are {role}.".format(...)`` as a template: the string it is called on, braces and all."""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format"):
+        return None
+    return string(resolver, node.func.value, scope, line)
 
 
 def fstring_template(node: ast.JoinedStr) -> str:

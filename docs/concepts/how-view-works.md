@@ -56,7 +56,7 @@ The analyser knows two kinds of things, and keeps them apart.
 | Imports and re-exports between your files | `from app.config import MODEL`, a name re-exported by a package's `__init__.py`, `from .tools import *` |
 | Attributes of modules, classes and instances | `config.MODEL`, `Settings.model`, `self.config.model` where `self.config = Config()` |
 | Return values of your own functions and methods | `def default_model(): return "openai:gpt-5.2"` |
-| Strings built from known parts | `"openai:" + NAME`, `f"{PROVIDER}:{NAME}"` |
+| Strings built from known parts | `"openai:" + NAME`, `f"{PROVIDER}:{NAME}"`, `PROMPT.format(role="a pirate")` |
 | Items of containers written in the source | `MODELS["fast"]`, `TIERS[1]` |
 | Arguments passed as `**kwargs` from a written-out dict | `Agent(MODEL, **COMMON)` with `COMMON = {"retries": 2}` |
 | Calls of a function that makes an agent, one agent per call, each with its own arguments | `researcher = make("researcher")` and `writer = make("writer")` with `def make(name): return Agent("openai:gpt-5.2", name=name)` |
@@ -105,7 +105,7 @@ Every such value is reported in the same three ways, with the same wording whate
 
 Other things that stay open:
 
-- **An instruction function** (`@agent.instructions`, or a function passed in `instructions=[...]`) is listed by name and marked dynamic. An f-string with unknown parts is shown as its template, `{today}` left in place.
+- **An instruction function** (`@agent.instructions`, or a function passed in `instructions=[...]`) is listed by name and marked dynamic. An f-string or a `.format(...)` call with unknown parts is shown as its template, `{today}` left in place, with a warning.
 - **Pydantic AI's defaults.** A setting the source does not mention stays empty. The analyser does not fill in what the installed Pydantic AI would use, because the code may be written for another version.
 - **Tools of MCP servers and dynamic toolsets.** They exist only once the server or the code is running. The toolset is one placeholder node, and its tools appear once a run uses them.
 - **Types from installed packages.** An output type defined in another package has no schema; its name is shown.

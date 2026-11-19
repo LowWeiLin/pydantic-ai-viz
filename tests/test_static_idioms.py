@@ -179,8 +179,12 @@ def test_a_prompt_filled_in_with_format_is_shown_as_its_template(tmp_path: Path)
         ("system_prompt", True, None, "load_prompt().format(date=today())"),
     ]
     assert found.warnings == [
+        "one of the instructions is the template `You are a researcher. Today is {date}.`; what is in braces is "
+        "filled in when the code runs",
+        "one of the system prompts is the template `Call the user {name}.`; what is in braces is filled in when "
+        "the code runs",
         "one of the system prompts is the expression `load_prompt().format(date=today())`; its text is only "
-        "known when the code runs"
+        "known when the code runs",
     ]
 
 
