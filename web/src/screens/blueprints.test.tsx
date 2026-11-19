@@ -201,18 +201,18 @@ describe("SourceRef", () => {
     const location = { file: "pydantic_ai_examples/medical_agent_delegation.py", line: 161 };
     const { container } = render(<SourceRef location={location} />);
     const code = screen.getByTitle("pydantic_ai_examples/medical_agent_delegation.py:161");
-    const parts = [...code.querySelectorAll(":scope > span > span")] as HTMLElement[];
-    expect(parts.map((part) => part.textContent)).toEqual([
+    const [folder, tail] = [...(code.firstElementChild?.children ?? [])] as HTMLElement[];
+    const [name, line] = [...(tail?.children ?? [])] as HTMLElement[];
+    expect([folder, name, line].map((part) => part?.textContent)).toEqual([
       "pydantic_ai_examples/",
       "medical_agent_delegation.py",
       ":161",
     ]);
-    const [folder, name, line] = parts;
-    // The folder's shrink factor dwarfs the name's, so the name keeps its width until the
-    // folder has none left; the line does not shrink at all.
-    expect(folder).toHaveClass("min-w-0", "shrink-[1000]", "truncate");
+    // The folder takes what room the name and line leave it, down to none. They do not
+    // shrink as long as they fit: only a name too long on its own is cut, never the line.
+    expect(folder).toHaveClass("min-w-0", "truncate");
+    expect(tail).toHaveClass("shrink-0", "max-w-full", "min-w-0");
     expect(name).toHaveClass("min-w-0", "truncate");
-    expect(name).not.toHaveClass("shrink-[1000]");
     expect(line).toHaveClass("shrink-0");
     expect(code).toHaveTextContent(/^pydantic_ai_examples\/medical_agent_delegation\.py:161$/);
     expect(container).toHaveTextContent("Defined at");
@@ -226,9 +226,12 @@ describe("SourceRef", () => {
   test("a file at the top of the analysed tree has no folder part", () => {
     render(<SourceRef location={{ file: "01_tools.py", line: 22 }} prefix="" />);
     const code = screen.getByTitle("01_tools.py:22");
-    expect(
-      [...code.querySelectorAll(":scope > span > span")].map((part) => part.textContent),
-    ).toEqual(["01_tools.py", ":22"]);
+    const parts = [...(code.firstElementChild?.children ?? [])];
+    expect(parts).toHaveLength(1);
+    expect([...(parts[0]?.children ?? [])].map((part) => part.textContent)).toEqual([
+      "01_tools.py",
+      ":22",
+    ]);
     expect(screen.queryByText("Defined at")).toBeNull();
   });
 });

@@ -1100,53 +1100,60 @@ test.describe("blueprint-only view", () => {
     );
     const inspector = page.getByRole("complementary", { name: "Blueprint details" });
     const panel = inspector.getByRole("region", { name: "Agent blueprint" });
-    const locations = inspector.locator("code[title]:has(> span)");
-    await expect(locations.first()).toBeVisible();
+    await expect(inspector.locator("code[title]").first()).toBeVisible();
     // Nothing in the panel is pushed past its right edge...
     expect(await panel.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
-    // ...the line is never cut, and the file name keeps its room while the folder has any.
-    const shown = await locations.evaluateAll((codes) =>
-      codes.map((code) => ({
-        title: code.getAttribute("title"),
-        parts: [...code.querySelectorAll(":scope > span > span")].map((part) => {
-          const box = part.getBoundingClientRect();
+
+    // ...and every path, in the panel and in the sidebar, gives way from its folder first. How
+    // much of a part is cut is measured on its text, which scrollWidth rounds: an ellipsis
+    // shows for any overflow, even a fraction of a pixel.
+    const paths = await page.evaluate(() =>
+      [...document.querySelectorAll("aside code[title] > span, nav h3[title] > span")]
+        .filter((root) => root.children.length > 0)
+        .map((root) => {
+          const measure = (part: Element | null | undefined) => {
+            if (!part) return null;
+            const range = document.createRange();
+            range.selectNodeContents(part);
+            const box = part.getBoundingClientRect();
+            const edge = root.closest("aside, nav")?.getBoundingClientRect().right ?? 0;
+            return {
+              text: part.textContent ?? "",
+              width: box.width,
+              cut: range.getBoundingClientRect().width - box.width,
+              inside: box.right <= edge + 0.5,
+            };
+          };
+          const tail = root.lastElementChild;
           return {
-            text: part.textContent,
-            width: box.width,
-            cut: part.scrollWidth - part.clientWidth,
-            inside: box.right <= (code.closest("aside")?.getBoundingClientRect().right ?? 0),
+            title: root.parentElement?.getAttribute("title") ?? "",
+            folder: root.children.length > 1 ? measure(root.firstElementChild) : null,
+            name: measure(tail?.children[0]),
+            line: measure(tail?.children[1]),
           };
         }),
-      })),
     );
-    expect(shown.length).toBeGreaterThan(2);
-    for (const { title, parts } of shown) {
-      const [folder, name, line] = parts;
-      expect(title).toBe(parts.map((part) => part.text).join(""));
-      expect(line).toMatchObject({ cut: 0, inside: true });
+    expect(paths.length).toBeGreaterThan(6);
+    for (const { title, folder, name, line } of paths) {
+      expect(title).toBe(`${folder?.text ?? ""}${name?.text}${line?.text ?? ""}`);
+      // A name is cut only once no folder is left to give way.
+      if ((folder?.width ?? 0) > 0) expect(name?.cut).toBeLessThan(0.01);
       expect(name?.width).toBeGreaterThan(48);
-      // The name gives way only once less than a character of the folder is left.
-      if ((name?.cut ?? 0) > 1) expect(folder?.width).toBeLessThan(7);
+      // The line is never cut.
+      if (line) expect(line.inside).toBe(true);
+      if (line) expect(line.cut).toBeLessThan(0.01);
     }
-    // In the header the file name is long enough to be cut itself; the line still shows.
-    const header = shown.find(({ title }) =>
-      title?.endsWith("reporters_and_the_overnight_wire_desk.py:31"),
+    // The long name is cut in the panel's header and in the sidebar, with its line kept.
+    const long = paths.filter(
+      ({ name }) => name?.text === "reporters_and_the_overnight_wire_desk.py",
     );
-    expect(header?.parts[1]?.cut).toBeGreaterThan(1);
-    expect(header?.parts[2]).toMatchObject({ text: ":31", cut: 0, inside: true });
-
-    // The sidebar names the same file within its column, cut with an ellipsis, not clipped.
-    const heading = page
-      .getByRole("navigation", { name: /^Blueprints/ })
-      .getByRole("heading", { level: 3 })
-      .filter({ hasText: "overnight" });
-    expect(await heading.evaluate((h) => h.scrollWidth - h.clientWidth)).toBe(0);
-    expect(
-      await heading.evaluate((h) => {
-        const name = h.querySelector(":scope > span > span:last-child");
-        return name && getComputedStyle(name).textOverflow;
-      }),
-    ).toBe("ellipsis");
+    expect(long.map(({ line }) => line?.text ?? "heading")).toEqual(
+      expect.arrayContaining([":31", "heading"]),
+    );
+    for (const path of long) {
+      expect(path.name?.cut).toBeGreaterThan(1);
+      expect(path.folder?.width).toBe(0);
+    }
   });
 
   test("a file can be dropped on a blueprint-only view, and replaces it", async ({ page }) => {
