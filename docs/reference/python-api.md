@@ -114,12 +114,14 @@ pviz.export_html(found, "blueprint.html")
 
 | Parameter | Meaning |
 |---|---|
-| `*targets` | Paths of `.py` files. `"path/to/file.py:name"` selects the agent or graph assigned to `name` at the top level of that file, together with the agents it delegates to. Files given together are read together, so imports between them are followed. |
+| `*targets` | What to read, each one of: the path of a `.py` file; the path of a directory, whose `.py` files are all read, however deep; a module name such as `"my_app.agents"`, found on disk without importing anything; or a GitHub repository, as `"https://github.com/owner/repo[/tree/REF[/SUBDIR]]"` or `"gh:owner/repo[@REF][/SUBDIR]"`, fetched with git and only read. `"path/to/file.py:name"` and `"my_app.agents:name"` select the agent or graph assigned to `name` at the top level of that file, together with the agents it delegates to. The [command line reference](cli.md#targets) describes each form. |
 | `limits` | A [`Limits`](#limits); the defaults suit ordinary projects. |
 
 What the source spells out is reported as a value. What it computes at run time, such as `Agent(get_model())`, is reported as the source text that computes it and named in the blueprint's `warnings`; nothing is guessed. A file that cannot be read or parsed is skipped and named in `Analysis.notices`.
 
-**Raises** `ValueError` if a target is not an existing `.py` file, or selects a name that no agent or graph is assigned to.
+Imports between the project's own files are followed, so a tool, an output model, a toolset or a delegate defined in another file is described from that file. A file that is read only because another one imports it adds no blueprints of its own, except for the agents and graphs that a target's file knows by name and the agents those delegate to. Installed packages are never opened.
+
+**Raises** `ValueError` if a target does not exist, cannot be fetched, or selects a name that no agent or graph is assigned to.
 
 The result can be passed to [`export_html`](#export_html), [`serve`](#serve), [`record`](#record) and `Session.register` like any other target. Runs of an agent are then drawn on the blueprint read from source that carries its name.
 
@@ -134,6 +136,7 @@ class Analysis:
     graphs: list[GraphBlueprint]
     notices: list[str]
     files: list[str]
+    title: str | None
 
     @property
     def blueprints(self) -> list[AgentBlueprint | GraphBlueprint]: ...
@@ -143,8 +146,9 @@ class Analysis:
 |---|---|
 | `agents` | One blueprint per `Agent(...)` in the source, with ids `a1`, `a2`, ... in the order they appear. `delegates` refer to these ids. |
 | `graphs` | One blueprint per `GraphBuilder(...)` or `Graph(nodes=[...])`, with ids `g1`, `g2`, ... |
-| `notices` | Messages about the analysis as a whole, such as a file that was skipped because it is not valid Python. |
-| `files` | The files that were read, relative to their common directory. |
+| `notices` | Messages about the analysis as a whole: a file that was skipped because it is not valid Python, the commit a GitHub repository was read at, or how many tools were found that belong to no agent the source shows. |
+| `files` | The files that were read, relative to their common directory (for a GitHub repository, to the top of the repository): the targets' own files first, then the files read because those import them. |
+| `title` | A short name for what was analysed: the file, directory or module, or `owner/repo@commit`. `None` when there were several targets. |
 | `blueprints` | The agents, then the graphs. |
 
 Every blueprint from `analyze` has `source == "code"` and a `location` (file and line).
@@ -157,9 +161,10 @@ class Limits:
     max_file_bytes: int = 2_000_000
     max_files: int = 2_000
     max_seconds: float = 30.0
+    max_fetch_seconds: float = 300.0
 ```
 
-Bounds that keep the analysis of unknown code quick and finite. A file larger than `max_file_bytes` is skipped, no more than `max_files` files are read, and the analysis stops once `max_seconds` have passed. Each of these leaves a notice.
+Bounds that keep the analysis of unknown code quick and finite. A file larger than `max_file_bytes` is skipped, no more than `max_files` files are read, and the analysis stops once `max_seconds` have passed. Each of these leaves a notice. Fetching a GitHub repository is timed separately: it is given up, with a `ValueError`, after `max_fetch_seconds`.
 
 ## blueprint { #blueprint }
 

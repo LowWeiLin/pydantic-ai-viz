@@ -68,8 +68,10 @@ Draw blueprints by **reading source files**. The code is parsed, never imported 
 
 ```bash
 pydantic-ai-viz view agents.py
+pydantic-ai-viz view src/my_app
 pydantic-ai-viz view my_app/agents.py:support_agent
 pydantic-ai-viz view my_app/agents.py my_app/pipeline.py --export blueprint.html
+pydantic-ai-viz view gh:pydantic/pydantic-ai@v2.70.0/examples
 ```
 
 `view` reports on stderr what it read, for example `Read 1 file without running any code: 2 agents, 0 graphs`, followed by the number of warnings when the source left something open. A file that had to be skipped (not valid Python, unreadable, too large) is named there too and in the viewer.
@@ -80,10 +82,16 @@ pydantic-ai-viz view my_app/agents.py my_app/pipeline.py --export blueprint.html
 |---|---|
 | `path/to/file.py` | Every agent and graph in that file, including those made inside functions and classes |
 | `path/to/file.py:name` | The agent or graph assigned to `name` at the top level of that file, and the agents it delegates to |
+| `path/to/directory` | Every agent and graph in every `.py` file below that directory, however deep |
+| `pkg.module`, `pkg.module:name` | The file of that module, or every file of that package. It is looked for on disk, below the working directory, its `src` directory and the entries of `sys.path`; nothing is imported to find it |
+| `https://github.com/owner/repo`, optionally followed by `/tree/REF/SUBDIR` or `/blob/REF/FILE` | That repository, or the directory or file of it that the URL names, at the branch, tag or commit `REF` (the default branch when there is none) |
+| `gh:owner/repo[@REF][/SUBDIR]` | The same, in short |
 
-- Several files given together are read together: an agent in one file that delegates to an agent imported from another is linked to it.
+- Imports between the project's own files are followed: an agent in one file that uses a tool, an output model or a toolset from another, or delegates to an agent imported from another, is linked to it. Installed packages are never opened. A file that is read only because another one imports it adds no blueprints of its own, except for what a target's file knows by name.
+- In a directory, virtual environments, `node_modules`, `site-packages`, `__pycache__`, `build`, `dist` and hidden directories are passed over, and links to directories are not followed. At most 2,000 files are read; when there are more, a note says so.
+- A GitHub repository is fetched with `git`, which must be installed: one commit, without history, and of it only the `.py` files. It is kept in a cache directory (`PYDANTIC_AI_VIZ_CACHE_DIR`, or the cache directory of your user account), so a commit is fetched once. A commit is named by its full 40-character SHA. The fetched code is only read; `--import` is refused for it.
 - An agent without a `name` is labelled with the variable it is assigned to.
-- A target that cannot be read is a usage error (exit code 2): a file that does not exist, a `name` no agent or graph is assigned to, or a module name without `--import`. So is source in which no agent or graph is found.
+- A target that cannot be read is a usage error (exit code 2): a file, directory or module that does not exist, a repository or `REF` that cannot be fetched, or a `name` no agent or graph is assigned to. So is source in which no agent or graph is found.
 
 ### Importing instead: `--import` { #view-import }
 
