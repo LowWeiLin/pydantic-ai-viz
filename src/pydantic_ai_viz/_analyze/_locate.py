@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import stat
 import sys
 import tempfile
 import time
@@ -386,4 +387,12 @@ def is_link(entry: os.DirEntry[str]) -> bool:
     if entry.is_symlink():
         return True
     is_junction = getattr(entry, "is_junction", None)
-    return bool(is_junction()) if is_junction is not None else False
+    if is_junction is not None:
+        return bool(is_junction())
+    if sys.platform != "win32":
+        return False
+    # Python 3.11 has no `DirEntry.is_junction`: a junction is the reparse point of a mount point.
+    try:
+        return os.lstat(entry.path).st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+    except OSError:
+        return True  # cannot be checked, so not followed
