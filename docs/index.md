@@ -86,3 +86,7 @@ Recordings and exports
 ## Requirements
 
 Python 3.11 or newer and Pydantic AI 2.60 or newer (`pydantic-ai-slim>=2.60,<3`). See [Compatibility](reference/compatibility.md) for exactly what was tested.
+
+## Acknowledgements
+
+The canvas is drawn with [React Flow](https://reactflow.dev) and laid out with [dagre](https://github.com/dagrejs/dagre). The viewer is also built on [React](https://react.dev), [Radix UI](https://www.radix-ui.com), [Zustand](https://github.com/pmndrs/zustand) and [Tailwind CSS](https://tailwindcss.com). The licence of every library bundled into the viewer is at the top of the viewer's HTML file, and of every export made from it.

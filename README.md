@@ -101,6 +101,10 @@ A few blueprint fields are read from private Pydantic AI attributes. If a Pydant
 
 Bug reports and pull requests are welcome. [CONTRIBUTING.md](https://github.com/LowWeiLin/pydantic-ai-viz/blob/main/CONTRIBUTING.md) covers the development setup and the checks to run. Report security issues privately as described in [SECURITY.md](https://github.com/LowWeiLin/pydantic-ai-viz/blob/main/SECURITY.md).
 
+## Acknowledgements
+
+The canvas is drawn with [React Flow](https://reactflow.dev) and laid out with [dagre](https://github.com/dagrejs/dagre). The viewer is also built on [React](https://react.dev), [Radix UI](https://www.radix-ui.com), [Zustand](https://github.com/pmndrs/zustand) and [Tailwind CSS](https://tailwindcss.com). The licence of every library bundled into the viewer is at the top of the viewer's HTML file, and of every export made from it.
+
 ## Licence
 
 [MIT](https://github.com/LowWeiLin/pydantic-ai-viz/blob/main/LICENSE).
