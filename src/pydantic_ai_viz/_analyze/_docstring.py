@@ -85,13 +85,17 @@ def _kind(section: Any) -> str:
     return str(getattr(kind, "value", kind))
 
 
-def describe(doc: str | None, *, has_return_annotation: bool) -> tuple[str | None, dict[str, str]]:
+def describe(
+    doc: str | None, *, has_return_annotation: bool, style: Style | None = None
+) -> tuple[str | None, dict[str, str]]:
     """The description of a function and of its parameters, from its docstring.
 
     Args:
         doc: The docstring as written, or ``None`` when there is none.
         has_return_annotation: Whether the function declares its return type. With a
             declared type, the text of a ``Returns:`` section is all description.
+        style: The convention to read the docstring by, as a tool's ``docstring_format`` names
+            it; ``None`` infers it from the docstring, as ``"auto"`` does.
 
     Returns:
         The main description (``None`` without a docstring) and a mapping of
@@ -103,7 +107,7 @@ def describe(doc: str | None, *, has_return_annotation: bool) -> tuple[str | Non
         return None, {}
     cleaned = inspect.cleandoc(doc)
     try:
-        style = infer_style(doc)
+        style = style or infer_style(doc)
         sections = _sections(doc, style)
         return _from_sections(sections, style, has_return_annotation=has_return_annotation)
     except Exception:

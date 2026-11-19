@@ -31,7 +31,7 @@ from .._models import (
     Tool,
     Toolset,
 )
-from ._docstring import describe
+from ._docstring import Style, describe
 from ._resolve import Definition, Expression, External, Project, Resolved, Resolver, receiver_class
 from ._schema import NOT_FROM_THE_MODEL, SchemaBuilder, typing_construct
 from ._source import CallSite, Module, Mutation, Scope, clip_expression, unwrap
@@ -168,6 +168,10 @@ class _ToolSpec:
     kind: ToolKind = "function"
     external: str | None = None
     """Dotted name of a function that is defined outside the analysed files."""
+    docstring_format: Style | None = None
+    """The docstring convention the registration names; ``None`` when it is inferred."""
+    docstring_format_expression: str | None = None
+    """The source text of a ``docstring_format=`` that is computed when the code runs."""
 
 
 @dataclass(slots=True, eq=False)
@@ -860,6 +864,13 @@ class AgentExtractor:
                     spec.max_retries = value
         if self._bool(keywords.get("requires_approval"), scope, line):
             spec.kind = "unapproved"
+        written = keywords.get("docstring_format")
+        if written is not None:
+            style = string(self.resolver, written, scope, line)
+            if style in ("google", "numpy", "sphinx"):
+                spec.docstring_format = style
+            elif style != "auto":
+                spec.docstring_format_expression = scope.module.text(written)
 
     def _literal(self, node: ast.expr, scope: Scope, line: int) -> Any:
         try:
@@ -2030,8 +2041,16 @@ class _AgentBuilder:
         node = function.node
         assert not isinstance(node, ast.ClassDef)
         description, parameter_descriptions = describe(
-            ast.get_docstring(node, clean=False), has_return_annotation=node.returns is not None
+            ast.get_docstring(node, clean=False),
+            has_return_annotation=node.returns is not None,
+            style=spec.docstring_format,
         )
+        if spec.docstring_format_expression is not None:
+            self.warn(
+                f"the docstring format of the tool `{name}` is set by `{brief(spec.docstring_format_expression)}`, "
+                "so it is only known when the code runs; its descriptions are read as if it were inferred from "
+                "the docstring"
+            )
         builder = SchemaBuilder(self.resolver)
         skip = self.extractor.receiver_count(function) + (1 if spec.takes_ctx else 0)
         schema = builder.parameters(function, skip=skip, descriptions=parameter_descriptions)

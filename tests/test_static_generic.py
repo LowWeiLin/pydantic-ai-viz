@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from static_support import agent, analyze_source
+from static_support import agent, analyze_source, live_agents
 
 
 def test_values_are_followed_through_the_project_by_the_rules_of_the_language(tmp_path: Path) -> None:
@@ -591,4 +591,82 @@ def test_str_format_is_read_like_any_other_value(tmp_path: Path) -> None:
     assert agent(found, "written").warnings == [
         "one of the instructions is the template `Today is {date.today()}.`; what is in braces is filled in when "
         "the code runs"
+    ]
+
+
+TOOLS_WITH_DOCSTRING_FORMATS = '''
+from pydantic_ai import Agent, Tool
+
+
+def described(z: int) -> int:
+    """Doc.
+
+    Args:
+        z: zed.
+    """
+    return z
+
+
+boss = Agent("test", name="boss", tools=[Tool(described, docstring_format="sphinx")])
+
+
+@boss.tool_plain(docstring_format="sphinx")
+def forced(x: int) -> int:
+    """Desc.
+
+    Args:
+        x: google style but format forced sphinx.
+    """
+    return x
+
+
+@boss.tool_plain(docstring_format="google")
+def said_google(y: int) -> int:
+    """Desc.
+
+    :param y: sphinx style but format forced google.
+    """
+    return y
+
+
+@boss.tool_plain(docstring_format="auto")
+def automatic(w: int) -> int:
+    """Desc.
+
+    Args:
+        w: inferred.
+    """
+    return w
+'''
+
+
+def test_a_docstring_format_given_on_registration_is_the_one_the_docstring_is_read_with(tmp_path: Path) -> None:
+    found = analyze_source(tmp_path, TOOLS_WITH_DOCSTRING_FORMATS)
+    live = live_agents(tmp_path / "module.py")["boss"]
+    static = agent(found, "boss")
+    assert [(t.name, t.description, t.parameters_schema) for t in static.tools] == [
+        (t.name, t.description, t.parameters_schema) for t in live.tools
+    ]
+    assert static.warnings == []
+
+
+def test_a_docstring_format_the_source_does_not_spell_out_is_named_in_a_warning(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        '''
+        from pydantic_ai import Agent
+        from settings import STYLE
+
+        boss = Agent("test", name="boss")
+
+
+        @boss.tool_plain(docstring_format=STYLE)
+        def fetch(x: int) -> int:
+            """Fetch."""
+            return x
+        ''',
+    )
+    assert agent(found, "boss").warnings == [
+        "the docstring format of the tool `fetch` is set by `STYLE`, so it is only known when the code runs; "
+        "its descriptions are read as if it were inferred from the docstring"
     ]
