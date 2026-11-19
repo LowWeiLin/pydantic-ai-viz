@@ -19,7 +19,7 @@ pydantic-ai-viz --version
 | [`open`](#open) | Open a recording in the browser |
 | [`export`](#export) | Convert a recording to a single HTML file |
 
-The command is installed with the package. `python -m pydantic_ai_viz` is the same program, and `uvx pydantic-ai-viz ...` runs it without installing anything.
+The command is installed with the package, and `uvx pydantic-ai-viz ...` runs it without installing anything. `python -m pydantic_ai_viz` is the same program, with one difference: `python -m` imports modules from the current directory before any other, so a `json.py` or a `pydantic_ai_viz/` folder there runs in place of the real one. Never run `python -m pydantic_ai_viz` with a repository you have not reviewed as the current directory. Use the `pydantic-ai-viz` command or `uvx` instead, or run `python -I -m pydantic_ai_viz` (isolated mode) from another directory with the repository as the target.
 
 ## demo { #demo }
 
