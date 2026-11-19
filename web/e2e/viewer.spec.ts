@@ -1059,10 +1059,16 @@ test.describe("blueprint-only view", () => {
       /^search_wires\s*3 parameters\s*Search the wire services\.$/,
       /^fetch_article\s*1 parameter\s*Fetch the full text of a wire article\.$/,
     ]);
+    await expect(page).toHaveURL(/#\/agents\/a2\?part=toolset%3Ats\d+$/);
     await list.getByRole("button", { name: /^fetch_article/ }).click();
     await expect(inspector.getByRole("heading", { level: 3 })).toHaveText("fetch_article");
     await expect(inspector.getByRole("heading", { level: 3 })).toBeFocused();
     await expect(page.locator(".react-flow .pviz-selected")).toHaveCount(1);
+    await expect(page.locator(".react-flow .pviz-selected")).toContainText("fetch_article");
+    // The pick is a link, as a click on the canvas is: opened again, it shows the same tool.
+    await expect(page).toHaveURL(/#\/agents\/a2\?part=tool%3Afetch_article$/);
+    await page.reload();
+    await expect(inspector.getByRole("heading", { level: 3 })).toHaveText("fetch_article");
     await expect(page.locator(".react-flow .pviz-selected")).toContainText("fetch_article");
     // And back up, by keyboard: the toolset, then the agent.
     await inspector.getByRole("button", { name: "FunctionToolset 'wires'", exact: true }).focus();
@@ -1073,6 +1079,7 @@ test.describe("blueprint-only view", () => {
     await expect(inspector.getByRole("heading", { level: 3 })).toBeFocused();
     await inspector.getByRole("button", { name: "reporter", exact: true }).click();
     await expect(inspector.getByRole("heading", { level: 3 })).toHaveText("reporter");
+    await expect(page).toHaveURL(/#\/agents\/a2$/);
   });
 
   test("the canvas carries no attribution of its own", async ({ page }) => {

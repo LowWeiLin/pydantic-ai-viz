@@ -9,10 +9,14 @@ import { buildGraphFlow } from "./GraphCanvas";
 import { activityPhrase, graphNodeState, modelIsComputed } from "./nodes";
 import { agentModelSignature, graphModelSignature } from "./signature";
 import {
+  agentHas,
   agentNodeId,
+  type CanvasTarget,
   graphNodeId,
   latestSpanFor,
   outputNodeId,
+  parsePart,
+  partOf,
   sameTarget,
   spanTargets,
   targetNodeId,
@@ -291,6 +295,40 @@ describe("targets", () => {
       false,
     );
     expect(sameTarget(null, { kind: "agent", agentId: "a1" })).toBe(false);
+  });
+
+  test("a part of an agent is written into its link and read back from it", () => {
+    const parts: [CanvasTarget, string][] = [
+      [{ kind: "tool", agentId: "a1", name: "get_order" }, "tool:get_order"],
+      // Whatever a tool's name holds after the first colon is its name.
+      [{ kind: "tool", agentId: "a1", name: "ns:get" }, "tool:ns:get"],
+      [{ kind: "toolset", agentId: "a1", toolsetId: "ts1" }, "toolset:ts1"],
+      [{ kind: "model", agentId: "a1" }, "model"],
+      [{ kind: "output", agentId: "a1" }, "output"],
+    ];
+    for (const [target, part] of parts) {
+      expect(partOf(target)).toBe(part);
+      expect(parsePart("a1", part)).toEqual(target);
+    }
+    // The agent itself is the screen without a part; a graph node is no part of an agent.
+    expect(partOf({ kind: "agent", agentId: "a1" })).toBeUndefined();
+    expect(partOf({ kind: "graphNode", nodeId: "write" })).toBeUndefined();
+    for (const part of [undefined, "", "tool:", "tool", "agent:a1", "graphNode:write", "nope:x"]) {
+      expect(parsePart("a1", part)).toBeNull();
+    }
+  });
+
+  test("a part a link names counts only when the agent has it", () => {
+    const agent = sample.agents.a1;
+    if (!agent) throw new Error("expected agent a1");
+    const toolset = agent.toolsets[0]?.id ?? "";
+    expect(agentHas(agent, { kind: "tool", agentId: "a1", name: "get_order" })).toBe(true);
+    expect(agentHas(agent, { kind: "tool", agentId: "a1", name: "ghost" })).toBe(false);
+    expect(agentHas(agent, { kind: "toolset", agentId: "a1", toolsetId: toolset })).toBe(true);
+    expect(agentHas(agent, { kind: "toolset", agentId: "a1", toolsetId: "ts99" })).toBe(false);
+    expect(agentHas(agent, { kind: "output", agentId: "a1" })).toBe(true);
+    expect(agentHas(agent, { kind: "model", agentId: "a2" })).toBe(false);
+    expect(agentHas(agent, { kind: "graphNode", nodeId: "write" })).toBe(false);
   });
 });
 

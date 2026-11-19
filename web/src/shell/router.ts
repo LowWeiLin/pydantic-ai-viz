@@ -3,8 +3,8 @@
  *
  *   #/                       home (redirects, see `homeRoute`)
  *   #/gallery                recordings and the drop zone
- *   #/agents/<id>            agent blueprint
- *   #/graphs/<id>            graph blueprint
+ *   #/agents/<id>?part=<p>   agent blueprint, optionally with a picked part (see `partOf`)
+ *   #/graphs/<id>?node=<id>  graph blueprint, optionally with a picked node
  *   #/runs/<trace>?span=<id> run view, optionally with a selected span
  */
 import { useSyncExternalStore } from "react";
@@ -14,8 +14,10 @@ import type { ViewerState } from "../data/store";
 export type Route =
   | { name: "home" }
   | { name: "gallery" }
-  | { name: "agent"; id: string }
-  | { name: "graph"; id: string }
+  /** `part` names a picked part of the agent, as `partOf` writes it. */
+  | { name: "agent"; id: string; part?: string }
+  /** `node` is the id of a picked graph node. */
+  | { name: "graph"; id: string; node?: string }
   | { name: "run"; traceId: string; spanId: string | null }
   | { name: "unknown"; path: string };
 
@@ -37,8 +39,14 @@ export function parseHash(hash: string): Route {
   if (rest.length === 0) {
     if (head === "gallery" && id === undefined) return { name: "gallery" };
     if (id) {
-      if (head === "agents") return { name: "agent", id: decode(id) };
-      if (head === "graphs") return { name: "graph", id: decode(id) };
+      if (head === "agents") {
+        const part = query.get("part");
+        return part ? { name: "agent", id: decode(id), part } : { name: "agent", id: decode(id) };
+      }
+      if (head === "graphs") {
+        const node = query.get("node");
+        return node ? { name: "graph", id: decode(id), node } : { name: "graph", id: decode(id) };
+      }
       if (head === "runs") {
         return { name: "run", traceId: decode(id), spanId: query.get("span") || null };
       }
@@ -53,10 +61,14 @@ export function formatRoute(route: Route): string {
       return "#/";
     case "gallery":
       return "#/gallery";
-    case "agent":
-      return `#/agents/${encodeURIComponent(route.id)}`;
-    case "graph":
-      return `#/graphs/${encodeURIComponent(route.id)}`;
+    case "agent": {
+      const base = `#/agents/${encodeURIComponent(route.id)}`;
+      return route.part ? `${base}?part=${encodeURIComponent(route.part)}` : base;
+    }
+    case "graph": {
+      const base = `#/graphs/${encodeURIComponent(route.id)}`;
+      return route.node ? `${base}?node=${encodeURIComponent(route.node)}` : base;
+    }
     case "run": {
       const base = `#/runs/${encodeURIComponent(route.traceId)}`;
       return route.spanId ? `${base}?span=${encodeURIComponent(route.spanId)}` : base;

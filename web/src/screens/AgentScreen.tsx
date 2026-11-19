@@ -1,38 +1,47 @@
 /**
  * The agent blueprint screen: the canvas in the main slot, the inspector beside it, and
  * "Copy Mermaid" in the bar. Clicking a node inspects that part; with nothing picked the
- * inspector shows the agent itself.
+ * inspector shows the agent itself. The picked part is the `?part=` of the route, so a link
+ * opens the screen on it.
  */
 import { useMemo, useState } from "react";
 import { AgentCanvas } from "../canvas/AgentCanvas";
-import type { CanvasTarget } from "../canvas/targets";
+import { agentHas, type CanvasTarget, parsePart, partOf } from "../canvas/targets";
 import { agentMermaid } from "../data/mermaid";
 import { canvasModel } from "../data/selectors";
 import { useViewer } from "../data/store";
 import { BlueprintInspector } from "../inspector/Inspector";
 import type { Reveal } from "../inspector/parts";
 import { InspectorPick } from "../inspector/pick";
+import { navigate } from "../shell/router";
 import { NotFound, WaitingForRun } from "../shell/states";
 import { Workspace } from "../shell/Workspace";
 import { CopyButton } from "../ui/CopyButton";
 import { ScreenBar, WarningsChip } from "./parts";
 
-function AgentBlueprintView({ id }: { id: string }) {
+function AgentBlueprintView({ id, part }: { id: string; part: string | undefined }) {
   const data = useViewer((state) => state.data);
-  const [picked, setPicked] = useState<CanvasTarget | null>(null);
+  // Counts the picks, so that picking the same part again is a new target: the output and the
+  // model are sections of the agent's panel, and a second pick scrolls back to them.
+  const [picks, setPicks] = useState(0);
   // Set by the warning count: the agent's own panel, at its warnings.
   const [reveal, setReveal] = useState<Reveal | null>(null);
   const pick = (next: CanvasTarget | null): void => {
     setReveal(null);
-    setPicked(next);
+    setPicks((n) => n + 1);
+    const named = next ? partOf(next) : undefined;
+    navigate(named ? { name: "agent", id, part: named } : { name: "agent", id }, { replace: true });
   };
   const model = useMemo(() => canvasModel(data, id, null), [data, id]);
+  const agent = data.agents[id];
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `picks` makes each pick a new target.
+  const asked = useMemo(() => parsePart(id, part), [id, part, picks]);
+  const there = asked !== null && agent !== undefined && agentHas(agent, asked);
   const target = useMemo<CanvasTarget>(
-    () => picked ?? { kind: "agent", agentId: id },
-    [picked, id],
+    () => (there && asked) || { kind: "agent", agentId: id },
+    [there, asked, id],
   );
   const highlight = useMemo(() => [target], [target]);
-  const agent = data.agents[id];
   if (!model || !agent) return null;
 
   return (
@@ -50,7 +59,7 @@ function AgentBlueprintView({ id }: { id: string }) {
                 <WarningsChip
                   count={agent.warnings.length}
                   onShow={() => {
-                    setPicked(null);
+                    pick(null);
                     setReveal({ section: "warnings" });
                   }}
                 />
@@ -80,7 +89,7 @@ function AgentBlueprintView({ id }: { id: string }) {
   );
 }
 
-export function AgentScreen({ id }: { id: string }) {
+export function AgentScreen({ id, part }: { id: string; part?: string | undefined }) {
   const known = useViewer((state) => Object.hasOwn(state.data.agents, id));
   if (!known) {
     return (
@@ -91,5 +100,5 @@ export function AgentScreen({ id }: { id: string }) {
     );
   }
   // Keyed by id: what was picked on one blueprint means nothing on the next.
-  return <AgentBlueprintView key={id} id={id} />;
+  return <AgentBlueprintView key={id} id={id} part={part} />;
 }

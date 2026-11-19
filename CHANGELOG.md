@@ -27,7 +27,7 @@ pydantic-ai-viz is an unofficial community project. It is not affiliated with or
 - Opt-in token streaming overlay (`stream=True`).
 - Live graph runs through `pydantic_ai_viz.run_graph`.
 - Local viewer server: standard library only, bound to loopback, Server-Sent Events with resume. An open viewer starts over by itself when the program it watches is restarted on the same port.
-- One-file viewer: blueprint canvas with a run overlay, span timeline, inspector, playback with scrubbing, light and dark themes, and keyboard navigation.
+- One-file viewer: blueprint canvas with a run overlay, span timeline, inspector, playback with scrubbing, light and dark themes, and keyboard navigation. A selected span, or a part picked on a blueprint, is in the page's link, so the link opens on it.
 - Recordings (`.pviz.jsonl`) and single-file HTML exports.
 - Command line: `demo`, `view`, `run`, `open` and `export`. `view` reads source code; `view --import` imports the targets and reads the live objects instead, which executes their code. `run --record` and `run --export` also write their files when the script is stopped with Ctrl+C.
 - Three offline demos (`support`, `research`, `pipeline`) that need no API key.

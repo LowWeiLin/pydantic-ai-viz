@@ -181,6 +181,73 @@ describe("a toolset, and the parts a panel names", () => {
     expect(title()).toBe("MCPServerStdio");
   });
 
+  test("a picked toolset, and a tool picked from its list, are links that open on them", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/agents/a2";
+    const first = render(<App plan={embedded(NEWSROOM)} />);
+    const length = window.history.length;
+    await user.click(
+      screen.getByRole("button", { name: "Toolset FunctionToolset 'wires', 2 tools" }),
+    );
+    expect(window.location.hash).toMatch(/^#\/agents\/a2\?part=toolset%3Ats\d+$/);
+    const toolsetLink = window.location.hash;
+    const tools = within(details()).getByRole("list", { name: "Tools of FunctionToolset 'wires'" });
+    await user.click(within(tools).getByRole("button", { name: /^fetch_article/ }));
+    expect(window.location.hash).toBe("#/agents/a2?part=tool%3Afetch_article");
+    // A pick replaces the link: Back leaves the screen, not the last part picked.
+    expect(window.history.length).toBe(length);
+    // Back to the agent itself: its link has no part.
+    await user.click(within(details()).getByRole("button", { name: "reporter" }));
+    expect(window.location.hash).toBe("#/agents/a2");
+    first.unmount();
+
+    // Opened from the links: the tool's panel and its node outlined, then the toolset's.
+    window.location.hash = "#/agents/a2?part=tool%3Afetch_article";
+    const second = render(<App plan={embedded(NEWSROOM)} />);
+    expect(title()).toBe("fetch_article");
+    expect(screen.getByRole("button", { name: "Tool fetch_article" }).parentElement).toHaveClass(
+      "pviz-selected",
+    );
+    act(() => {
+      window.location.hash = toolsetLink;
+    });
+    await vi.waitFor(() => expect(title()).toBe("FunctionToolset 'wires'"));
+    expect(document.querySelector(".react-flow__node-toolset .pviz-selected")).not.toBeNull();
+    second.unmount();
+
+    // A link to a tool this agent does not have shows the agent.
+    window.location.hash = "#/agents/a2?part=tool%3Aghost";
+    render(<App plan={embedded(NEWSROOM)} />);
+    expect(title()).toBe("reporter");
+  });
+
+  test("a picked graph node is a link that opens on it", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/graphs/g1";
+    const first = render(<App plan={embedded(NEWSROOM)} />);
+    await user.click(screen.getByRole("button", { name: "Step Review" }));
+    expect(window.location.hash).toMatch(/^#\/graphs\/g1\?node=/);
+    const link = window.location.hash;
+    // The graph's own name in the node's panel picks the graph again.
+    await user.click(within(details()).getByRole("button", { name: "publishing" }));
+    expect(window.location.hash).toBe("#/graphs/g1");
+    first.unmount();
+
+    window.location.hash = link;
+    const second = render(<App plan={embedded(NEWSROOM)} />);
+    expect(title()).toBe("Review");
+    expect(screen.getByRole("button", { name: "Step Review" }).parentElement).toHaveClass(
+      "pviz-selected",
+    );
+    second.unmount();
+    window.location.hash = "#/graphs/g1?node=ghost";
+    render(<App plan={embedded(NEWSROOM)} />);
+    expect(screen.queryByRole("button", { name: "Step Review" })?.parentElement).not.toHaveClass(
+      "pviz-selected",
+    );
+    expect(within(details()).getByRole("heading", { level: 3 })).not.toHaveTextContent("Review");
+  });
+
   test("a toolset that lists its tools only when the code runs says so, from its placeholder too", async () => {
     const user = userEvent.setup();
     window.location.hash = "#/agents/a2";

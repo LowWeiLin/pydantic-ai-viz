@@ -144,16 +144,24 @@ test.describe("real view server", () => {
       }
       // Each toolset with tools opens on a panel that lists them. The subject's own boxes come
       // first on the canvas; a delegate drawn below it may have a toolset of the same name.
+      // Its last tool, picked from that list, opens as a click on the canvas does: its panel,
+      // and a link to it.
       for (const toolset of agent.toolsets) {
-        const count = agent.tools.filter((tool) => tool.toolset === toolset.id).length;
-        if (count === 0) continue;
+        const tools = agent.tools.filter((tool) => tool.toolset === toolset.id);
+        const count = tools.length;
+        const last = tools.at(-1);
+        if (!last) continue;
         const name = `Toolset ${toolset.label}, ${count} tool${count === 1 ? "" : "s"}`;
         await canvasNode(page, name)
           .first()
           .click({ position: { x: 40, y: 12 } });
-        await expect(
-          inspector.getByRole("list", { name: `Tools of ${toolset.label}` }).getByRole("button"),
-        ).toHaveCount(count);
+        const list = inspector.getByRole("list", { name: `Tools of ${toolset.label}` });
+        await expect(list.getByRole("button")).toHaveCount(count);
+        await list.getByRole("button").last().click();
+        await expect(inspector.getByRole("heading", { level: 3 })).toHaveText(last.name);
+        await expect(page).toHaveURL(
+          `${viewBase}#/agents/${agent.id}?part=${encodeURIComponent(`tool:${last.name}`)}`,
+        );
       }
     }
     for (const graph of graphs) {

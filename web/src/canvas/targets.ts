@@ -10,6 +10,7 @@ import {
   type GraphCanvasModel,
   type RunView,
 } from "../data/selectors";
+import type { AgentBlueprint } from "../wire";
 
 export type CanvasTarget =
   | { kind: "agent"; agentId: string }
@@ -47,6 +48,55 @@ export function targetNodeId(target: CanvasTarget): string {
 
 export const sameTarget = (a: CanvasTarget | null, b: CanvasTarget | null): boolean =>
   a !== null && b !== null && a.kind === b.kind && targetNodeId(a) === targetNodeId(b);
+
+/**
+ * A part of an agent as the `?part=` of the agent's link: "tool:<name>", "toolset:<id>",
+ * "model" or "output". The agent itself, and a graph node, have none.
+ */
+export function partOf(target: CanvasTarget): string | undefined {
+  switch (target.kind) {
+    case "tool":
+      return `tool:${target.name}`;
+    case "toolset":
+      return `toolset:${target.toolsetId}`;
+    case "model":
+    case "output":
+      return target.kind;
+    case "agent":
+    case "graphNode":
+      return undefined;
+  }
+}
+
+/** The part of agent `agentId` that a `?part=` names, as `partOf` writes it; null for none. */
+export function parsePart(agentId: string, part: string | undefined): CanvasTarget | null {
+  if (part === "model" || part === "output") return { kind: part, agentId };
+  const at = part?.indexOf(":") ?? -1;
+  if (part === undefined || at === -1) return null;
+  const kind = part.slice(0, at);
+  const name = part.slice(at + 1);
+  if (name === "") return null;
+  if (kind === "tool") return { kind: "tool", agentId, name };
+  if (kind === "toolset") return { kind: "toolset", agentId, toolsetId: name };
+  return null;
+}
+
+/**
+ * Whether the agent has the tool or toolset a target names. A link from another session, or
+ * one edited by hand, may name one that is not there; the agent itself is shown instead.
+ */
+export function agentHas(agent: AgentBlueprint, target: CanvasTarget): boolean {
+  switch (target.kind) {
+    case "tool":
+      return agent.tools.some((tool) => tool.name === target.name);
+    case "toolset":
+      return agent.toolsets.some((toolset) => toolset.id === target.toolsetId);
+    case "graphNode":
+      return false;
+    default:
+      return target.agentId === agent.id;
+  }
+}
 
 /**
  * Where a span shows on a canvas: its own node first, then the nodes of its ancestors. A canvas

@@ -1,6 +1,7 @@
 /**
  * The graph blueprint screen: the canvas in the main slot, the inspector beside it, and
  * "Copy Mermaid" in the bar. Clicking a node inspects it; otherwise the graph itself is shown.
+ * The picked node is the `?node=` of the route, so a link opens the screen on it.
  */
 import { useMemo, useState } from "react";
 import { GraphCanvas } from "../canvas/GraphCanvas";
@@ -12,22 +13,31 @@ import { BlueprintInspector } from "../inspector/Inspector";
 import type { Reveal } from "../inspector/parts";
 import { InspectorPick } from "../inspector/pick";
 import { plural } from "../shell/format";
+import { navigate } from "../shell/router";
 import { NotFound, WaitingForRun } from "../shell/states";
 import { Workspace } from "../shell/Workspace";
 import { Chip } from "../ui/Badge";
 import { CopyButton } from "../ui/CopyButton";
 import { ScreenBar, WarningsChip } from "./parts";
 
-function GraphBlueprintView({ id }: { id: string }) {
+function GraphBlueprintView({ id, node }: { id: string; node: string | undefined }) {
   const data = useViewer((state) => state.data);
-  const [picked, setPicked] = useState<CanvasTarget | null>(null);
   // Set by the warning count: the graph's own panel, at its warnings.
   const [reveal, setReveal] = useState<Reveal | null>(null);
   const pick = (next: CanvasTarget | null): void => {
     setReveal(null);
-    setPicked(next);
+    navigate(
+      next?.kind === "graphNode" ? { name: "graph", id, node: next.nodeId } : { name: "graph", id },
+      { replace: true },
+    );
   };
   const model = useMemo(() => graphCanvasModel(data, id, null), [data, id]);
+  // A node a link names that the graph does not have (another session's link) picks nothing.
+  const there = node !== undefined && Boolean(data.graphs[id]?.nodes.some((n) => n.id === node));
+  const picked = useMemo<CanvasTarget | null>(
+    () => (there && node !== undefined ? { kind: "graphNode", nodeId: node } : null),
+    [there, node],
+  );
   const highlight = useMemo(() => (picked ? [picked] : []), [picked]);
   if (!model) return null;
   const { graph } = model;
@@ -49,7 +59,7 @@ function GraphBlueprintView({ id }: { id: string }) {
                 <WarningsChip
                   count={graph.warnings.length}
                   onShow={() => {
-                    setPicked(null);
+                    pick(null);
                     setReveal({ section: "warnings" });
                   }}
                 />
@@ -87,7 +97,7 @@ function GraphBlueprintView({ id }: { id: string }) {
   );
 }
 
-export function GraphScreen({ id }: { id: string }) {
+export function GraphScreen({ id, node }: { id: string; node?: string | undefined }) {
   const known = useViewer((state) => Object.hasOwn(state.data.graphs, id));
   if (!known) {
     return (
@@ -97,5 +107,5 @@ export function GraphScreen({ id }: { id: string }) {
       />
     );
   }
-  return <GraphBlueprintView key={id} id={id} />;
+  return <GraphBlueprintView key={id} id={id} node={node} />;
 }

@@ -16,6 +16,10 @@ describe("parseHash and formatRoute", () => {
     ["#/gallery", { name: "gallery" }],
     ["#/agents/a1", { name: "agent", id: "a1" }],
     ["#/graphs/g1", { name: "graph", id: "g1" }],
+    ["#/agents/a1?part=tool%3Aget_order", { name: "agent", id: "a1", part: "tool:get_order" }],
+    ["#/agents/a1?part=output", { name: "agent", id: "a1", part: "output" }],
+    ["#/graphs/g1?node=__end__", { name: "graph", id: "g1", node: "__end__" }],
+    ["#/graphs/g1?node=a%20b%26c", { name: "graph", id: "g1", node: "a b&c" }],
     [`#/runs/${TRACE}`, { name: "run", traceId: TRACE, spanId: null }],
     [
       `#/runs/${TRACE}?span=b7ad6b7169203331`,
@@ -33,6 +37,9 @@ describe("parseHash and formatRoute", () => {
     expect(parseHash("#")).toEqual({ name: "home" });
     expect(parseHash("#/agents/a1/")).toEqual({ name: "agent", id: "a1" });
     expect(parseHash("#/agents/my%20agent")).toEqual({ name: "agent", id: "my agent" });
+    // An empty part is no part; a query a screen does not read is left out.
+    expect(parseHash("#/agents/a1?part=")).toStrictEqual({ name: "agent", id: "a1" });
+    expect(parseHash("#/graphs/g1?part=tool%3Ax")).toStrictEqual({ name: "graph", id: "g1" });
   });
 
   test("anything else is unknown, with its path kept for the message", () => {

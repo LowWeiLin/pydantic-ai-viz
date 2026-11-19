@@ -40,9 +40,9 @@ function Screen({ route }: { route: Route }): ReactNode {
     case "gallery":
       return <Gallery />;
     case "agent":
-      return <AgentScreen id={route.id} />;
+      return <AgentScreen id={route.id} part={route.part} />;
     case "graph":
-      return <GraphScreen id={route.id} />;
+      return <GraphScreen id={route.id} node={route.node} />;
     case "run":
       // Keyed by run: the canvas subject and a picked node belong to one run.
       return <RunScreen key={route.traceId} traceId={route.traceId} spanId={route.spanId} />;
