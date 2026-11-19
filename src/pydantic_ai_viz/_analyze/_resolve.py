@@ -448,6 +448,22 @@ class Resolver:
             found.extend(self.changes(unwrap(hop.node), hop.scope, hop.line, until=later))
         return found
 
+    def reassigned(self) -> bool:
+        """Whether a name the last ``resolve`` passed through is given a value in more than one place.
+
+        ``tools = []`` and later, under some condition, ``tools = load()``: the value
+        found is the one assigned closest above the use, which the running code may
+        not have assigned at all.
+        """
+        for hop in self.trail:
+            node = unwrap(hop.node)
+            if not isinstance(node, ast.Name):
+                continue
+            binding = self.lookup(node.id, hop.scope, hop.line)
+            if binding is not None and len(binding.scope.bindings.get(node.id, ())) > 1:
+                return True
+        return False
+
     def _step(self, current: Expression, depth: int) -> Resolved | _Stop:
         node = unwrap(current.node)
         if isinstance(node, ast.Name):

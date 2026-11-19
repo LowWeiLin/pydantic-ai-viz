@@ -98,6 +98,42 @@ def test_whatever_reads_a_value_at_run_time_gets_the_same_message_and_no_default
         assert found_agent.warnings == [f"the model is set by `{expression}`, so it is only known when the code runs"]
 
 
+def test_a_name_assigned_in_more_than_one_place_is_not_taken_for_its_last_value(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.models.openai import OpenAIChatModel
+
+
+        def search(query: str) -> str:
+            return query
+
+
+        def fetch(url: str) -> str:
+            return url
+
+
+        model = OpenAIChatModel("gpt-5.2")
+        tools = [search]
+        if FAST:
+            model = "openai:gpt-5-mini"
+            tools = [search, fetch]
+
+        agent = Agent(model, tools=tools)
+        """,
+    )
+    found_agent = agent(found, "agent")
+    assert found_agent.model is not None
+    assert (found_agent.model.id, found_agent.model.name, found_agent.model.expression) == (None, "model", "model")
+    # The tools of the list assigned last are shown, and said to be those of one case among others.
+    assert [tool.name for tool in found_agent.tools] == ["search", "fetch"]
+    assert found_agent.warnings == [
+        "some of the tools in `tools` depend on a condition; those of every case are shown",
+        "the model is set by `model`, so it is only known when the code runs",
+    ]
+
+
 def test_a_prompt_built_by_a_library_call_is_kept_as_its_source_written_out(tmp_path: Path) -> None:
     source = '''
         from textwrap import dedent

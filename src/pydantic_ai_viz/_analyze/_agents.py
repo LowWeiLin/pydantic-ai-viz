@@ -701,6 +701,8 @@ class AgentExtractor:
         changes = self.resolver.changed(until=until)
         if not isinstance(target, Expression):
             return None
+        if self.resolver.reassigned():
+            self.conditional = True  # the list found is the one assigned last above the use, maybe not the one used
         if isinstance(target.node, ast.IfExp | ast.BoolOp):
             found: list[Expression] | None = self._either(target.node, target.scope, target.line, depth)
         elif isinstance(target.node, ast.List | ast.Tuple | ast.Set) and len(target.node.elts) <= _MAX_LIST_ITEMS:
@@ -975,6 +977,8 @@ class _AgentBuilder:
         name: str | None = None
         provider = None
         target = self.resolver.resolve(node, *self.where(node))
+        if self.resolver.reassigned():
+            target = None  # assigned in more than one place: which of the values it has is decided at run time
         if isinstance(unwrap(node), ast.Name | ast.Attribute) and isinstance(target, Expression):
             # ``Agent(model)``: what ``model`` was assigned says more than its name does.
             text = target.module.text(target.node)

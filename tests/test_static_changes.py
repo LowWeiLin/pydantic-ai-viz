@@ -420,6 +420,8 @@ def test_a_dict_of_arguments_is_read_with_what_is_set_in_it_before_the_call(tmp_
         "in `**kwargs`, `output_type` and `tools` are only set under a condition, and shown as if it held",
         "in `**kwargs`, `toolsets` is replaced under a condition; what was given first is shown",
         "some of the arguments passed as `**kwargs` cannot be read from source",
+        # ``all_toolsets = wrap(all_toolsets)`` under a condition: the list read is one of two values.
+        "some of the toolsets in `all_toolsets` depend on a condition; those of every case are shown",
         "more toolsets are added by `all_toolsets.extend(extra_toolsets)`; they are only known when the code runs",
         "the model is set by `model`, so it is only known when the code runs",
     ]
