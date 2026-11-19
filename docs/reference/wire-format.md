@@ -95,6 +95,8 @@ type AgentBlueprint = {
     provider: string | null;
     offline: boolean;
     expression: string | null; // source text of a model that is not a string literal; name repeats it, or is the literal model name given to a model class
+    model_class: string | null; // the Pydantic AI model class, for example "OpenAIChatModel", when it is known
+    env: EnvironmentValue | null; // set when the model name is read from an environment variable at run time
   } | null;
   deps_type: string | null;    // qualified type name; null for object or None
   instructions: Instruction[];
@@ -122,10 +124,15 @@ type AgentBlueprint = {
   warnings: string[];          // human-readable notes about anything that could not be read
 };
 
+type EnvironmentValue = {
+  variable: string;            // the environment variable, for example "APP_MODEL"
+  default: string | null;      // the default the source gives, used only when the variable is not set; never the value
+};
+
 type Instruction = {
   kind: "instructions" | "system_prompt";
   dynamic: boolean;
-  text: string | null;         // the literal text; for a dynamic f-string, its template
+  text: string | null;         // the literal text; for a dynamic template, the template in str.format syntax
   function: string | null;     // qualified function name for dynamic ones
   expression: string | null;   // source text of any other value computed at run time, as written (may span lines)
   location: SourceLocation | null;
@@ -155,6 +162,7 @@ type Tool = {
   function: string | null;     // qualified function name
   origin: Provenance;
   location: SourceLocation | null;
+  library_version: string | null;  // a tool Pydantic AI defines, read from the installed Pydantic AI source: that version
 };
 
 type GraphBlueprint = {
@@ -185,11 +193,14 @@ type GraphBlueprint = {
 - **`location`** is set only for provenance `"code"`. It is `null` everywhere else, and also for a `"code"` fact that has no single place in the source.
 - **An expression is source text, never a value.** Static analysis does not run code, so a value that code computes is reported as the text that computes it:
     - `model.expression` is set when the model is not a string literal, for example `get_model()`. `name` holds the same text and `id` is `null`. `provider` and `offline` are filled in only for Pydantic AI's own `TestModel` and `FunctionModel`.
-    - An `Instruction` with `dynamic: true` has exactly one of `function` (a named function), `text` (the template of an f-string or of `str.format`, with its `{...}` placeholders) or `expression` (anything else).
+    - `model.model_class` names the Pydantic AI model class when the source builds one (`OpenAIChatModel(...)`), directly or through a function of the project. From a live object it is the object's class; for a model given as a string it is `null`.
+    - `model.env` is set when the model, or the model name given to its class, is read from an environment variable with `os.getenv` or `os.environ`. `variable` is its name and `default` the default the source gives (`null` when there is none). The default is **not** the model: `name` and `expression` still hold the source text, and the variable decides when the code runs.
+    - An `Instruction` with `dynamic: true` has exactly one of `function` (a named function), `text` (a template) or `expression` (anything else). A template is an f-string or a `str.format` call, written in the syntax of `str.format`: a part filled in at run time is a placeholder in braces (`{today}`, `{user.name!r}`), a literal brace is doubled (`{{`), and a part whose value is a literal of the source is filled in.
+    - `tool.library_version` is set on a tool that Pydantic AI itself defines, such as `duckduckgo_search_tool()`: its name, description and parameters were read from the source of the installed Pydantic AI of that version, which can differ from the one the project uses. It is `null` on every other tool, and always from a live object.
     - `settings.expressions` maps a setting to its source text: a field name such as `tool_retries` or `model_settings`, or `model_settings.<key>` for one model setting. The setting itself is `null` or absent.
     - A toolset with an `expression` is `opaque`; its `label` is the class name when that can be read, else the same text.
     - An instruction's `expression` is the source exactly as written, line breaks and indentation included, cut at 20,000 characters. Every other expression is put on one line and cut at 200 characters.
-    - Whatever produced the value (an environment variable, a configuration file, a function of the project, of the standard library or of another package), the expression is reported the same way. No default that such a call is given is taken for the value.
+    - Whatever produced the value (an environment variable, a configuration file, a function of the project, of the standard library or of another package), the expression is reported the same way. No default that such a call is given is taken for the value; an environment variable's default is reported as `env.default` only.
 - **What static analysis does not know is left out, not guessed.** A `"code"` blueprint has `null` for a setting the source does not set (the library default applies), an empty `output.tool_names`, and no built-in capabilities. A model, an instruction, a toolset, a tool, an output type or a capability that could not be resolved is also named in `warnings`; a computed setting is reported in `settings.expressions` only.
 
 - Known graph node kinds are `"start"`, `"end"`, `"step"`, `"decision"`, `"join"`, `"broadcast"` and `"map"`. A reader draws an unknown kind as a step.

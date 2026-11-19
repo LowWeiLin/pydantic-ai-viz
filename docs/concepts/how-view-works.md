@@ -84,7 +84,7 @@ The evaluator stops where the value stops being written in your code:
 
 - **A function's parameters are unknown inside it**, except in a function that makes an agent. There, each call of the function is an agent of its own, read with that call's arguments and the defaults it leaves out; calls that end in the same blueprint, such as tests that each call `make_agent()`, are shown as one agent. A function with a decorator is read once, since the decorator may hand out one agent for every call. Elsewhere, `def make(name): return "openai:" + name` is not followed for a call `make("gpt-5.2")`; the model is the expression `make("gpt-5.2")`.
 - **A name assigned in more than one place**, for example in both branches of an `if`, is not taken for its last value. Which value it holds is decided when the code runs, so a model held by such a name is shown as the name, and tools collected that way come with a warning that some of them depend on a condition. A name that is Pydantic AI's `Agent` in one case only, as after `try: from pydantic_ai import Agent` and `except ImportError: Agent = None`, still makes agents, each with a warning that this is decided when the code runs.
-- **Anything from outside your code is never evaluated.** See the next section.
+- **Anything from outside your code is never evaluated**, except a short list of standard-library calls. See the next two sections.
 
 ## What shows as decided at run time, and why
 
@@ -92,10 +92,10 @@ A value that depends on something outside the files that were read cannot be kno
 
 - environment variables (`os.getenv("MODEL", "openai:gpt-5.2")`, `os.environ[...]`),
 - configuration files, command-line arguments and the network,
-- what a function of the standard library or of another installed package returns (`load_config()["model"]`, `dedent("""...""")`),
+- what a function of the standard library or of another installed package returns (`load_config()["model"]`, `json.loads(...)`),
 - settings classes that fill themselves in from the environment.
 
-None of these is evaluated, whichever library it comes from, and **no default is taken from them**: `Agent(os.getenv("MODEL", "openai:gpt-5.2"))` shows the expression `os.getenv("MODEL", "openai:gpt-5.2")`, not `gpt-5.2`, because the environment may well say otherwise. A default is a guess about the machine the code will run on, and a picture that shows a guess as a fact is worse than one that says "not known here".
+None of these is evaluated, whichever library it comes from, and **no default is taken from them**: `Agent(os.getenv("MODEL", "openai:gpt-5.2"))` does not show `gpt-5.2` as the model, because the environment may well say otherwise. A default is a guess about the machine the code will run on, and a picture that shows a guess as a fact is worse than one that says "not known here". An environment variable that is read in one of the ways listed in the next section is named, with the default labelled as a default.
 
 Every such value is reported in the same three ways, with the same wording whatever produced it:
 
@@ -105,7 +105,8 @@ Every such value is reported in the same three ways, with the same wording whate
 
 Other things that stay open:
 
-- **An instruction function** (`@agent.instructions`, or a function passed in `instructions=[...]`) is listed by name and marked dynamic. An f-string or a `.format(...)` call with unknown parts is shown as its template, `{today}` left in place, with a warning.
+- **An instruction function** (`@agent.instructions`, or a function passed in `instructions=[...]`) is listed by name and marked dynamic.
+- **A template.** An instruction or system prompt written as an f-string or a `"...".format(...)` call is shown whole, as its template: the parts filled in at run time are marked (`{today}`), and a literal part such as a constant of your code is filled in. The viewer says in one short note that the marked parts are filled in when the code runs; there is no warning, since the text itself is known.
 - **Pydantic AI's defaults.** A setting the source does not mention stays empty. The analyser does not fill in what the installed Pydantic AI would use, because the code may be written for another version.
 - **Tools of MCP servers and dynamic toolsets.** They exist only once the server or the code is running. The toolset is one placeholder node, and its tools appear once a run uses them.
 - **Types from installed packages.** An output type defined in another package has no schema; its name is shown.
@@ -113,6 +114,44 @@ Other things that stay open:
 - **A model configuration that is computed.** A pydantic model's `model_config` (or class keywords such as `extra="forbid"`) is applied to its schema when it is written out: `title`, `extra`, `use_attribute_docstrings` and `json_schema_extra`. A configuration built by a call, or one that sets something like `alias_generator`, is named in a warning, since the schema it gives is only known when the code runs.
 - **Graph edges added in a loop or by a helper function.** The steps are listed, the edges that are written out are drawn, and a warning names the call that could not be followed.
 - **Agents that the source does not construct**: an agent returned by a library function, an `Agent` subclass, `Agent.from_spec(...)`. They are not found. Use [`--import`](#when-to-use-import) for these.
+
+## Standard-library calls the analyser evaluates
+
+A few calls of the standard library are understood, because what they do can be read off the source without running anything. The list is short and closed, and a test of the project fails if the analyser starts to use any other:
+
+| Call | What is shown |
+|---|---|
+| `os.getenv("X")`, `os.getenv("X", default)`, `os.environ.get("X"[, default])`, `os.environ["X"]` | the variable `X`, read **when the code runs**, and the default the source gives, labelled as a default |
+| `textwrap.dedent("...")`, `inspect.cleandoc("...")` | the text, computed by the real function, exactly as Python would |
+
+They are recognised however they are imported: `import os`, `from os import getenv, environ`, `from textwrap import dedent as dd`, and through names and helper functions of your own project.
+
+**An environment variable is never shown as its value.** The variable's name and the source's default are both known, but which value the variable has depends on the machine the code runs on. So `Agent(os.getenv("MODEL", "openai:gpt-5.2"))` shows `env MODEL` on the agent's card, and the panel lists the default as "Default, only if MODEL is not set". The warning says the same in words: "the model comes from the environment variable `MODEL` when the code runs; the source's default is `openai:gpt-5.2`". This works through helpers, which is how projects usually write it:
+
+```python
+DEFAULT_MODEL = "openai:gpt-5.2-mini"
+
+
+def model_id() -> str:
+    return os.getenv("APP_MODEL", DEFAULT_MODEL)
+
+
+def get_model() -> OpenAIChatModel:
+    return OpenAIChatModel(model_id(), provider=OpenAIProvider(...))
+
+
+agent = Agent(get_model(), ...)
+```
+
+The agent's model is shown as the class `OpenAIChatModel`, with its model name from the environment variable `APP_MODEL`, the default `openai:gpt-5.2-mini`, and `get_model()` as what builds it.
+
+The call must be spelled out with literal arguments to be understood. A variable name that is itself computed (`os.getenv(name)`), a default that is not a literal string, `os.getenv("X") or "fallback"`, or a name such as `os` that the code assigns again is shown as the expression, as any other value computed at run time. `dedent` and `cleandoc` are evaluated only on one literal string; on anything else they are the expression too.
+
+### Tools that Pydantic AI defines
+
+Pydantic AI ships ready-made tools, such as `duckduckgo_search_tool()` in `pydantic_ai.common_tools`. Their names, descriptions and parameters are not written in your code, and they are not built into the analyser either. They are read, as source, from the **installed Pydantic AI**: the files of the `pydantic_ai` package are found from its `__path__` and parsed by the same analyser, without importing any of them. Only files of `pydantic_ai` are opened, never those of another installed package, such as the search client a tool calls.
+
+What is read depends on the version installed where `view` runs, which can differ from the one your project uses. The tool's panel says which version it was read from, and a warning does too when part of the tool could not be read. A tool whose function is chosen when the code runs, for example by an argument, keeps its name and description; its parameters are shown as unknown.
 
 Because the code is read and not run, it does not have to match the Pydantic AI you have installed. Arguments that earlier releases took are read as what they became: `result_type` as the output type, `mcp_servers` as toolsets, `builtin_tools` as native tools, and `Graph(nodes=[...])` as a graph.
 
@@ -130,7 +169,7 @@ A real project spreads an agent over several files: the model in `config.py`, th
 
 A file that is read only because another one imports it contributes its definitions, not blueprints of its own. Viewing `app/agents.py` shows the agents of that file, with tools, toolsets, output models and delegates from wherever they are defined. An agent in `app/config.py` is shown only if `app/agents.py` imports it by name, or one of its agents delegates to it.
 
-An import is looked up the way Python would look it up from the importing file: relative imports from its package, absolute ones from the directories above it up to the **project root**. The project root is the nearest directory above the target that holds a project file (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, a lock file, or `.git`), or the directory above the outermost package when there is none. Your home directory, the directory for temporary files and the root of a drive are never taken for one, since many projects live below them: for a file directly in one of them, no import is followed. A `src` layout works. Imports never leave the project: installed packages, virtual environments and `site-packages` are never opened, even when a copy of a package lies inside the project.
+An import is looked up the way Python would look it up from the importing file: relative imports from its package, absolute ones from the directories above it up to the **project root**. The project root is the nearest directory above the target that holds a project file (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, a lock file, or `.git`), or the directory above the outermost package when there is none. Your home directory, the directory for temporary files and the root of a drive are never taken for one, since many projects live below them: for a file directly in one of them, no import is followed. A `src` layout works. Imports never leave the project: installed packages, virtual environments and `site-packages` are never opened, even when a copy of a package lies inside the project. The one exception is the source of the installed Pydantic AI, for the [tools it defines](#tools-that-pydantic-ai-defines).
 
 Run this to see it on the demos that ship with pydantic-ai-viz, three files with seven agents and a graph:
 

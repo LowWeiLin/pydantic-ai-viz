@@ -118,7 +118,7 @@ Plain `pydantic-ai-viz view` cannot raise this: it reads the source and imports 
 
 ## `view` says a value is "decided at run time"
 
-The source computes it instead of spelling it out: a model read from an environment variable or returned by a factory that takes arguments, a prompt built by a function call, a toolset made by a function. `view` shows the code that computes it rather than guessing, and does not take a default passed to such a call, such as the second argument of `os.getenv`, for the value. [How view works](concepts/how-view-works.md#what-shows-as-decided-at-run-time-and-why) lists what is followed and what is not. To see the real value, pass the agent to [`serve`](reference/python-api.md#serve) and run it, or use `view --import` on code you trust.
+The source computes it instead of spelling it out: a model read from an environment variable or returned by a factory that takes arguments, a prompt built by a function call, a toolset made by a function. `view` shows the code that computes it rather than guessing, and does not take a default passed to such a call, such as the second argument of `os.getenv`, for the value. A model read from an environment variable is shown as `env NAME`, with the source's default labelled as a default. [How view works](concepts/how-view-works.md#what-shows-as-decided-at-run-time-and-why) lists what is followed and what is not. To see the real value, pass the agent to [`serve`](reference/python-api.md#serve) and run it, or use `view --import` on code you trust.
 
 ## `view` cannot find my agent
 

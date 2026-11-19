@@ -23,7 +23,7 @@ pydantic-ai-viz view TARGET...
 
 You can pass several targets. Imports between your own files are followed, so an agent in `agents.py` is drawn with the tools, output model and toolsets it imports from `tools.py` and `models.py`, and with the agents it delegates to wherever they live. The [CLI reference](../reference/cli.md#targets) has every form.
 
-`view` **reads the source and never runs it**: nothing is imported, so it does not matter whether the dependencies are installed, and a script that calls its agent at the bottom is safe to view. What the code computes when it runs, such as `Agent(get_model())` or `Agent(os.getenv("MODEL"))`, is shown as that expression, marked "decided at run time", with a warning on the agent card. [How view works](../concepts/how-view-works.md) explains what can be read and what cannot.
+`view` **reads the source and never runs it**: nothing is imported, so it does not matter whether the dependencies are installed, and a script that calls its agent at the bottom is safe to view. What the code computes when it runs, such as `Agent(get_model())`, is shown as that expression, marked "decided at run time", with a warning on the agent card. A model read from an environment variable, as in `Agent(os.getenv("MODEL", "openai:gpt-5.2"))` or through a helper of your project, is shown as `env MODEL`, with the model class when the code builds one and the source's default labelled as a default, never as the model. [How view works](../concepts/how-view-works.md) explains what can be read and what cannot.
 
 `view` serves the viewer and opens your browser, and prints what it read:
 
@@ -82,7 +82,7 @@ pviz.export_html(support_agent, "blueprint.html")
 
 Agent card
 
-:   The agent's label and description, a chip with the model name, the number of instructions, and a warnings badge if something could not be read. Models from the `test` and `function` providers get an **offline** chip, so a diagram of a test setup is never mistaken for production.
+:   The agent's label and description, a chip with the model name (or `env NAME` for a model name read from an environment variable; hover it for the class and the default), the number of instructions, and a warnings badge if something could not be read. Models from the `test` and `function` providers get an **offline** chip, so a diagram of a test setup is never mistaken for production.
 
     The label is the agent's `name`. An agent created without `name=` has none until its first run (Pydantic AI then infers it from the variable name), so the label falls back to the variable name when the agent was found in a module or file, and to `agent-1`, `agent-2`, ... otherwise.
 
@@ -115,7 +115,7 @@ On a blueprint, what you pick is kept in the page's address, so a link or a relo
 
 A blueprint is drawn without running an agent, so some things are out of reach by design. (A blueprint read from source has a few more gaps, each marked with a warning: see [what cannot be read](../concepts/how-view-works.md#what-shows-as-decided-at-run-time-and-why).)
 
-- **The text of dynamic instructions.** A function decorated with `@agent.instructions` or `@agent.system_prompt` is listed by name, marked dynamic. Its output depends on the run; you see the resolved text on each run's model requests.
+- **The text of dynamic instructions.** A function decorated with `@agent.instructions` or `@agent.system_prompt` is listed by name, marked dynamic. Its output depends on the run; you see the resolved text on each run's model requests. An f-string or `.format` template is shown whole, with the parts filled in at run time marked.
 - **Tools of MCP and dynamic toolsets,** as described above.
 - **Delegation that is not visible in the tool's code.** A blueprint read from source finds `await refunds_agent.run(...)` in a tool when `refunds_agent` can be traced to an agent: a variable of the module or of an enclosing scope, one imported from another file, an item of a dict or list written out in the source, or `ctx.deps.refunds` when the source shows the agent being passed as that dependency to `run`. It also finds an agent the tool hands to a function of your code that runs what it is given; an agent passed to anything else, such as a logging call, is not taken for a delegate. A blueprint read from a live object finds only module-level and enclosing-scope variables. Neither follows a helper function that picks and runs an agent of its own. Edges that were missed appear, solid, the first time the delegation runs.
 
