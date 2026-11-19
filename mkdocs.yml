@@ -86,6 +86,7 @@ nav:
       - Wire format: reference/wire-format.md
       - Compatibility: reference/compatibility.md
   - Troubleshooting: troubleshooting.md
+  - Roadmap: roadmap.md
   - Contributing: contributing.md
   - Changelog: changelog.md
 
