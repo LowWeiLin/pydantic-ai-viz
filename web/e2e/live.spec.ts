@@ -142,6 +142,17 @@ test.describe("real view server", () => {
       for (const warning of agent.warnings) {
         await expect(inspector).toContainText(warning.replace(/`/g, ""));
       }
+      // Each toolset with tools opens on a panel that lists them. The subject's own boxes come
+      // first on the canvas; a delegate drawn below it may have a toolset of the same name.
+      for (const toolset of agent.toolsets) {
+        const count = agent.tools.filter((tool) => tool.toolset === toolset.id).length;
+        if (count === 0) continue;
+        const name = `Toolset ${toolset.label}, ${count} tool${count === 1 ? "" : "s"}`;
+        await canvasNode(page, name).first().click({ position: { x: 40, y: 12 } });
+        await expect(
+          inspector.getByRole("list", { name: `Tools of ${toolset.label}` }).getByRole("button"),
+        ).toHaveCount(count);
+      }
     }
     for (const graph of graphs) {
       await page.goto(`${viewBase}#/graphs/${graph.id}`);
