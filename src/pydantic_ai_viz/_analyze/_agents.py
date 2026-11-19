@@ -220,6 +220,8 @@ class AgentExtractor:
         """``_AgentSite.key`` -> the agent, in discovery order."""
         self.instances: dict[int, list[_AgentSite]] = {}
         """``id(ast.Call)`` of an ``Agent(...)`` -> the agents it makes: one, or one per call of its function."""
+        self.runs_parameter: dict[tuple[int, str], bool] = {}
+        """``(id(function body), parameter)`` -> whether the function runs that parameter as an agent."""
         self._alias: dict[tuple[int, int], _AgentSite] = {}
         """Filled by ``blueprints``: an agent whose blueprint is the same as another's -> the one it is shown as."""
         self.toolsets: dict[int, _ToolsetSite] = {}
@@ -351,7 +353,7 @@ class AgentExtractor:
             bindings = body.bindings.get(parameter.arg, [])
             if len(bindings) != 1:
                 continue  # given another value in the body too: which one holds is up to the run
-            argument = self._argument_for(via.node, body, parameter.arg)
+            argument = self.argument_for(via.node, body, parameter.arg)
             if argument is not None:
                 found[id(bindings[0])] = Expression(argument, via.scope, via.node.lineno)
             elif not spread and parameter.arg in defaults and body.parent is not None:
@@ -740,7 +742,7 @@ class AgentExtractor:
             assert isinstance(owner, ast.FunctionDef | ast.AsyncFunctionDef)
             attached = False
             for site in self.calls_of.get(id(owner), ()):
-                argument = self._argument_for(site.node, handed.function, handed.parameter)
+                argument = self.argument_for(site.node, handed.function, handed.parameter)
                 if argument is None:
                     continue
                 receivers = self._receivers(argument, site.scope, site.node.lineno)
@@ -761,7 +763,7 @@ class AgentExtractor:
         placed = {id(spec) for site in (*self.agents.values(), *self.toolsets.values()) for spec in site.tools}
         self.unattached = [spec for spec in self.unattached if id(spec) not in placed]
 
-    def _argument_for(self, call: ast.Call, function: Scope, parameter: str) -> ast.expr | None:
+    def argument_for(self, call: ast.Call, function: Scope, parameter: str) -> ast.expr | None:
         """The argument a call passes for a parameter of the function it calls."""
         for keyword in call.keywords:
             if keyword.arg == parameter:
@@ -1972,10 +1974,10 @@ class _AgentBuilder:
             if isinstance(node.func, ast.Attribute) and node.func.attr in RUN_METHODS:
                 receiver = node.func.value
                 candidates.append(receiver)
-            candidates.extend(argument for argument in node.args if isinstance(argument, ast.Name | ast.Attribute))
-            candidates.extend(
-                keyword.value for keyword in node.keywords if isinstance(keyword.value, ast.Name | ast.Attribute)
-            )
+            else:
+                # Handed to a function of the analysed source that runs what it is given. Passed anywhere
+                # else (logged, compared, kept), an agent is not run, as far as the source shows.
+                candidates.extend(self._run_by_callee(node, body))
             for candidate in candidates:
                 agents = self.extractor.agents_at(unwrap(candidate), body, node.lineno, prefer=self.agent.via)
                 if not agents and candidate is receiver:
@@ -1989,6 +1991,55 @@ class _AgentBuilder:
                     if agent_id not in found:
                         found.append(agent_id)
         return found
+
+    def _run_by_callee(self, call: ast.Call, scope: Scope, depth: int = 0) -> list[ast.expr]:
+        """The arguments of a call that the function it calls runs: ``run_it(worker, text)`` -> ``[worker]``.
+
+        That function is one of the analysed source whose body calls a run method on the
+        parameter, or hands the parameter on to another such function.
+        """
+        callee = self.resolver.callee(call, scope, call.lineno)
+        if depth >= _MAX_HANDED_ON or not isinstance(callee, Definition) or isinstance(callee.node, ast.ClassDef):
+            return []
+        body, node = callee.body, callee.node
+        found: list[ast.expr] = []
+        for parameter in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]:
+            argument = self.extractor.argument_for(call, body, parameter.arg)
+            if isinstance(argument, ast.Name | ast.Attribute) and self._runs(body, parameter.arg, depth):
+                found.append(argument)
+        return found
+
+    def _runs(self, body: Scope, parameter: str, depth: int) -> bool:
+        """Whether a function's body runs its parameter as an agent, itself or through another function."""
+        key = (id(body), parameter)
+        known = self.extractor.runs_parameter.get(key)
+        if known is None:
+            self.extractor.runs_parameter[key] = False  # a function that hands the parameter to itself
+            known = self._runs_in(body, parameter, depth)
+            self.extractor.runs_parameter[key] = known
+        return known
+
+    def _runs_in(self, body: Scope, parameter: str, depth: int) -> bool:
+        if not isinstance(body.node, ast.FunctionDef | ast.AsyncFunctionDef):
+            return False
+        bindings = body.bindings.get(parameter, [])
+        if len(bindings) != 1 or bindings[0].kind != "opaque":
+            return False  # given another value in the body: what it runs may not be what it was handed
+        for node in ast.walk(body.node):
+            if not isinstance(node, ast.Call):
+                continue
+            method = node.func
+            if isinstance(method, ast.Attribute) and method.attr in RUN_METHODS:
+                runs = unwrap(method.value)
+                if isinstance(runs, ast.Name) and runs.id == parameter:
+                    return True
+            handed = [*node.args, *(keyword.value for keyword in node.keywords)]
+            if any(isinstance(item, ast.Name) and item.id == parameter for item in handed) and any(
+                isinstance(item, ast.Name) and item.id == parameter
+                for item in self._run_by_callee(node, body, depth + 1)
+            ):
+                return True
+        return False
 
     def _deps_path(self, node: ast.expr, spec: _ToolSpec) -> list[str] | None:
         """For ``ctx.deps`` or ``ctx.deps.field`` in a tool that takes the run context: what follows ``deps``."""

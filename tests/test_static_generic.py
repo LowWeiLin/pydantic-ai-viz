@@ -423,3 +423,52 @@ def test_a_registration_method_held_in_a_name_registers_on_its_agent(tmp_path: P
     assert [t.name for t in boss.tools] == ["lookup", "find", "fetch"]
     assert [(i.kind, i.function) for i in boss.instructions] == [("instructions", "module.today")]
     assert boss.warnings == []
+
+
+def test_an_agent_passed_to_a_call_is_delegated_to_only_where_the_call_runs_it(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        import logging
+        from pydantic_ai import Agent
+
+        log = logging.getLogger(__name__)
+        boss = Agent("test", name="boss")
+        worker = Agent("test", name="worker")
+        seen: list[Agent] = []
+
+
+        def run_it(agent: Agent, prompt: str) -> str:
+            return agent.run_sync(prompt).output
+
+
+        def pass_it_on(agent: Agent, prompt: str) -> str:
+            return run_it(agent, prompt)
+
+
+        def keep(agent: Agent) -> None:
+            seen.append(agent)
+
+
+        @boss.tool_plain
+        def just_logs(text: str) -> str:
+            log.info("worker is %s", worker)
+            print(isinstance(worker, Agent), worker)
+            keep(worker)
+            return text
+
+
+        @boss.tool_plain
+        def through_a_helper(text: str) -> str:
+            return run_it(worker, text)
+
+
+        @boss.tool_plain
+        def through_two(text: str) -> str:
+            return pass_it_on(prompt=text, agent=worker)
+        """,
+    )
+    assert [(d.tool_name, d.agent_id) for d in agent(found, "boss").delegates] == [
+        ("through_a_helper", "a2"),
+        ("through_two", "a2"),
+    ]
