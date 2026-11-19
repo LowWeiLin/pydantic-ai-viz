@@ -27,7 +27,8 @@ The third point is the rule the whole analyser follows: **a value is reported wh
 | `Agent(get_model(), ...)` | The expression `get_model()`, marked as computed, and a warning |
 | `Agent(OpenAIChatModel("gpt-5.2", provider=...))` | The model name `gpt-5.2`, and the constructor call as its expression |
 | `name="triage"`, or the variable the agent is assigned to | The agent's name, or its label |
-| `instructions="..."`, also concatenated or wrapped in `textwrap.dedent` | The text |
+| `instructions="..."`, also concatenated | The text |
+| `instructions=dedent("""...""")`, or any other call of a function that is not in your project | The call's source text, marked as decided at run time |
 | `instructions=f"Today is {today}"` | The template, with `{today}` left in place, marked dynamic |
 | `@agent.instructions` / `@agent.system_prompt`, or a function passed as an instruction | The function's name, marked dynamic |
 | `@agent.tool`, `@agent.tool_plain`, `tools=[f, Tool(g, name=...)]` | One tool each, with the registration's `name`, `description`, `retries` and `requires_approval` |
@@ -56,7 +57,9 @@ When a value depends on running the code, the blueprint says so in three ways:
 Typical cases:
 
 - **Computed arguments**: `Agent(settings.model)`, `instructions=load_prompt("triage")`, `tools=build_tools()`.
-- **Names from other files.** At present each file is read by itself together with the other files you name; a class or function imported from a file that is not analysed is known by name only, so an output type defined elsewhere has no schema.
+- **Anything outside the code that was read.** Environment variables, configuration files, command-line arguments, the network, and what a function of the standard library or of another package returns. None of them is evaluated, whichever library it comes from, and no default is taken from them: `Agent(os.getenv("MODEL", "openai:gpt-5.2"))` shows the expression `os.getenv("MODEL", "openai:gpt-5.2")`, not `gpt-5.2`. Every such value gets the same plain warning, "the model is set by `...`, so it is only known when the code runs".
+- **A name assigned in more than one place**, for example in both branches of an `if`. Which value it holds is decided when the code runs: a model held by such a name is shown as an expression, not as its last assignment, and tools or capabilities built that way get a warning that some of them depend on a condition.
+- **Names from installed packages.** Imports between your project's own files are followed, whether you name a file, a directory or a module (see [the targets of `view`](../reference/cli.md#targets)). A class or function imported from an installed package is known by name only, so an output type defined there has no schema.
 - **Defaults of Pydantic AI.** A setting the source does not mention stays empty. The analyser does not fill in what the installed Pydantic AI would use, because the code may be written for another version.
 - **Tools of MCP servers and dynamic toolsets.** They exist only once the server is running.
 - **Graph edges added in a loop or by a helper function.** The steps are listed, the edges that are written out are drawn, and a warning names the call that could not be followed.
