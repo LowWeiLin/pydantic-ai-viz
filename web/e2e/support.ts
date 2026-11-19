@@ -54,6 +54,10 @@ export const sampleSpan = (name: string): Span => {
 export const recording = (name: string, hash = "#/"): string =>
   `${FX}?src=recordings/${name}.pviz.jsonl${hash}`;
 
+/** Words that are true of a session with runs and of nothing else. */
+export const LIVE_WORDS =
+  /\bLive\b|Connected|Connecting|Waiting for a run|No runs|Reconnecting|Run again/;
+
 /** The blueprint-only fixture (what `pydantic-ai-viz view` writes), loaded as a file. */
 export const blueprintOnly = (hash = "#/"): string =>
   `${FX}?src=recordings/blueprint/newsroom.pviz.jsonl${hash}`;

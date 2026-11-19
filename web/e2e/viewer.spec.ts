@@ -11,6 +11,7 @@ import {
   dropConnection,
   FX,
   fixturePath,
+  LIVE_WORDS,
   manyBlueprints,
   openRun,
   PIPELINE,
@@ -877,10 +878,6 @@ test.describe("live", () => {
 });
 
 test.describe("blueprint-only view", () => {
-  /** Words that are true of a session with runs and of nothing else. */
-  const liveWords =
-    /\bLive\b|Connected|Connecting|Waiting for a run|No runs|Reconnecting|Run again/;
-
   test("served by `view`: it says what it is and never claims to be live", async ({ page }) => {
     const errors = trackErrors(page);
     await page.goto("/view/");
@@ -892,7 +889,7 @@ test.describe("blueprint-only view", () => {
     const about = sidebar.getByRole("region", { name: "About this view" });
     await expect(about).toContainText("Read from source code");
     await expect(about).toContainText("The code was parsed and never run");
-    await expect(page.locator("#root")).not.toContainText(liveWords, { useInnerText: true });
+    await expect(page.locator("#root")).not.toContainText(LIVE_WORDS, { useInnerText: true });
 
     // The notices of the analysis are a click away.
     await page.getByRole("button", { name: "1 notice" }).click();
@@ -907,7 +904,7 @@ test.describe("blueprint-only view", () => {
       timeout: 15_000,
     });
     await expect(page.locator("[data-mode]")).toHaveText("Blueprint");
-    await expect(page.locator("#root")).not.toContainText(liveWords, { useInnerText: true });
+    await expect(page.locator("#root")).not.toContainText(LIVE_WORDS, { useInnerText: true });
     await canvasNode(page, "Tool publish").click();
     await expect(page.getByRole("table", { name: "Parameters of publish" })).toBeVisible();
     // The browser reports the refused reconnects itself; the page must add nothing to that.
@@ -928,7 +925,7 @@ test.describe("blueprint-only view", () => {
     await expect(page.locator("[data-mode]")).toHaveText("Blueprint");
     await expect(page.getByRole("region", { name: "About this view" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Export" })).toHaveCount(0);
-    await expect(page.locator("#root")).not.toContainText(liveWords, { useInnerText: true });
+    await expect(page.locator("#root")).not.toContainText(LIVE_WORDS, { useInnerText: true });
     await page.waitForLoadState("networkidle");
     expect(requests).toEqual([url]);
     expect(errors).toEqual([]);
