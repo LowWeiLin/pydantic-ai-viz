@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import os
 import threading
 import types
 from pathlib import Path
@@ -636,3 +637,17 @@ def test_close_turns_instrumentation_off_when_the_previous_setting_cannot_be_rea
     with record():
         assert isinstance(Agent._instrument_default, InstrumentationSettings)  # pyright: ignore[reportPrivateUsage]
     assert Agent._instrument_default is False  # pyright: ignore[reportPrivateUsage]
+
+
+def test_an_instrumenting_session_quiets_the_pydantic_ai_banner_unless_the_user_chose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The banner would say "observability: off": the session's tracer provider is private.
+    monkeypatch.delenv("PYDANTIC_AI_NO_BANNER", raising=False)
+    with record(instrument=False):
+        assert "PYDANTIC_AI_NO_BANNER" not in os.environ
+    with record():
+        assert os.environ["PYDANTIC_AI_NO_BANNER"] == "1"
+    monkeypatch.setenv("PYDANTIC_AI_NO_BANNER", "0")
+    with record():
+        assert os.environ["PYDANTIC_AI_NO_BANNER"] == "0"

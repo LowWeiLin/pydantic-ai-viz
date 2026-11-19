@@ -7,6 +7,7 @@ import http.client
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -598,6 +599,42 @@ def test_view_on_source_without_agents_says_so_and_points_at_import(
         "Use --import to import the code instead (this runs it)",
     ]
     assert not (project / "x.html").exists()
+
+
+def test_view_on_a_directory_without_python_does_not_point_at_import(
+    capsys: pytest.CaptureFixture[str], project: Path
+) -> None:
+    (project / "empty").mkdir()
+    code, _, err = run_cli(capsys, "view", "empty", "--export", "x.html")
+    assert code == 2
+    assert "(0 files read)" in err
+    assert "--import" not in err
+
+
+def test_say_writes_typographic_punctuation_as_plain_ascii(capsys: pytest.CaptureFixture[str]) -> None:
+    cli._say("install it \u2014 \u201cquoted\u201d, it\u2019s 1\u20132\u2026 caf\xe9")  # pyright: ignore[reportPrivateUsage]
+    assert capsys.readouterr().out == 'install it - "quoted", it\'s 1-2... caf\\xe9\n'
+
+
+def test_a_busy_port_is_named_when_another_is_taken(
+    capsys: pytest.CaptureFixture[str],
+    project: Path,
+    opened: list[str],
+    serving: Callable[[Watch], list[Session]],
+) -> None:
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        served = serving(lambda session: None)
+        code, out, err = run_cli(capsys, "view", "viz_cli_agents.py", "--port", str(port), "--no-open")
+    (session,) = served
+    assert code == 0
+    assert session.url is not None
+    assert not session.url.endswith(f":{port}")
+    assert f"pydantic-ai-viz: note: port {port} is in use, so a free port was taken\n" in err
+    assert out == f"pydantic-ai-viz {pydantic_ai_viz.__version__} - serving {session.url} (Ctrl+C to stop)\n"
+    assert opened == []
 
 
 def test_view_on_a_directory_reads_every_file_below_it(capsys: pytest.CaptureFixture[str], project: Path) -> None:

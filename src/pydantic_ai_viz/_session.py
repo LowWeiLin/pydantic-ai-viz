@@ -273,6 +273,7 @@ class Session:
     Attributes:
         url: Address of the local viewer, or `None` when there is no server.
         title: Shown in the viewer's top bar and used for export file names.
+        session_id: 32 hexadecimal characters, new for every session.
         mode: `"capture"` when runs can appear in the session, `"blueprint"` when it
             only ever holds blueprints.
         include_content: Whether prompts, tool arguments and results are captured.
@@ -352,6 +353,9 @@ class Session:
                 previous = _compat.instrumentation_default()
                 self._previous_instrumentation = False if previous is None else previous
                 Agent.instrument_all(self._instrumentation)
+                # Pydantic AI's banner, printed at the first run, would say "observability: off"
+                # because the tracer provider is private. A value the user set is kept.
+                os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
             _open_sessions.append(self)
         if stream:
             _stream.add_sink(self._stream_delta)

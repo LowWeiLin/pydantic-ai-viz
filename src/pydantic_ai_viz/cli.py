@@ -53,8 +53,14 @@ class _UsageError(Exception):
     """The command line asks for something that does not exist; exit code 2."""
 
 
+_PLAIN_PUNCTUATION = str.maketrans(
+    {"\u2014": "-", "\u2013": "-", "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2026": "..."}
+)
+
+
 def _say(text: str, stream: TextIO | None = None) -> None:
     """Print as ASCII, at once: the output may be a pipe that another program is waiting on."""
+    text = text.translate(_PLAIN_PUNCTUATION)
     print(text.encode("ascii", "backslashreplace").decode("ascii"), file=stream or sys.stdout, flush=True)
 
 
@@ -87,7 +93,9 @@ def _write_outputs(session: Session, args: argparse.Namespace) -> None:
         _say(f"Wrote HTML export {session.export_html(args.export)}")
 
 
-def _announce(session: Session, *, open_browser: bool) -> None:
+def _announce(session: Session, *, open_browser: bool, port: int) -> None:
+    if port and session.url is not None and not session.url.endswith(f":{port}"):
+        _say(f"pydantic-ai-viz: note: port {port} is in use, so a free port was taken", sys.stderr)
     _say(f"pydantic-ai-viz {__version__} - serving {session.url} (Ctrl+C to stop)")
     if open_browser and session.url is not None:
         open_in_browser(session.url)
@@ -161,7 +169,7 @@ def _demo(args: argparse.Namespace) -> int:
                 scenario.start()
 
         threading.Thread(target=play_for_first_viewer, name="pydantic-ai-viz-demo-start", daemon=True).start()
-        _announce(session, open_browser=not args.no_open)
+        _announce(session, open_browser=not args.no_open, port=args.port)
         session.wait()
     return EXIT_OK
 
@@ -181,7 +189,7 @@ def _read_source(targets: list[str]) -> Analysis:
             f"no agents or graphs found in the source of {', '.join(targets)} "
             f"({_plural(len(analysis.files), 'file')} read). The code is read, not run: "
             "an agent built in a way that cannot be seen in the source is not found."
-            + ("" if remote else " Use --import to import the code instead (this runs it)")
+            + ("" if remote or not analysis.files else " Use --import to import the code instead (this runs it)")
         )
     unresolved = sum(len(blueprint.warnings) for blueprint in analysis.blueprints)
     summary = (
@@ -213,7 +221,7 @@ def _view(args: argparse.Namespace) -> int:
             _say(f"Wrote HTML export {session.export_html(args.export)}")
             return EXIT_OK
         serve_session(session, port=args.port)
-        _announce(session, open_browser=not args.no_open)
+        _announce(session, open_browser=not args.no_open, port=args.port)
         session.wait()
     return EXIT_OK
 
@@ -229,7 +237,7 @@ def _script_traceback(exc: BaseException, script: Path) -> str:
 def _run(args: argparse.Namespace) -> int:
     script = _existing_file(args.script, "script")
     with serve(stream=args.stream, include_content=not args.no_content, port=args.port, title=script.stem) as session:
-        _announce(session, open_browser=not args.no_open)
+        _announce(session, open_browser=not args.no_open, port=args.port)
         namespace: dict[str, Any] = {}
         # The script's agents are not known until it has run, so with --stream the token
         # listener goes on each agent as the script creates it.
