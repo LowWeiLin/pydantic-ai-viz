@@ -143,7 +143,7 @@ for (const scheme of ["dark", "light"] as const) {
         "aria-selected",
         "true",
       );
-      await expect(inspector).toContainText("retries");
+      await expect(inspector).toContainText("A retry is not a failure");
       await shoot(page, `hero-${scheme}.png`);
     });
   });
