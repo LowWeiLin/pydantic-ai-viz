@@ -144,12 +144,15 @@ id = "python-ai-kit"
 repo = "the-momentum/python-ai-kit"
 sha = "71b2d65b13b1a372e76977b9916547c90ed8a53a"
 licence = "MIT"
-exercises = "An application template: a FastAPI app whose agents are classes around one Agent built in a base class, and two workflows built with GraphBuilder from node classes added in a loop."
+exercises = "An application template: a FastAPI app whose agents are classes around one Agent built in a base class, with tools added by the derived classes, and two workflows built with GraphBuilder from node classes added in a loop."
 
 [project.expect]
 min_files = 92
 min_agents = 1
+min_tools = 1
 min_graphs = 2
+agents = ["agent"]
+tools = ["get_pdf"]
 graphs = ["UserAssistantWorkflow", "PDFWorkflow"]
 
 [[project]]
@@ -171,12 +174,12 @@ id = "code-puppy"
 repo = "mpfaffenberger/code_puppy"
 sha = "d5a84e684d915990c2cd0e27f677d792a96b627c"
 licence = "MIT"
-exercises = "A coding agent of about 800 files. Its one agent is assembled at run time from a registry of tools and MCP servers, so most of it is beyond reading; what the tests construct is not."
+exercises = "A coding agent of about 800 files. Its agent is assembled at run time: the tools are registered by functions looked up in a registry, so they can be counted but not placed. What its tests construct can be read."
 
 [project.expect]
 min_files = 804
 min_agents = 51
-min_tools = 16
+min_tools = 21
 agents = ["_new_pydantic_agent", "temp_agent"]
 tools = ["read_file", "create_file", "replace_in_file"]
 
