@@ -109,13 +109,18 @@ test.describe("real demo recordings", () => {
     await expect(page.locator("main")).toContainText(totals(recording));
     await expect(page.locator("main")).toContainText("1 retry");
 
-    // The retried call: amber, not red, and the inspector explains what happened.
+    // The retried call: amber, not red, and the inspector explains what happened. The retry is
+    // the first section of the call's details, above its arguments and result.
     const retried = recording.spans.find(
       (span) => span.kind === "tool_call" && span.data.retry !== null,
     );
     await page.locator(`[role="treeitem"][data-span="${retried?.span_id}"]`).click();
     const inspector = page.getByRole("complementary", { name: "Span details" });
-    await inspector.getByRole("tab", { name: "Error / Retry" }).click();
+    await expect(inspector.getByRole("tabpanel").getByRole("heading", { level: 4 })).toHaveText([
+      "Retry",
+      "Arguments",
+      "Result",
+    ]);
     await expect(inspector).toContainText("1 of 2 retries");
     await expect(inspector).toContainText("ToolRetryError");
 
