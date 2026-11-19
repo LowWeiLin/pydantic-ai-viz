@@ -8,14 +8,13 @@ spells out.
 
 from __future__ import annotations
 
-import copy
 from importlib import import_module
 from pathlib import Path
-from typing import Any
 
 import pytest
 from pydantic_ai import Agent
 from pydantic_graph import Graph
+from static_support import without_titles
 
 from pydantic_ai_viz import AgentBlueprint, Analysis, GraphBlueprint, analyze, record
 
@@ -36,24 +35,6 @@ def live_and_static(name: str) -> tuple[list[AgentBlueprint | GraphBlueprint], A
             live.append(GraphBlueprint.model_validate(event["graph"]))
     assert len(live) == sum(isinstance(value, Agent | Graph) for value in vars(module).values())
     return live, analyze(Path(module.__file__))
-
-
-def without_titles(schema: Any) -> Any:
-    """A schema without the per-field titles pydantic derives from field names."""
-    schema = copy.deepcopy(schema)
-    stack: list[Any] = [schema]
-    while stack:
-        item = stack.pop()
-        if isinstance(item, dict):
-            properties = item.get("properties")
-            if isinstance(properties, dict):
-                for field in properties.values():
-                    if isinstance(field, dict):
-                        field.pop("title", None)
-            stack.extend(item.values())
-        elif isinstance(item, list):
-            stack.extend(item)
-    return schema
 
 
 @pytest.mark.parametrize("name", DEMOS)

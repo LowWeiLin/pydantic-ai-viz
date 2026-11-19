@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import copy
+import importlib.util
+import sys
 import textwrap
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai_viz import AgentBlueprint, Analysis, GraphBlueprint, analyze
+from pydantic_ai import Agent
+
+from pydantic_ai_viz import AgentBlueprint, Analysis, GraphBlueprint, analyze, blueprint
 from pydantic_ai_viz._models import Tool
 
 FIXTURES = Path(__file__).parent / "fixtures" / "static"
@@ -52,3 +57,36 @@ def one_agent(directory: Path, source: str) -> AgentBlueprint:
     found = analyze_source(directory, source)
     assert len(found.agents) == 1, [b.label for b in found.agents]
     return found.agents[0]
+
+
+def live_agents(path: Path) -> dict[str, AgentBlueprint]:
+    """Run a fixture file and describe each agent it makes from the live object, by label."""
+    spec = importlib.util.spec_from_file_location(f"live_{path.stem}", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses look their module up while the class is made
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        del sys.modules[spec.name]
+    found = [blueprint(value) for value in vars(module).values() if isinstance(value, Agent)]
+    return {b.label: b for b in found if isinstance(b, AgentBlueprint)}
+
+
+def without_titles(schema: Any) -> Any:
+    """A schema without the per-field titles pydantic derives from field names."""
+    schema = copy.deepcopy(schema)
+    stack: list[Any] = [schema]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            properties = item.get("properties")
+            if isinstance(properties, dict):
+                for field in properties.values():
+                    if isinstance(field, dict):
+                        field.pop("title", None)
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return schema

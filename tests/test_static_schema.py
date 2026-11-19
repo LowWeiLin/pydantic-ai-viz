@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import ast
-import importlib.util
-import sys
 import textwrap
 from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic_ai import Agent
-from static_support import FIXTURES, agent, analyze_source, fixture, one_agent, tool
+from static_support import (
+    FIXTURES,
+    agent,
+    analyze_source,
+    fixture,
+    live_agents,
+    one_agent,
+    properties,
+    tool,
+    without_titles,
+)
 
-from pydantic_ai_viz import AgentBlueprint, blueprint
 from pydantic_ai_viz._analyze._docstring import describe, infer_style
 from pydantic_ai_viz._analyze._resolve import END_OF_MODULE, Project, Resolver
 from pydantic_ai_viz._analyze._schema import SchemaBuilder
@@ -274,6 +280,7 @@ def test_models_dataclasses_typed_dicts_named_tuples_and_enums() -> None:
             "Size": {"enum": ["s", "l"], "title": "Size", "type": "string"},
             "Level": {"enum": [1, 2], "title": "Level", "type": "integer"},
         },
+        "additionalProperties": False,  # from `model_config = {"extra": "forbid"}`
         "description": "An item.",
         "properties": {
             "id": {"type": "integer"},  # inherited from Base, in its place
@@ -551,17 +558,7 @@ def test_output_markers_set_the_mode() -> None:
 
 
 def test_output_modes_read_from_source_are_the_ones_pydantic_ai_picks() -> None:
-    spec = importlib.util.spec_from_file_location("outputs_fixture", FIXTURES / "outputs.py")
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # dataclasses look their module up while the class is made
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        del sys.modules[spec.name]
-    agents = [blueprint(value) for value in vars(module).values() if isinstance(value, Agent)]
-    live = {b.label: b.output for b in agents if isinstance(b, AgentBlueprint)}
+    live = {name: b.output for name, b in live_agents(FIXTURES / "outputs.py").items()}
     found = {b.label: b.output for b in fixture("outputs.py").agents}
     assert set(found) == set(live)
     assert {name: (o.mode, o.allows_text) for name, o in found.items()} == {
@@ -687,3 +684,83 @@ def test_a_docstring_is_still_described_when_griffe_is_unusable(monkeypatch: pyt
         "Fetch a page.\n\nArgs:\n    url: Where.",
         {},
     )
+
+
+CONFIGURED = """
+from typing import ClassVar
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic_ai import Agent
+
+
+class Base(BaseModel):
+    model_config = ConfigDict(use_attribute_docstrings=True)
+
+
+class Answer(Base):
+    model_config = ConfigDict(title="The answer", extra="forbid")
+
+    text: str
+    \"\"\"What was found.\"\"\"
+    score: float = Field(0.5, description="From the field.")
+    \"\"\"Not this one: the field gives one.\"\"\"
+
+
+class Loose(BaseModel, extra="allow"):
+    model_config: ClassVar[ConfigDict] = {"title": "Anything goes"}
+
+    name: str
+    \"\"\"Not read: attribute docstrings are off here.\"\"\"
+
+
+answer = Agent("test", name="answer", output_type=Answer)
+loose = Agent("test", name="loose", output_type=Loose)
+"""
+
+
+def test_a_pydantic_model_configuration_written_out_shapes_the_schema_as_pydantic_does(tmp_path: Path) -> None:
+    found = analyze_source(tmp_path, CONFIGURED)
+    live = live_agents(tmp_path / "module.py")
+    for name in ("answer", "loose"):
+        static, expected = agent(found, name).output.json_schema, live[name].output.json_schema
+        assert without_titles(static) == without_titles(expected), name
+        assert agent(found, name).warnings == []
+    answer = agent(found, "answer").output.json_schema
+    assert isinstance(answer, dict)
+    assert (answer["title"], answer["additionalProperties"]) == ("The answer", False)
+    assert properties(answer)["text"]["description"] == "What was found."
+
+
+def test_a_model_configuration_the_source_does_not_spell_out_is_named_in_a_warning(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from pydantic import BaseModel, ConfigDict
+        from pydantic.alias_generators import to_camel
+        from pydantic_ai import Agent
+        from settings import shared_config
+
+
+        class Built(BaseModel):
+            model_config = shared_config()
+
+            name: str
+
+
+        class Camel(BaseModel):
+            model_config = ConfigDict(alias_generator=to_camel)
+
+            first_name: str
+
+
+        built = Agent("test", name="built", output_type=Built)
+        camel = Agent("test", name="camel", output_type=Camel)
+        """,
+    )
+    assert agent(found, "built").warnings == [
+        "in the output schema, the configuration of the model `Built` is `shared_config()`; how it changes "
+        "the schema is only known when the code runs"
+    ]
+    assert agent(found, "camel").warnings == [
+        "in the output schema, the configuration of the model `Camel` sets `alias_generator`, which changes "
+        "the schema in a way that is only known when the code runs"
+    ]

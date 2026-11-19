@@ -1377,6 +1377,8 @@ class _AgentBuilder:
                 else f"the schema of the output type {names} cannot be read from the analysed source, "
                 "so it is not shown"
             )
+        for note in builder.notes:
+            self.warn(f"in the output schema, {note}")
         if document is not None and set(document) == {"x-python-type"}:
             document = None
         where = builder.locations[0] if builder.locations else None
@@ -1991,6 +1993,8 @@ class _AgentBuilder:
                 f"the parameters of the tool `{name}` are incomplete: {names} could not be resolved "
                 "from the analysed source"
             )
+        for note in builder.notes:
+            self.warn(f"in the parameters of the tool `{name}`, {note}")
         return Tool(
             name=name,
             toolset=toolset,

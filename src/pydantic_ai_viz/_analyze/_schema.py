@@ -16,6 +16,7 @@ that are pydantic models, dataclasses, ``TypedDict``s, ``NamedTuple``s or enums.
 from __future__ import annotations
 
 import ast
+import inspect
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias, cast
 
@@ -100,6 +101,15 @@ _ARRAYS = frozenset(
 )
 _SETS = frozenset({"set", "Set", "frozenset", "FrozenSet", "AbstractSet", "MutableSet"})
 _MAPPINGS = frozenset({"dict", "Dict", "Mapping", "MutableMapping", "defaultdict", "OrderedDict"})
+_CONFIG_READ = frozenset({"title", "extra", "use_attribute_docstrings", "json_schema_extra"})
+"""Keys of a pydantic model configuration whose effect on the schema is applied when they are written out."""
+_CONFIG_SCHEMA_KEYS = _CONFIG_READ | {
+    "alias_generator",
+    "field_title_generator",
+    "model_title_generator",
+    "json_schema_mode_override",
+}
+"""Keys of a pydantic model configuration that change the JSON Schema of the model."""
 _TRANSPARENT = frozenset({"Final", "Required", "NotRequired", "ReadOnly", "ClassVar", "InitVar"})
 
 _CONSTRAINTS: dict[str, str] = {
@@ -159,6 +169,10 @@ class SchemaBuilder:
         """Source text of each type that could not be resolved, once each, in order."""
         self.locations: list[Definition] = []
         """The classes whose fields were read, in the order they were first reached."""
+        self.notes: list[str] = []
+        """What the source leaves open about the schema beyond unresolved types, once each, in order."""
+        self._configs: dict[int, dict[str, Any]] = {}
+        """``id(class node)`` -> the pydantic model configuration read for it, its bases' included."""
         self._names: dict[int, str] = {}
         self._nodes = 0
 
@@ -409,6 +423,15 @@ class SchemaBuilder:
         description = ast.get_docstring(node)
         if description:
             body["description"] = description
+        if kind == "model":
+            config = self._model_config(definition, 0)
+            if isinstance(config.get("title"), str):
+                body["title"] = config["title"]
+            if config.get("extra") in ("forbid", "allow"):
+                body["additionalProperties"] = config["extra"] == "allow"
+            extra: Any = config.get("json_schema_extra")
+            if isinstance(extra, dict):
+                body.update(cast("Schema", extra))
         self.defs[name] = body
         return {"$ref": f"#/$defs/{name}"}
 
@@ -462,8 +485,10 @@ class SchemaBuilder:
         for keyword in node.keywords:
             if keyword.arg == "total" and isinstance(keyword.value, ast.Constant) and keyword.value.value is False:
                 total = False
+        # Pydantic reads a field's description from the string written under it, when the configuration asks.
+        docstrings = kind == "model" and self._model_config(definition, 0).get("use_attribute_docstrings") is True
         body = definition.body
-        for statement in node.body:
+        for index, statement in enumerate(node.body):
             if not isinstance(statement, ast.AnnAssign) or not isinstance(statement.target, ast.Name):
                 continue
             name = statement.target.id
@@ -476,8 +501,102 @@ class SchemaBuilder:
                 item.required = wrapper == "Required" or (total and wrapper != "NotRequired")
             elif statement.value is not None:
                 self._default(item, Expression(statement.value, body, statement.lineno))
+            following = node.body[index + 1] if index + 1 < len(node.body) else None
+            if (
+                docstrings
+                and "description" not in item.extras
+                and isinstance(following, ast.Expr)
+                and isinstance(following.value, ast.Constant)
+                and isinstance(following.value.value, str)
+            ):
+                item.extras["description"] = inspect.cleandoc(following.value.value)
             fields[item.name] = item
         return list(fields.values())
+
+    def _model_config(self, definition: Definition, depth: int) -> dict[str, Any]:
+        """The configuration of a pydantic model as far as it is written out: its bases', then its own.
+
+        Read from ``model_config = ConfigDict(...)`` or ``= {...}`` and from the class keywords
+        (``class Answer(BaseModel, extra="forbid")``). What cannot be read is named in a note.
+        """
+        node = definition.node
+        assert isinstance(node, ast.ClassDef)
+        known = self._configs.get(id(node))
+        if known is not None:
+            return known
+        config: dict[str, Any] = {}
+        self._configs[id(node)] = config  # a class that names itself among its bases ends here
+        if depth <= 8:
+            for base in node.bases:
+                target = self._callable(base, definition.scope)
+                if isinstance(target, Definition) and isinstance(target.node, ast.ClassDef):
+                    config.update(self._model_config(target, depth + 1))
+        body = definition.body
+        for statement in node.body:
+            if not isinstance(statement, ast.Assign | ast.AnnAssign):
+                continue
+            targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+            value = statement.value
+            if value is not None and any(isinstance(t, ast.Name) and t.id == "model_config" for t in targets):
+                self._read_config(Expression(value, body, statement.lineno), node.name, config)
+        keywords = [keyword for keyword in node.keywords if keyword.arg != "metaclass"]
+        self._config_items(
+            [(keyword.arg, keyword.value) for keyword in keywords], definition.scope, node.lineno, node.name, config
+        )
+        return config
+
+    def _read_config(self, written: Expression, model: str, config: dict[str, Any]) -> None:
+        """Add what ``model_config = ...`` sets to ``config``."""
+        target = self.resolver.resolve(written.node, written.scope, written.line)
+        found = target if isinstance(target, Expression) else written
+        node = found.node
+        items: list[tuple[str | None, ast.expr]] | None = None
+        if isinstance(node, ast.Call):
+            callee = self.resolver.callee(node, found.scope, found.line)
+            if isinstance(callee, External) and callee.comes_from("pydantic", "ConfigDict") and not node.args:
+                items = [(keyword.arg, keyword.value) for keyword in node.keywords]
+        elif isinstance(node, ast.Dict):
+            items = []
+            for key, value in zip(node.keys, node.values, strict=True):
+                if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                    items = None
+                    break
+                items.append((key.value, value))
+        if items is None or any(key is None for key, _ in items):
+            self._note(
+                f"the configuration of the model `{model}` is `{_text(written)}`; how it changes the schema "
+                "is only known when the code runs"
+            )
+            return
+        self._config_items(items, found.scope, found.line, model, config)
+
+    def _config_items(
+        self, items: list[tuple[str | None, ast.expr]], scope: Scope, line: int, model: str, config: dict[str, Any]
+    ) -> None:
+        open_about = f"the configuration of the model `{model}`"
+        for key, value in items:
+            if key is None:
+                written = _text(Expression(value, scope, line))
+                self._note(
+                    f"{open_about} takes `**{written}`; how it changes the schema is only known when the code runs"
+                )
+                continue
+            try:
+                config[key] = literal(self.resolver, value, scope, line)
+            except NotLiteral:
+                config.pop(key, None)
+                if key in _CONFIG_SCHEMA_KEYS:
+                    self._note(
+                        f"{open_about} sets `{key}`, which changes the schema in a way that is only known "
+                        "when the code runs"
+                    )
+                continue
+            if key in _CONFIG_SCHEMA_KEYS - _CONFIG_READ and config[key] is not None:
+                self._note(f"{open_about} sets `{key}`, which changes the schema in a way that is not shown here")
+
+    def _note(self, text: str) -> None:
+        if text not in self.notes:
+            self.notes.append(text)
 
     def _outer_wrapper(self, annotation: Expression) -> str | None:
         node = annotation.node
