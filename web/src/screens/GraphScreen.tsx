@@ -9,16 +9,23 @@ import { graphCanvasModel } from "../data/selectors";
 import { useViewer } from "../data/store";
 import { GraphInspector } from "../inspector/BlueprintInspector";
 import { BlueprintInspector } from "../inspector/Inspector";
+import type { Reveal } from "../inspector/parts";
 import { plural } from "../shell/format";
 import { NotFound, WaitingForRun } from "../shell/states";
 import { Workspace } from "../shell/Workspace";
 import { Chip } from "../ui/Badge";
 import { CopyButton } from "../ui/CopyButton";
-import { ScreenBar } from "./parts";
+import { ScreenBar, WarningsChip } from "./parts";
 
 function GraphBlueprintView({ id }: { id: string }) {
   const data = useViewer((state) => state.data);
   const [picked, setPicked] = useState<CanvasTarget | null>(null);
+  // Set by the warning count: the graph's own panel, at its warnings.
+  const [reveal, setReveal] = useState<Reveal | null>(null);
+  const pick = (next: CanvasTarget | null): void => {
+    setReveal(null);
+    setPicked(next);
+  };
   const model = useMemo(() => graphCanvasModel(data, id, null), [data, id]);
   const highlight = useMemo(() => (picked ? [picked] : []), [picked]);
   if (!model) return null;
@@ -39,9 +46,13 @@ function GraphBlueprintView({ id }: { id: string }) {
               <>
                 <Chip tone="graph">{plural(graph.nodes.length, "node")}</Chip>
                 <Chip tone="graph">{plural(graph.edges.length, "edge")}</Chip>
-                {graph.warnings.length > 0 && (
-                  <Chip icon="warning">{plural(graph.warnings.length, "warning")}</Chip>
-                )}
+                <WarningsChip
+                  count={graph.warnings.length}
+                  onShow={() => {
+                    setPicked(null);
+                    setReveal({ section: "warnings" });
+                  }}
+                />
               </>
             }
             aside={
@@ -54,8 +65,8 @@ function GraphBlueprintView({ id }: { id: string }) {
             <GraphCanvas
               model={model}
               highlight={highlight}
-              onPick={setPicked}
-              onClear={() => setPicked(null)}
+              onPick={pick}
+              onClear={() => pick(null)}
             />
           </div>
         </div>
@@ -64,9 +75,10 @@ function GraphBlueprintView({ id }: { id: string }) {
         picked ? (
           <BlueprintInspector target={picked} graph={graph} />
         ) : (
-          <GraphInspector graph={graph} />
+          <GraphInspector graph={graph} reveal={reveal} />
         )
       }
+      openRequest={reveal}
     />
   );
 }

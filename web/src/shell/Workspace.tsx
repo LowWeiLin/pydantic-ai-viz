@@ -10,7 +10,14 @@
  *
  * A screen passes what it has; a missing slot takes no space.
  */
-import { type KeyboardEvent, type PointerEvent, type ReactNode, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { IconButton } from "../ui/Button";
 import { Tooltip } from "../ui/overlays";
 
@@ -44,11 +51,17 @@ export function Workspace({
   inspector,
   dock,
   inspectorLabel = "Inspector",
+  openRequest = null,
 }: {
   main: ReactNode;
   inspector?: ReactNode;
   dock?: ReactNode;
   inspectorLabel?: string;
+  /**
+   * Something on the screen asks to be shown in the inspector (a new object each time): a
+   * collapsed inspector, or the drawer of a small window, opens for it.
+   */
+  openRequest?: object | null;
 }) {
   const [width, setWidth] = useState(() => {
     const stored = Number(readStored(WIDTH_KEY));
@@ -94,6 +107,12 @@ export function Workspace({
     setCollapsed(!collapsed);
     store(COLLAPSED_KEY, collapsed ? "0" : "1");
   };
+
+  useEffect(() => {
+    if (openRequest === null) return;
+    setCollapsed(false);
+    store(COLLAPSED_KEY, "0");
+  }, [openRequest]);
 
   const showInspector = inspector !== undefined && !collapsed;
   return (

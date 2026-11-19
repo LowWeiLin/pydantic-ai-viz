@@ -1,6 +1,9 @@
 /** Layout pieces shared by the screens and the inspector. */
 import type { ReactNode } from "react";
+import { plural } from "../shell/format";
+import { Chip } from "../ui/Badge";
 import { Icon, type IconName } from "../ui/Icon";
+import { Tooltip } from "../ui/overlays";
 import { cx, type Tone, toneClass } from "../ui/tone";
 
 /**
@@ -42,6 +45,27 @@ export function ScreenBar({
       {chips && <div className="flex flex-wrap items-center gap-1.5">{chips}</div>}
       {aside && <div className="ml-auto flex items-center gap-2">{aside}</div>}
     </header>
+  );
+}
+
+/**
+ * How many warnings a blueprint has, above its canvas. The list is in the blueprint's panel:
+ * the chip opens the panel there, so the count and the list are one fact in two sizes.
+ */
+export function WarningsChip({ count, onShow }: { count: number; onShow: () => void }) {
+  if (count === 0) return null;
+  const label = plural(count, "warning");
+  return (
+    <Tooltip content="Show them in the panel">
+      <button
+        type="button"
+        onClick={onShow}
+        aria-label={`${label}: show them in the panel`}
+        className="inline-flex cursor-pointer rounded-control border-0 bg-transparent p-0"
+      >
+        <Chip icon="warning">{label}</Chip>
+      </button>
+    </Tooltip>
   );
 }
 

@@ -576,7 +576,13 @@ export function UnlistedToolInspector({ agent, name }: { agent: AgentBlueprint; 
 
 // ---------- graph ----------
 
-export function GraphInspector({ graph }: { graph: GraphBlueprint }) {
+export function GraphInspector({
+  graph,
+  reveal,
+}: {
+  graph: GraphBlueprint;
+  reveal?: Reveal | null;
+}) {
   const types = known([
     graph.state_type !== null && ["State", <code key="state">{graph.state_type}</code>],
     graph.input_type !== null && ["Input", <code key="input">{graph.input_type}</code>],
@@ -592,6 +598,7 @@ export function GraphInspector({ graph }: { graph: GraphBlueprint }) {
       </InspectorHeader>
       <Sections
         label="Graph blueprint"
+        reveal={reveal}
         items={present([
           warningsSection(graph.warnings),
           types.length > 0 && { id: "types", title: "Types", content: <Facts items={types} /> },

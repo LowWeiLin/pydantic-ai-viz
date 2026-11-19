@@ -10,16 +10,21 @@ import { agentMermaid } from "../data/mermaid";
 import { canvasModel } from "../data/selectors";
 import { useViewer } from "../data/store";
 import { BlueprintInspector } from "../inspector/Inspector";
-import { plural } from "../shell/format";
+import type { Reveal } from "../inspector/parts";
 import { NotFound, WaitingForRun } from "../shell/states";
 import { Workspace } from "../shell/Workspace";
-import { Chip } from "../ui/Badge";
 import { CopyButton } from "../ui/CopyButton";
-import { ScreenBar } from "./parts";
+import { ScreenBar, WarningsChip } from "./parts";
 
 function AgentBlueprintView({ id }: { id: string }) {
   const data = useViewer((state) => state.data);
   const [picked, setPicked] = useState<CanvasTarget | null>(null);
+  // Set by the warning count: the agent's own panel, at its warnings.
+  const [reveal, setReveal] = useState<Reveal | null>(null);
+  const pick = (next: CanvasTarget | null): void => {
+    setReveal(null);
+    setPicked(next);
+  };
   const model = useMemo(() => canvasModel(data, id, null), [data, id]);
   const target = useMemo<CanvasTarget>(
     () => picked ?? { kind: "agent", agentId: id },
@@ -42,7 +47,13 @@ function AgentBlueprintView({ id }: { id: string }) {
             title={agent.label}
             chips={
               agent.warnings.length > 0 ? (
-                <Chip icon="warning">{plural(agent.warnings.length, "warning")}</Chip>
+                <WarningsChip
+                  count={agent.warnings.length}
+                  onShow={() => {
+                    setPicked(null);
+                    setReveal({ section: "warnings" });
+                  }}
+                />
               ) : undefined
             }
             aside={<CopyButton text={() => agentMermaid(model)} label="Copy Mermaid" />}
@@ -51,13 +62,14 @@ function AgentBlueprintView({ id }: { id: string }) {
             <AgentCanvas
               model={model}
               highlight={highlight}
-              onPick={setPicked}
-              onClear={() => setPicked(null)}
+              onPick={pick}
+              onClear={() => pick(null)}
             />
           </div>
         </div>
       }
-      inspector={<BlueprintInspector target={target} />}
+      inspector={<BlueprintInspector target={target} reveal={reveal} />}
+      openRequest={reveal}
     />
   );
 }

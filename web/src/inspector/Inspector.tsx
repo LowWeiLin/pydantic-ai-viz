@@ -29,17 +29,21 @@ export const SpanInspector = memo(
 export function BlueprintInspector({
   target,
   graph,
+  reveal: asked = null,
 }: {
   target: CanvasTarget;
   graph?: GraphBlueprint | null;
+  /** A section of the agent's panel that the screen asks to show, e.g. its warnings. */
+  reveal?: Reveal | null;
 }) {
   const agents = useViewer((state) => state.data.agents);
   // The output node and the model chip are parts of the agent's panel: picking one brings its
   // section into view. A new target object asks again, so a second click scrolls back to it.
-  const reveal = useMemo<Reveal | null>(
+  const picked = useMemo<Reveal | null>(
     () => (target.kind === "output" || target.kind === "model" ? { section: target.kind } : null),
     [target],
   );
+  const reveal = asked ?? picked;
   if (target.kind === "graphNode") {
     const node = graph?.nodes.find((n) => n.id === target.nodeId);
     if (graph && node) return <GraphNodeInspector graph={graph} node={node} />;

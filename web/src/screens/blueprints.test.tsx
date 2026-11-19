@@ -119,6 +119,42 @@ describe("a blueprint read from source", () => {
   });
 });
 
+describe("the warning count above the canvas", () => {
+  test("opens the blueprint's own panel at its warnings, from a tool or a closed panel", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/agents/a2";
+    render(<App plan={embedded(NEWSROOM)} />);
+    const main = screen.getByRole("main");
+    const chip = within(main).getByRole("button", {
+      name: "3 warnings: show them in the panel",
+    });
+
+    // From a tool's panel, back to the agent's, where the warnings are listed.
+    await user.click(screen.getByRole("button", { name: "Tool search_wires" }));
+    expect(screen.getByRole("heading", { level: 3, name: "search_wires" })).toBeInTheDocument();
+    await user.click(chip);
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    expect(within(details).getByRole("heading", { level: 3, name: "reporter" })).toBeVisible();
+    expect(details.querySelector('[data-section="warnings"]')).not.toBeNull();
+
+    // A closed panel opens for it.
+    await user.click(screen.getByRole("button", { name: "Hide blueprint details" }));
+    expect(screen.queryByRole("complementary", { name: "Blueprint details" })).toBeNull();
+    await user.click(chip);
+    expect(screen.getByRole("complementary", { name: "Blueprint details" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide blueprint details" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  test("is not there for a blueprint without warnings", () => {
+    window.location.hash = "#/agents/a3";
+    render(<App plan={embedded(NEWSROOM)} />);
+    expect(within(screen.getByRole("main")).queryByRole("button", { name: /warning/ })).toBeNull();
+  });
+});
+
 describe("Copy Mermaid", () => {
   test("Copy Mermaid works for an agent, as it does for a graph", async () => {
     const user = userEvent.setup();
