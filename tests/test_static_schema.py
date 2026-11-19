@@ -17,7 +17,7 @@ from pydantic_ai_viz._analyze._source import Module, parse_module
 
 PRELUDE = """
 from __future__ import annotations
-import datetime, decimal, enum, pathlib, typing, uuid
+import datetime, decimal, enum, pathlib, pydantic, types, typing, uuid
 import typing as t
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -57,6 +57,16 @@ def schema_of(annotation: str, definitions: str = "") -> tuple[dict[str, Any], l
         ("dict", {"additionalProperties": True, "type": "object"}),
         ("list[str]", {"items": {"type": "string"}, "type": "array"}),
         ("typing.List[int]", {"items": {"type": "integer"}, "type": "array"}),
+        ("pydantic.AwareDatetime", {"format": "date-time", "type": "string"}),
+        ("pydantic.PastDate", {"format": "date", "type": "string"}),
+        ("pydantic.NegativeInt", {"exclusiveMaximum": 0, "type": "integer"}),
+        ("pydantic.NonPositiveFloat", {"maximum": 0, "type": "number"}),
+        ("pydantic.FiniteFloat", {"type": "number"}),
+        ("pydantic.UUID4", {"format": "uuid4", "type": "string"}),
+        ("pydantic.FilePath", {"format": "file-path", "type": "string"}),
+        ("pydantic.DirectoryPath", {"format": "directory-path", "type": "string"}),
+        ("pydantic.Base64Str", {"format": "base64", "type": "string"}),
+        ("types.NoneType", {"type": "null"}),
         ("t.Sequence[int]", {"items": {"type": "integer"}, "type": "array"}),
         ("Iterable[float]", {"items": {"type": "number"}, "type": "array"}),
         ("set[str]", {"items": {"type": "string"}, "type": "array", "uniqueItems": True}),
@@ -174,6 +184,34 @@ def test_aliases_and_new_types_are_followed() -> None:
         "prefixItems": [{"type": "integer"}, {"items": {"type": "string"}, "type": "array"}],
         "type": "array",
     }
+
+
+def test_a_typed_dict_made_by_a_call_has_the_keys_of_the_call_as_fields() -> None:
+    definitions = """
+        Point = TypedDict("Point", {"x": float, "y": float})
+        Loose = TypedDict("Loose", {"x": float, "tags": list[str]}, total=False)
+        Computed = TypedDict("Computed", fields())
+        Keyed = TypedDict("Keyed", {key(): int})
+    """
+    assert schema_of("Point", definitions) == (
+        {
+            "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
+            "required": ["x", "y"],
+            "title": "Point",
+            "type": "object",
+        },
+        [],
+    )
+    assert schema_of("Loose", definitions) == (
+        {
+            "properties": {"x": {"type": "number"}, "tags": {"items": {"type": "string"}, "type": "array"}},
+            "title": "Loose",
+            "type": "object",
+        },
+        [],
+    )
+    assert schema_of("Computed", definitions) == ({"x-python-type": "Computed"}, ["Computed"])
+    assert schema_of("Keyed", definitions) == ({"x-python-type": "Keyed"}, ["Keyed"])
 
 
 def test_models_dataclasses_typed_dicts_named_tuples_and_enums() -> None:
@@ -501,6 +539,38 @@ def test_output_markers_set_the_mode() -> None:
     assert isinstance(employee, dict)
     assert employee["$ref"] == "#/$defs/Employee"  # it refers to itself through `manager`
     assert agent(found, "person").output.location is not None
+
+
+def test_deferred_tool_requests_are_named_as_an_output_and_left_out_of_what_the_model_writes(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from pydantic import BaseModel
+        from pydantic_ai import Agent, DeferredToolRequests
+
+
+        class Plan(BaseModel):
+            steps: list[str]
+
+
+        text = Agent("test", output_type=[str, DeferredToolRequests])
+        union = Agent("test", output_type=Plan | DeferredToolRequests)
+        listed = Agent("test", output_type=[Plan, DeferredToolRequests])
+        """,
+    )
+    plan = {
+        "properties": {"steps": {"items": {"type": "string"}, "type": "array"}},
+        "required": ["steps"],
+        "title": "Plan",
+        "type": "object",
+    }
+    text = agent(found, "text").output
+    assert (text.mode, text.type_name, text.json_schema) == ("text", "str | DeferredToolRequests", {"type": "string"})
+    union = agent(found, "union").output
+    assert (union.mode, union.type_name, union.json_schema) == ("auto", "Plan | DeferredToolRequests", plan)
+    listed = agent(found, "listed").output
+    assert (listed.mode, listed.type_name, listed.json_schema) == ("auto", "Plan | DeferredToolRequests", plan)
+    assert [blueprint.warnings for blueprint in found.agents] == [[], [], []]
 
 
 # ---------------------------------------------------------------- docstrings

@@ -64,11 +64,33 @@ _SCALARS: dict[tuple[str, str], Schema] = {
     ("pydantic", "NonNegativeInt"): {"minimum": 0, "type": "integer"},
     ("pydantic", "PositiveFloat"): {"exclusiveMinimum": 0, "type": "number"},
     ("pydantic", "NonNegativeFloat"): {"minimum": 0, "type": "number"},
+    ("pydantic", "AwareDatetime"): {"format": "date-time", "type": "string"},
+    ("pydantic", "NaiveDatetime"): {"format": "date-time", "type": "string"},
+    ("pydantic", "PastDatetime"): {"format": "date-time", "type": "string"},
+    ("pydantic", "FutureDatetime"): {"format": "date-time", "type": "string"},
+    ("pydantic", "PastDate"): {"format": "date", "type": "string"},
+    ("pydantic", "FutureDate"): {"format": "date", "type": "string"},
+    ("pydantic", "NegativeInt"): {"exclusiveMaximum": 0, "type": "integer"},
+    ("pydantic", "NonPositiveInt"): {"maximum": 0, "type": "integer"},
+    ("pydantic", "NegativeFloat"): {"exclusiveMaximum": 0, "type": "number"},
+    ("pydantic", "NonPositiveFloat"): {"maximum": 0, "type": "number"},
+    ("pydantic", "FiniteFloat"): {"type": "number"},
+    ("pydantic", "UUID1"): {"format": "uuid1", "type": "string"},
+    ("pydantic", "UUID4"): {"format": "uuid4", "type": "string"},
+    ("pydantic", "FilePath"): {"format": "file-path", "type": "string"},
+    ("pydantic", "DirectoryPath"): {"format": "directory-path", "type": "string"},
+    ("pydantic", "Base64Str"): {"format": "base64", "type": "string"},
+    ("types", "NoneType"): {"type": "null"},
     ("pydantic", "StrictStr"): {"type": "string"},
     ("pydantic", "StrictInt"): {"type": "integer"},
     ("pydantic", "StrictFloat"): {"type": "number"},
     ("pydantic", "StrictBool"): {"type": "boolean"},
 }
+
+NOT_FROM_THE_MODEL = ("DeferredToolRequests",)
+"""Output types of Pydantic AI that a run can end with, but that the model does not write itself."""
+_NOTHING: Schema = {"not": {}}
+"""The schema nothing satisfies: what such a type contributes to the schema the model is given."""
 
 _TYPING = frozenset({"typing", "typing_extensions", "collections", "builtins"})
 _ARRAYS = frozenset(
@@ -220,6 +242,8 @@ class SchemaBuilder:
         if isinstance(node, ast.Name | ast.Attribute):
             target = self.resolver.resolve(node, expression.scope, expression.line)
             if isinstance(target, External):
+                if target.is_library(*NOT_FROM_THE_MODEL):
+                    return dict(_NOTHING)
                 known = _SCALARS.get((target.name.partition(".")[0], target.last))
                 return dict(known) if known is not None else self._unresolved(text)
             if isinstance(target, Definition):
@@ -237,8 +261,30 @@ class SchemaBuilder:
             callee = self.resolver.callee(node, target.scope, target.line)
             if _wrapper_name(callee) == "NewType" and len(node.args) == 2:
                 return self._type(self._sub(target, node.args[1]), depth + 1)
+            if _wrapper_name(callee) == "TypedDict" and len(node.args) == 2 and isinstance(node.args[1], ast.Dict):
+                return self._functional_typed_dict(target, node, text, depth)
             return self._unresolved(text)
         return self._type(target, depth + 1)
+
+    def _functional_typed_dict(self, target: Expression, call: ast.Call, text: str, depth: int) -> Schema:
+        """``Point = TypedDict("Point", {"x": float, "y": float})``: the keys are the fields."""
+        fields = call.args[1]
+        assert isinstance(fields, ast.Dict)
+        total = next((keyword.value for keyword in call.keywords if keyword.arg == "total"), None)
+        optional = isinstance(total, ast.Constant) and total.value is False
+        properties: Schema = {}
+        for key, value in zip(fields.keys, fields.values, strict=True):
+            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                return self._unresolved(text)
+            properties[key.value] = self._type(self._sub(target, value), depth + 1)
+        title = call.args[0].value if isinstance(call.args[0], ast.Constant) else None
+        schema: Schema = {"properties": properties}
+        if properties and not optional:
+            schema["required"] = list(properties)
+        if isinstance(title, str):
+            schema["title"] = title
+        schema["type"] = "object"
+        return schema
 
     def _sub(self, parent: Expression, node: ast.expr) -> Expression:
         return Expression(node, parent.scope, parent.line)
@@ -622,6 +668,8 @@ def _any_of(members: list[Schema]) -> Schema:
     """A union: nested unions are flattened and equal members merged."""
     flat: list[Schema] = []
     for member in members:
+        if member == _NOTHING and len(members) > 1:
+            continue  # a member the model never writes is no part of what it is asked for
         nested: Any = member.get("anyOf")
         candidates: list[Schema] = [member]
         if len(member) == 1 and isinstance(nested, list):

@@ -32,7 +32,7 @@ from .._models import (
 )
 from ._docstring import describe
 from ._resolve import Definition, Expression, External, Project, Resolved, Resolver
-from ._schema import SchemaBuilder
+from ._schema import NOT_FROM_THE_MODEL, SchemaBuilder
 from ._source import CallSite, Module, Scope, clip_expression, unwrap
 from ._values import NotLiteral, fstring_template, literal, string
 
@@ -808,6 +808,10 @@ class _AgentBuilder:
             # An output function: the model calls it like a tool, and its result is the output.
             labels.append(target.node.name)
             modes.append("auto")
+            return
+        if isinstance(target, External) and target.is_library(*NOT_FROM_THE_MODEL):
+            # What a run ends with when a tool call is deferred. The model is never asked to write it.
+            labels.append(target.last)
             return
         if isinstance(target, External) and target.name == "builtins.str":
             labels.append("str")
