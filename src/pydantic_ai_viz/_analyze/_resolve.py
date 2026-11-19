@@ -588,6 +588,16 @@ class Resolver:
                         classes.append(inherited)
         return None
 
+    def method(self, cls: Definition, name: str) -> Definition | None:
+        """The ``def`` of a method of a class, looked for in its base classes among the analysed files too."""
+        if not isinstance(cls.node, ast.ClassDef):
+            return None
+        found = self._attribute_of(cls.body, name, 0)
+        value = self._bound(found[-1]) if found else None
+        if isinstance(value, Definition) and not isinstance(value.node, ast.ClassDef):
+            return value
+        return None
+
     def _factory(self, node: ast.Call, current: Expression, depth: int) -> Resolved | _Stop:
         """The value a call returns: of a function here that has exactly one ``return``, or of ``typing.cast``."""
         callee = self.callee(node, current.scope, current.line, depth=depth + 1)

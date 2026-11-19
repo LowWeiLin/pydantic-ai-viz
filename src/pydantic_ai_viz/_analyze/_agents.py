@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any, Literal, TypeAlias, cast
 
 from .. import _compat
@@ -1220,7 +1221,9 @@ class _AgentBuilder:
 
     # -------------------------------------------------------- capabilities
 
-    def _capabilities(self) -> list[CapabilityInfo]:
+    @cached_property
+    def _capability_entries(self) -> list[Expression]:
+        """The entries of ``capabilities=[...]``, read once for the capabilities and for the toolsets they give."""
         node = self.arguments.get("capabilities")
         if node is None or (isinstance(node, ast.Constant) and node.value is None):
             return []
@@ -1230,14 +1233,41 @@ class _AgentBuilder:
                 f"the capabilities are built by `{brief(self.text(node))}`; they are only known when the code runs"
             )
             return []
+        return entries
+
+    def _capabilities(self) -> list[CapabilityInfo]:
         found: list[CapabilityInfo] = []
-        for entry in entries:
+        for entry in self._capability_entries:
             name = self._class_name(entry)
             if name is None:
                 name = entry.module.text(entry.node)
                 built = brief(self._as_assigned(entry))
                 self.warn(f"a capability is built by `{built}`; its type is only known when the code runs")
             found.append(CapabilityInfo(name=name, builtin=name in _compat.BUILTIN_CAPABILITIES))
+        return found
+
+    def _capability_toolsets(self, entry: Expression) -> list[_ToolsetEntry]:
+        """The toolset a capability class of the project gives the agent: what its ``get_toolset`` returns.
+
+        Pydantic AI wraps that toolset in a ``CapabilityOwnedToolset``, so it is shown inside one.
+        A capability defined outside the analysed files gives nothing that can be read.
+        """
+        target = self.resolver.resolve(entry.node, entry.scope, entry.line)
+        if not isinstance(target, Expression) or not isinstance(target.node, ast.Call):
+            return []
+        callee = self.resolver.callee(target.node, target.scope, target.line)
+        if not isinstance(callee, Definition) or not isinstance(callee.node, ast.ClassDef):
+            return []
+        method = self.resolver.method(callee, "get_toolset")
+        if method is None:
+            return []
+        found: list[_ToolsetEntry] = []
+        for node in method.body.returns[:_MAX_WRAPPERS]:
+            if isinstance(node, ast.Constant) and node.value is None:
+                continue  # ``return None``: no toolset, in this case
+            for item in self._toolset(Expression(node, method.body, node.lineno), 0):
+                item.wrappers = ["CapabilityOwnedToolset", *item.wrappers]
+                found.append(item)
         return found
 
     def _as_assigned(self, entry: Expression) -> str:
@@ -1414,6 +1444,8 @@ class _AgentBuilder:
             else:
                 for item in listed:
                     entries.extend(self._toolset(item, 0))
+        for capability in self._capability_entries:
+            entries.extend(self._capability_toolsets(capability))
         for function in self.agent.toolset_functions:
             entries.append(
                 _ToolsetEntry(

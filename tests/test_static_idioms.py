@@ -575,6 +575,89 @@ def test_a_class_derived_from_function_toolset_has_the_tools_its_methods_registe
     ]
 
 
+def test_a_capability_of_the_project_gives_the_agent_the_toolset_its_get_toolset_returns(tmp_path: Path) -> None:
+    source = '''
+        from dataclasses import dataclass
+        from typing import Any
+
+        from pydantic_ai import Agent
+        from pydantic_ai.capabilities import AbstractCapability, WebSearch
+        from pydantic_ai.toolsets import FunctionToolset
+
+
+        def search(query: str) -> str:
+            """Search the web."""
+            return query
+
+
+        class MemoryToolset(FunctionToolset[Any]):
+            def __init__(self) -> None:
+                super().__init__(id="memory")
+
+                @self.tool_plain
+                def read_memory() -> str:
+                    return ""
+
+
+        @dataclass
+        class MemoryCapability(AbstractCapability[Any]):
+            def __post_init__(self) -> None:
+                self._toolset = MemoryToolset()
+
+            def get_toolset(self):
+                return self._toolset
+
+
+        class SearchCapability(AbstractCapability[Any]):
+            def get_toolset(self):
+                if not self.enabled:
+                    return None
+                return FunctionToolset([search]).prefixed("web")
+
+
+        class LoudSearch(SearchCapability):
+            pass
+
+
+        class Computed(AbstractCapability[Any]):
+            def get_toolset(self):
+                return self.build()
+
+
+        class NoTools(AbstractCapability[Any]):
+            def get_instructions(self):
+                return "Be brief."
+
+
+        memory = MemoryCapability()
+        agent = Agent(
+            "test",
+            capabilities=[memory, LoudSearch(), Computed(), NoTools(), WebSearch()],
+        )
+        '''
+    found = one_agent(tmp_path, source)
+    # As Pydantic AI holds it: inside a CapabilityOwnedToolset, after the toolsets the agent is given.
+    # (The id that ``MemoryToolset`` hands to ``super().__init__`` is not read, as for any derived toolset class.)
+    assert [(t.label, t.kind, t.toolset_id, t.wrappers, t.opaque) for t in found.toolsets] == [
+        ("MemoryToolset", "function", None, ["CapabilityOwnedToolset"], False),
+        ("FunctionToolset", "function", None, ["CapabilityOwnedToolset", "PrefixedToolset"], False),
+        ("self.build()", "other", None, ["CapabilityOwnedToolset"], True),
+    ]
+    assert [(t.name, t.toolset) for t in found.tools] == [("read_memory", "ts0"), ("web_search", "ts1")]
+    assert tool(found, "web_search").description == "Search the web."
+    assert [c.name for c in found.capabilities] == [
+        "MemoryCapability",
+        "LoudSearch",
+        "Computed",
+        "NoTools",
+        "WebSearch",
+    ]
+    assert found.warnings == ["a toolset is built by `self.build()`; its tools are only known when the code runs"]
+    # A toolset that a capability gives is not one that no agent is given.
+    analysed = analyze_source(tmp_path, source)
+    assert analysed.notices == []
+
+
 def test_a_toolset_or_capability_held_in_a_variable_is_named_by_what_it_was_assigned(tmp_path: Path) -> None:
     found = one_agent(
         tmp_path,
