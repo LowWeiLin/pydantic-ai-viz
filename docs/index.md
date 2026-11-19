@@ -11,6 +11,9 @@ See what your [Pydantic AI](https://ai.pydantic.dev/) agents **are** (the bluepr
 
     pydantic-ai-viz is a community project. It is not affiliated with or endorsed by Pydantic.
 
+[Open the hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/){ .md-button .md-button--demo }
+[Quickstart](quickstart.md){ .md-button .md-button--primary }
+
 ## Try it in 10 seconds
 
 <div class="grid cards" markdown>
@@ -71,9 +74,6 @@ with pviz.serve(agent, open_browser=True) as session:
     agent.run_sync("Where is my order?")
     session.wait()  # keep the viewer up until Ctrl+C
 ```
-
-[Quickstart](quickstart.md){ .md-button .md-button--primary }
-[Open the hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/){ .md-button }
 
 ## What it shows
 
