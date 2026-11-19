@@ -224,6 +224,33 @@ def test_a_typed_dict_made_by_a_call_has_the_keys_of_the_call_as_fields() -> Non
     assert schema_of("Keyed", definitions) == ({"x-python-type": "Keyed"}, ["Keyed"])
 
 
+def test_a_typed_dict_from_typing_extensions_is_one_from_typing() -> None:
+    # Pydantic needs this one on Python < 3.12, so code that supports 3.11 uses it.
+    definitions = """
+        import typing_extensions
+        from typing_extensions import TypedDict as ExtendedDict
+
+        class Movie(typing_extensions.TypedDict):
+            title: str
+            rating: NotRequired[float]
+
+        Point = ExtendedDict("Point", {"x": float})
+    """
+    assert schema_of("Movie", definitions) == (
+        {
+            "properties": {"title": {"type": "string"}, "rating": {"type": "number"}},
+            "required": ["title"],
+            "title": "Movie",
+            "type": "object",
+        },
+        [],
+    )
+    assert schema_of("Point", definitions) == (
+        {"properties": {"x": {"type": "number"}}, "required": ["x"], "title": "Point", "type": "object"},
+        [],
+    )
+
+
 def test_models_dataclasses_typed_dicts_named_tuples_and_enums() -> None:
     definitions = '''
         class Size(str, enum.Enum):

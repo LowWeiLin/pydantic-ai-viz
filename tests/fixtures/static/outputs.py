@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Annotated, Literal, Optional, TypedDict
+from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.models.test import TestModel
-from typing_extensions import NotRequired
+# typing_extensions: on Python < 3.12 pydantic refuses typing.TypedDict, and this file is run.
+from typing_extensions import NotRequired, TypedDict
 
 
 class Priority(str, Enum):
