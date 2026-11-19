@@ -12,9 +12,10 @@ import { cx } from "./tone";
  *
  * The folder is cut from its start, so the folders nearest the file stay in view:
  * "...services/newsroom/". It overflows right to left, with the path itself isolated as left to
- * right so that its slashes stay where they are. It keeps one character at the least, which
- * then shows as its last slash: cut from the end instead, a lone first letter would read as
- * part of the name ("pmedical.py").
+ * right so that its slashes stay where they are. It keeps two characters at the least, room for
+ * the ellipsis and its last slash: with one, the slash would show alone and the path would read
+ * as starting at the root ("/medical.py"); cut from the end instead, a lone first letter would
+ * read as part of the name ("pmedical.py").
  */
 export function PathText({
   path,
@@ -31,12 +32,12 @@ export function PathText({
   return (
     <span className={cx("flex min-w-0", className)}>
       {cut > 0 && (
-        <span dir="rtl" className={cx("min-w-[1ch] truncate", folderClassName)}>
+        <span dir="rtl" className={cx("min-w-[2ch] truncate", folderClassName)}>
           <bdi dir="ltr">{path.slice(0, cut)}</bdi>
         </span>
       )}
       <span
-        className={cx("flex min-w-0 shrink-0", cut > 0 ? "max-w-[calc(100%-1ch)]" : "max-w-full")}
+        className={cx("flex min-w-0 shrink-0", cut > 0 ? "max-w-[calc(100%-2ch)]" : "max-w-full")}
       >
         <span className="min-w-0 truncate">{path.slice(cut)}</span>
         {suffix !== "" && <span className="shrink-0">{suffix}</span>}

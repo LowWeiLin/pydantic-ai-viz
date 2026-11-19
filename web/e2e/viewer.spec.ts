@@ -1173,9 +1173,10 @@ test.describe("blueprint-only view", () => {
             return {
               text: part.textContent ?? "",
               width: box.width,
-              // A folder's floor: one character.
+              // A folder's floor: two characters, the ellipsis and the last slash.
               floor: Number.parseFloat(getComputedStyle(part).minWidth) || 0,
               endShown: end.left >= box.left - 0.5 && end.right <= box.right + 0.5,
+              lastWidth: end.width,
               cut: range.getBoundingClientRect().width - box.width,
               inside: box.right <= edge + 0.5,
             };
@@ -1196,6 +1197,9 @@ test.describe("blueprint-only view", () => {
       // that would read as part of the name ("pmedical")...
       if (folder) expect(folder.width).toBeGreaterThanOrEqual(folder.floor - 0.01);
       if (folder) expect(folder.endShown).toBe(true);
+      // A cut folder keeps room for more than its slash, so the ellipsis shows and the path never
+      // reads as starting at the root ("/medical.py").
+      if (folder && folder.cut > 0.01) expect(folder.width).toBeGreaterThan(1.5 * folder.lastWidth);
       // ...and a name is cut only once the folder is down to that floor.
       if (folder && folder.width > folder.floor + 0.01) expect(name?.cut).toBeLessThan(0.01);
       expect(name?.width).toBeGreaterThan(48);
