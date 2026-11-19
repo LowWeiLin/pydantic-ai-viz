@@ -8,6 +8,22 @@ The wire format has its own version number (`pviz`, currently `1`), recorded in 
 
 ## [Unreleased]
 
+### Changed
+
+- Wire format (still `pviz` 1): the rule that at most one blueprint has any given `name` now holds for `"capture"` sessions only. A `"blueprint"` session, such as `view`, has no runs to match by name, so two agents named alike in different files both keep their name and get no warning.
+
+### Fixed
+
+- Static analysis never reads outside the project: imports are not followed through links or junctions, and the home, temp or drive-root directory is never taken for a project root. Files of mixed targets are never named by an absolute path.
+- A function that makes agents gives one agent per call, each with that call's arguments; calls that end in the same blueprint are shown once.
+- An agent is still found when its class name is bound in more than one way (`try: from pydantic_ai import Agent` / `except ImportError: Agent = None`), with a warning; a registration method held in a name is followed.
+- An agent passed to a call is a delegate only where the call runs it, not when it is logged or compared.
+- The output mode follows Pydantic AI's own rule (`[str, Answer]` is `tool`, `str | None` is `text`), `ToolOutput(type_=...)` is read, and `allows_text` is filled in.
+- A pydantic model's `model_config` (`title`, `extra`, `use_attribute_docstrings`, `json_schema_extra`) shapes its schema; a computed configuration gives a warning.
+- `str.format` with written-out arguments is read like any other value; a prompt template filled in at run time, from an f-string or `.format`, gives a warning. A computed instruction reads the same whether written inline or through a name.
+- A tool's `docstring_format` is used; a decorator applied before a tool is registered, a deps type held by a variable, and a skipped `build` or `dist` directory that holds Python are each named.
+- The viewer shows a warning count on the agent card, keeps the ellipsis on a cut path's folder, and no longer shows the placeholder id `<agent>`.
+
 ## [0.1.0] - 2026-11-18
 
 The first release. It needs Python 3.11 or newer and Pydantic AI 2.60 or newer (`pydantic-ai-slim>=2.60,<3`, `opentelemetry-sdk>=1.30`). The test suite was run against Pydantic AI 2.60.0 and 2.70.0; the [compatibility page](https://lowweilin.github.io/pydantic-ai-viz/reference/compatibility/) lists every combination that was tested and explains why 2.59 and older are not supported.
