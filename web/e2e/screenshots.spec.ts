@@ -1,8 +1,9 @@
 /**
- * The docs screenshots (spec section 7): six PNGs at 1440x900, device scale 2.
+ * The docs screenshots (spec section 7): eight PNGs at 1440x900, device scale 2.
  *
  *   PVIZ_RECORDINGS_DIR   directory holding the real demo recordings (support, research and
- *                         pipeline `.pviz.jsonl`, as written by `scripts/build_demo_site.py`).
+ *                         pipeline `.pviz.jsonl`, and `source.pviz.jsonl`, the demos read from
+ *                         source), as written by `scripts/build_demo_site.py`.
  *                         Not set: the committed fixtures stand in, so the spec always runs.
  *   PVIZ_SCREENSHOTS_DIR  where to write. Default: `docs/assets/screenshots` when the real
  *                         recordings are given, else `web/test-results/screenshots` (ignored
@@ -54,6 +55,21 @@ function load(...names: string[]): Recording {
 const support = () => load("support", "sample");
 const research = () => load("research", "sample");
 const pipeline = () => load("pipeline", "sample");
+
+/**
+ * The demos' source code as `pydantic-ai-viz view` reads it (`source.pviz.jsonl`, written by
+ * `scripts/build_demo_site.py`), or the blueprint-only fixture, which the server keeps apart.
+ */
+function source(): { url: string; hash: string } {
+  if (real) {
+    const recording = load("source");
+    // A tool that runs another agent: its schema from the signature and docstring, where it
+    // is defined, and the delegation edge that reading its body found.
+    const agent = blueprintId(recording, "triage");
+    return { url: src(recording, ""), hash: `#/agents/${agent}?part=tool%3Aescalate_refund` };
+  }
+  return { url: "/fx/?src=recordings/blueprint/newsroom.pviz.jsonl", hash: "#/agents/a1" };
+}
 
 const agentRun = (recording: Recording): Span =>
   rootSpan(recording.events, (span) => span.kind === "agent_run");
@@ -145,6 +161,21 @@ for (const scheme of ["dark", "light"] as const) {
       );
       await expect(inspector).toContainText("A retry is not a failure");
       await shoot(page, `hero-${scheme}.png`);
+    });
+  });
+
+  test.describe(`view, ${scheme}`, () => {
+    test.use({ colorScheme: scheme });
+    // What `view` makes of a project: its files in the sidebar, an agent read from source with
+    // its tools and delegate, and the inspector saying where each part is defined.
+    test(`view-${scheme}.png`, async ({ page }) => {
+      const { url, hash } = source();
+      await page.goto(`${url}${hash}`);
+      await expect(page.getByText("Read from source code")).toBeVisible();
+      await expect(canvasNode(page, /^Agent /).first()).toBeVisible();
+      const inspector = page.getByRole("complementary", { name: /details/ });
+      await expect(inspector.getByText("From source")).toBeVisible();
+      await shoot(page, `view-${scheme}.png`);
     });
   });
 }
