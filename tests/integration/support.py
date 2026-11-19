@@ -123,6 +123,7 @@ def assert_log_guarantees(events: Events) -> None:
     assert events[0]["pviz"] == 1
     assert [event["seq"] for event in events] == list(range(len(events)))
     assert all(a["ts"] <= b["ts"] for a, b in itertools.pairwise(events))
+    recording_runs = events[0]["mode"] == "capture"  # names matter only where runs are matched to them
     started: set[str] = set()
     ended: set[str] = set()
     blueprint_ids: dict[str, str] = {}
@@ -145,7 +146,7 @@ def assert_log_guarantees(events: Events) -> None:
             # A delta lies between its request's start and end.
             assert event["span_id"] in started
             assert event["span_id"] not in ended
-        elif event["type"] == "blueprint.agent" and event["agent"]["name"] is not None:
+        elif event["type"] == "blueprint.agent" and event["agent"]["name"] is not None and recording_runs:
             # At most one blueprint per name: a name that comes again comes under the same id.
             agent = event["agent"]
             assert blueprint_ids.setdefault(agent["name"], agent["id"]) == agent["id"]

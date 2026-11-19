@@ -408,6 +408,24 @@ def test_a_name_read_from_source_that_is_taken_already_is_given_up_with_a_warnin
     ]
 
 
+def test_a_blueprint_session_keeps_names_that_two_agents_share(tmp_path: Path) -> None:
+    # No run is ever matched to a blueprint in it, so nothing needs a name to itself.
+    for name in ("first.py", "second.py"):
+        source = 'from pydantic_ai import Agent\nwriter = Agent("test", name="writer")\n'
+        (tmp_path / name).write_text(source, encoding="utf-8")
+    with blueprint_session(analyze(tmp_path)) as session:
+        agents = [envelope["agent"] for envelope in session.events if envelope["type"] == "blueprint.agent"]
+    assert [(a["name"], a["label"], a["warnings"]) for a in agents] == [("writer", "writer", [])] * 2
+
+
+def test_a_blueprint_session_of_the_demos_has_no_warnings() -> None:
+    demos = Path(pydantic_ai_viz.__file__).parent / "demos"
+    with blueprint_session(analyze(demos)) as session:
+        agents = [envelope["agent"] for envelope in session.events if envelope["type"] == "blueprint.agent"]
+    assert agents
+    assert [a["warnings"] for a in agents] == [[]] * len(agents)
+
+
 def test_a_blueprint_session_of_an_analysis_is_titled_after_its_file_and_carries_its_notices(tmp_path: Path) -> None:
     (tmp_path / "broken.py").write_text("def (:\n", encoding="utf-8")
     read_team(tmp_path)

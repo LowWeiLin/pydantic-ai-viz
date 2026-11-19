@@ -61,7 +61,7 @@ type StreamDelta = {
 - `session.started` is always `seq: 0` and is never evicted.
 - For one span, `span.started` comes before `span.ended`. A parent's `span.started` comes before its children's.
 - A `stream.delta` for a span lies between that span's `span.started` and `span.ended`.
-- Blueprint events can arrive at any time and are upserts by `id`. At most one blueprint has any given non-null `name`.
+- Blueprint events can arrive at any time and are upserts by `id`. In a `"capture"` session, at most one blueprint has any given non-null `name`, since runs are matched to blueprints by name; a `"blueprint"` session has no runs, and two of its blueprints may share a name.
 - A reader must accept a `span.ended` with no earlier `span.started`. This happens after eviction, or when capture was attached in the middle of a run.
 - A **run** is a trace: all spans that share a `trace_id`. Its root is the span with `parent_id: null`, an `agent_run` or a `graph_run`.
 

@@ -77,7 +77,7 @@ Every blueprint has an opaque `id` (`a1`, `a2`, ... for agents, `g1`, ... for gr
 - a static blueprint registered after an observed one of the same name takes over that `id`,
 - every update is an upsert: the viewer replaces the blueprint with that `id` and keeps your selection.
 
-Runs are matched to blueprints by agent name. At most one blueprint in a session has any given name. If two different agents in your program share a name, their runs are drawn on the same blueprint; give agents distinct names to keep them apart.
+Runs are matched to blueprints by agent name. At most one blueprint in a session that records runs has any given name (a `view` session has no runs, so it shows every agent under its own name). If two different agents in your program share a name, their runs are drawn on the same blueprint; give agents distinct names to keep them apart.
 
 ## Runs
 

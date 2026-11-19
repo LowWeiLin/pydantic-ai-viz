@@ -508,10 +508,13 @@ class Session:
         return self._with_unique_name(blueprint)
 
     def _with_unique_name(self, blueprint: AgentBlueprint) -> AgentBlueprint:
-        """``blueprint``, without its name if another blueprint already holds that name."""
+        """``blueprint``, without its name if another blueprint already holds that name.
+
+        A blueprint session never matches a run to a blueprint, so there two agents may share a name.
+        """
         name = blueprint.name
         holder = self._blueprint_named(name)
-        if name is not None and holder is not None and holder.id != blueprint.id:
+        if self.mode != "blueprint" and name is not None and holder is not None and holder.id != blueprint.id:
             # Runs are matched to blueprints by agent name, so a name can belong to one blueprint only.
             warning = f"another agent named {name!r} is already registered; runs named {name!r} are shown on that one"
             blueprint = blueprint.model_copy(update={"name": None, "warnings": [*blueprint.warnings, warning]})
