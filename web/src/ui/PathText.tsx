@@ -6,10 +6,15 @@ import { cx } from "./tone";
  * and the line is what an editor needs, so they are the last to go.
  *
  * The name and the suffix are one part that does not shrink, but is never wider than the
- * whole: the folder takes what room is left, down to none, and only a name that does not fit on
- * its own is cut. (Shrink factors cannot do this: any share of the shrinking, however small,
- * puts an ellipsis on the name.) The parts are plain text in a row, so the path is read and
- * copied as one.
+ * whole: the folder takes what room is left, and only a name that does not fit on its own is
+ * cut. (Shrink factors cannot do this: any share of the shrinking, however small, puts an
+ * ellipsis on the name.)
+ *
+ * The folder is cut from its start, so the folders nearest the file stay in view:
+ * "...services/newsroom/". It overflows right to left, with the path itself isolated as left to
+ * right so that its slashes stay where they are. It keeps one character at the least, which
+ * then shows as its last slash: cut from the end instead, a lone first letter would read as
+ * part of the name ("pmedical.py").
  */
 export function PathText({
   path,
@@ -26,9 +31,13 @@ export function PathText({
   return (
     <span className={cx("flex min-w-0", className)}>
       {cut > 0 && (
-        <span className={cx("min-w-0 truncate", folderClassName)}>{path.slice(0, cut)}</span>
+        <span dir="rtl" className={cx("min-w-[1ch] truncate", folderClassName)}>
+          <bdi dir="ltr">{path.slice(0, cut)}</bdi>
+        </span>
       )}
-      <span className="flex min-w-0 max-w-full shrink-0">
+      <span
+        className={cx("flex min-w-0 shrink-0", cut > 0 ? "max-w-[calc(100%-1ch)]" : "max-w-full")}
+      >
         <span className="min-w-0 truncate">{path.slice(cut)}</span>
         {suffix !== "" && <span className="shrink-0">{suffix}</span>}
       </span>

@@ -1117,9 +1117,18 @@ test.describe("blueprint-only view", () => {
             range.selectNodeContents(part);
             const box = part.getBoundingClientRect();
             const edge = root.closest("aside, nav")?.getBoundingClientRect().right ?? 0;
+            // Where the last character is drawn: for a folder, its closing slash.
+            const text = document.createTreeWalker(part, NodeFilter.SHOW_TEXT).nextNode();
+            const last = document.createRange();
+            last.setStart(text ?? part, Math.max(0, (text?.textContent?.length ?? 1) - 1));
+            last.setEnd(text ?? part, text?.textContent?.length ?? 0);
+            const end = last.getBoundingClientRect();
             return {
               text: part.textContent ?? "",
               width: box.width,
+              // A folder's floor: one character.
+              floor: Number.parseFloat(getComputedStyle(part).minWidth) || 0,
+              endShown: end.left >= box.left - 0.5 && end.right <= box.right + 0.5,
               cut: range.getBoundingClientRect().width - box.width,
               inside: box.right <= edge + 0.5,
             };
@@ -1136,8 +1145,12 @@ test.describe("blueprint-only view", () => {
     expect(paths.length).toBeGreaterThan(6);
     for (const { title, folder, name, line } of paths) {
       expect(title).toBe(`${folder?.text ?? ""}${name?.text}${line?.text ?? ""}`);
-      // A name is cut only once no folder is left to give way.
-      if ((folder?.width ?? 0) > 0) expect(name?.cut).toBeLessThan(0.01);
+      // A folder is cut from its start: its last slash always shows, never a lone first letter
+      // that would read as part of the name ("pmedical")...
+      if (folder) expect(folder.width).toBeGreaterThanOrEqual(folder.floor - 0.01);
+      if (folder) expect(folder.endShown).toBe(true);
+      // ...and a name is cut only once the folder is down to that floor.
+      if (folder && folder.width > folder.floor + 0.01) expect(name?.cut).toBeLessThan(0.01);
       expect(name?.width).toBeGreaterThan(48);
       // The line is never cut.
       if (line) expect(line.inside).toBe(true);
@@ -1152,7 +1165,8 @@ test.describe("blueprint-only view", () => {
     );
     for (const path of long) {
       expect(path.name?.cut).toBeGreaterThan(1);
-      expect(path.folder?.width).toBe(0);
+      expect(path.folder?.floor).toBeGreaterThan(4);
+      expect(path.folder?.width).toBeCloseTo(path.folder?.floor ?? Number.NaN, 1);
     }
   });
 
