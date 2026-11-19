@@ -92,9 +92,18 @@ const present = (items: (SectionItem | null | false)[]): SectionItem[] =>
 
 // ---------- agent ----------
 
+/**
+ * A prompt written as a triple-quoted string that opens and closes on lines of its own starts
+ * and ends with line breaks that only the source needed. Lines that are blank from end to end
+ * are left off; the indentation of the first line of text is kept.
+ */
+export const trimBlankLines = (text: string): string =>
+  text.replace(/^(?:[^\S\n]*\n)+/, "").replace(/(?:\n[^\S\n]*)+$/, "");
+
 function InstructionItem({ item }: { item: Instruction }) {
   // An f-string keeps its text, with holes: it is dynamic and still readable.
   const template = item.dynamic && item.text !== null;
+  const text = item.text === null ? null : trimBlankLines(item.text);
   return (
     <li className="flex flex-col gap-1.5 border-line border-b pb-3 last:border-b-0 last:pb-0">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -105,16 +114,16 @@ function InstructionItem({ item }: { item: Instruction }) {
           <SourceRef location={item.location} prefix="" />
         </span>
       </div>
-      {item.text !== null ? (
+      {text !== null ? (
         template ? (
           <>
-            <TemplateText text={item.text} />
+            <TemplateText text={text} />
             <p className="m-0 text-faint text-meta">
               An f-string: the parts in braces are filled in when the code runs.
             </p>
           </>
         ) : (
-          <TextBlock text={item.text} />
+          <TextBlock text={text} />
         )
       ) : item.expression !== null ? (
         <Expression code={item.expression} />

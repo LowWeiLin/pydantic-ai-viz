@@ -10,8 +10,9 @@ import { App } from "../App";
 import type { BootPlan } from "../boot";
 import { runs } from "../data/selectors";
 import { useViewer } from "../data/store";
+import { trimBlankLines } from "../inspector/BlueprintInspector";
 import { SourceRef } from "../inspector/source";
-import { fixture } from "../test/factory";
+import { agentBlueprint, fixture, log, sessionStarted } from "../test/factory";
 
 const NEWSROOM = "blueprint/newsroom.pviz.jsonl";
 const embedded = (name: string): BootPlan => ({ kind: "embedded", events: fixture(name) });
@@ -229,5 +230,44 @@ describe("SourceRef", () => {
       [...code.querySelectorAll(":scope > span > span")].map((part) => part.textContent),
     ).toEqual(["01_tools.py", ":22"]);
     expect(screen.queryByText("Defined at")).toBeNull();
+  });
+});
+
+describe("an instruction written across lines", () => {
+  test("is shown without the blank lines the source wraps it in", () => {
+    expect(trimBlankLines("\nYou are a triage clinician.\nBe brief.\n")).toBe(
+      "You are a triage clinician.\nBe brief.",
+    );
+    expect(trimBlankLines("\n  \n    Indented first line.\n\n  ")).toBe("    Indented first line.");
+    // A blank line inside the text is part of it, and so are spaces at the end of a line.
+    expect(trimBlankLines("One.\n\nTwo.  ")).toBe("One.\n\nTwo.  ");
+    expect(trimBlankLines("")).toBe("");
+  });
+
+  test("the panel shows the text from its first line", () => {
+    const agent = agentBlueprint({
+      id: "a1",
+      source: "code",
+      instructions: [
+        {
+          kind: "instructions",
+          dynamic: false,
+          text: "\nYou are a triage clinician.\n",
+          function: null,
+          expression: null,
+          location: null,
+        },
+      ],
+    });
+    const events = log(
+      [0, { ...sessionStarted(), mode: "blueprint" }],
+      [1, { type: "blueprint.agent", agent }],
+    );
+    window.location.hash = "#/agents/a1";
+    render(<App plan={{ kind: "embedded", events }} />);
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    expect(within(details).getByText(/You are a triage clinician\./).textContent).toBe(
+      "You are a triage clinician.",
+    );
   });
 });
