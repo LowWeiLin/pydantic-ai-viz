@@ -588,19 +588,23 @@ test.describe("navigation", () => {
     const top = async (name: RegExp) =>
       (await sections.getByRole("heading", { level: 4, name }).boundingBox())?.y ?? Number.NaN;
     const panelTop = (await sections.boundingBox())?.y ?? Number.NaN;
+    // How far a heading is from the top of the panel. A stuck heading can sit a fraction of a
+    // pixel off it (the scroll position is rounded, the panel's top is not), so allow 1.5 px.
+    const offset = async (name: RegExp) => Math.abs((await top(name)) - panelTop);
+    const NEAR = 1.5;
 
     // Clicking the output node scrolls the panel to the output section...
     await canvasNode(page, /^Output of triage/).click();
-    await expect.poll(() => top(/^Output/)).toBeCloseTo(panelTop, 0);
+    await expect.poll(() => offset(/^Output/)).toBeLessThan(NEAR);
     // ...and its heading holds that place while the schema under it scrolls by.
     await sections.evaluate((element) => element.scrollBy(0, 90));
-    expect(await top(/^Output/)).toBeCloseTo(panelTop, 0);
+    expect(await offset(/^Output/)).toBeLessThan(NEAR);
     await expect(sections.getByRole("table", { name: "Output of triage" })).toBeVisible();
 
     // The panel scrolls from the keyboard: it is one tab stop.
     await sections.focus();
     await page.keyboard.press("Home");
-    await expect.poll(() => top(/^Model/)).toBeCloseTo(panelTop, 0);
+    await expect.poll(() => offset(/^Model/)).toBeLessThan(NEAR);
     await page.keyboard.press("End");
     await expect(sections.getByRole("heading", { level: 4, name: /^Mermaid/ })).toBeInViewport();
   });
