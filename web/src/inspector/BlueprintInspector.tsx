@@ -105,7 +105,8 @@ export const trimBlankLines = (text: string): string =>
   text.replace(/^(?:[^\S\n]*\n)+/, "").replace(/(?:\n[^\S\n]*)+$/, "");
 
 function InstructionItem({ item }: { item: Instruction }) {
-  // An f-string keeps its text, with holes: it is dynamic and still readable.
+  // A template (an f-string, a `str.format` call) keeps its text, with holes: it is dynamic and
+  // still readable, whole.
   const template = item.dynamic && item.text !== null;
   const text = item.text === null ? null : trimBlankLines(item.text);
   return (
@@ -123,7 +124,7 @@ function InstructionItem({ item }: { item: Instruction }) {
           <>
             <TemplateText text={text} />
             <p className="m-0 text-faint text-meta">
-              An f-string: the parts in braces are filled in when the code runs.
+              A template: the marked parts are filled in when the code runs.
             </p>
           </>
         ) : (
@@ -189,8 +190,9 @@ function modelSection(agent: AgentBlueprint): SectionItem {
     };
   }
   // A model class built with a literal name is known by that name; anything else that is
-  // computed is known only as the expression.
-  const named = model.expression === null || model.name !== model.expression;
+  // computed is known only as the expression. A name read from the environment is the variable's.
+  const { env } = model;
+  const named = env === null && (model.expression === null || model.name !== model.expression);
   return {
     id: "model",
     title: "Model",
@@ -198,9 +200,29 @@ function modelSection(agent: AgentBlueprint): SectionItem {
       <Facts
         items={known([
           named && ["Name", <code key="name">{model.name}</code>],
+          env !== null && [
+            model.model_class !== null ? "Model name" : "Model",
+            <EnvironmentName key="env" variable={env.variable} />,
+          ],
+          env !== null && [
+            "Default",
+            env.default !== null ? (
+              <span key="default" className="flex min-w-0 flex-col items-start gap-0.5">
+                <code className="break-all">{env.default}</code>
+                <span className="text-faint text-meta">
+                  Only if {env.variable} is not set; the environment decides.
+                </span>
+              </span>
+            ) : (
+              <span key="default" className="text-muted">
+                None in the source: {env.variable} has to be set.
+              </span>
+            ),
+          ],
+          model.model_class !== null && ["Class", <code key="class">{model.model_class}</code>],
           model.expression !== null && [
-            named ? "Built by" : "Set by",
-            <Expression key="expression" code={model.expression} hint={!named} />,
+            named || model.model_class !== null ? "Built by" : "Set by",
+            <Expression key="expression" code={model.expression} hint={!named && env === null} />,
           ],
           model.provider !== null && ["Provider", model.provider],
           model.id !== null && model.id !== model.name && ["Id", model.id],
@@ -209,6 +231,19 @@ function modelSection(agent: AgentBlueprint): SectionItem {
       />
     ),
   };
+}
+
+/** The name of an environment variable a value is read from when the code runs. */
+function EnvironmentName({ variable }: { variable: string }) {
+  return (
+    <span className="flex min-w-0 flex-col items-start gap-0.5">
+      <span className="inline-flex max-w-full items-center gap-1.5">
+        <Chip icon="code">env</Chip>
+        <code className="break-all">{variable}</code>
+      </span>
+      <span className="text-faint text-meta">Read from the environment when the code runs.</span>
+    </span>
+  );
 }
 
 function settingsSection(agent: AgentBlueprint): SectionItem {
@@ -550,6 +585,12 @@ export function ToolInspector({ agent, tool }: { agent: AgentBlueprint; tool: To
             The blueprint did not list this tool, so only what the model was told about it is known.
           </Note>
         )}
+        {tool.library_version !== null && (
+          <Note>
+            Defined by Pydantic AI, and read from the source of the installed Pydantic AI{" "}
+            {tool.library_version}. The project may use another version, in which it can differ.
+          </Note>
+        )}
       </InspectorHeader>
       <Sections
         label="Tool"
@@ -560,8 +601,9 @@ export function ToolInspector({ agent, tool }: { agent: AgentBlueprint; tool: To
             content:
               parameters === null ? (
                 <Note>
-                  This tool is defined outside the files that were read, so its parameters are not
-                  known.
+                  {tool.library_version !== null
+                    ? "The function this tool runs is chosen when the code runs, so its parameters are not known."
+                    : "This tool is defined outside the files that were read, so its parameters are not known."}
                 </Note>
               ) : (
                 <>

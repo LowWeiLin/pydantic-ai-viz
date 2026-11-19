@@ -13,6 +13,7 @@ import { useViewer } from "../data/store";
 import { firstLine, parameterCount, trimBlankLines } from "../inspector/BlueprintInspector";
 import { SourceRef } from "../inspector/source";
 import { agentBlueprint, fixture, log, sessionStarted } from "../test/factory";
+import type { AgentBlueprint } from "../wire";
 
 const NEWSROOM = "blueprint/newsroom.pviz.jsonl";
 const embedded = (name: string): BootPlan => ({ kind: "embedded", events: fixture(name) });
@@ -47,18 +48,33 @@ describe("a blueprint read from source", () => {
       if (!heading?.parentElement) throw new Error(`no section ${title}`);
       return heading.parentElement;
     };
-    // The model is an expression: it is not passed off as a model name.
+    // The model name is read from the environment: the variable is shown, and the default the
+    // source gives is labelled as a default, never passed off as the model.
     const model = section("Model");
-    expect(within(model).getByText("Set by")).toBeInTheDocument();
+    expect(within(model).getByText("Model name")).toBeInTheDocument();
+    expect(within(model).getByText("NEWSROOM_MODEL").tagName).toBe("CODE");
+    expect(within(model).getByText("env")).toBeInTheDocument();
+    expect(within(model).getByText("Default")).toBeInTheDocument();
+    expect(within(model).getByText("gpt-5.2-mini").tagName).toBe("CODE");
+    expect(within(model).getByText(/Only if NEWSROOM_MODEL is not set/)).toBeInTheDocument();
+    expect(within(model).getByText("OpenAIChatModel").tagName).toBe("CODE");
+    expect(within(model).getByText("Built by")).toBeInTheDocument();
     expect(within(model).getByText("get_model()").tagName).toBe("CODE");
-    expect(within(model).getByText("Decided at run time")).toBeInTheDocument();
     expect(within(model).queryByText("Name")).toBeNull();
+    // On the canvas the chip names the variable, not the default.
+    const chip = screen.getByText("env NEWSROOM_MODEL");
+    expect(chip.closest("[title]")).toHaveAttribute(
+      "title",
+      "OpenAIChatModel, model name from environment variable NEWSROOM_MODEL at run time; " +
+        "default gpt-5.2-mini if NEWSROOM_MODEL is not set",
+    );
+    expect(screen.queryByText("gpt-5.2-mini", { selector: ".react-flow *" })).toBeNull();
     expect(screen.getAllByText("at run time")).toHaveLength(1);
 
     // Warnings are a quiet list, with the code in them set as code.
     const warnings = section("Warnings");
     expect(within(warnings).getAllByRole("listitem")).toHaveLength(3);
-    expect(within(warnings).getByText("get_model()").tagName).toBe("CODE");
+    expect(within(warnings).getByText("NEWSROOM_MODEL").tagName).toBe("CODE");
     expect(warnings.querySelector(".tone-retry, .tone-error")).toBeNull();
 
     expect(within(section("Instructions")).getByText('PROMPTS["reporter"]').tagName).toBe("CODE");
@@ -77,10 +93,11 @@ describe("a blueprint read from source", () => {
     render(<App plan={embedded(NEWSROOM)} />);
     const details = screen.getByRole("complementary", { name: "Blueprint details" });
 
-    // An f-string keeps its text; the holes are marked.
+    // A template keeps its whole text; the holes are marked, with a short note and no warning.
     expect(within(details).getByText("{today:%A}").tagName).toBe("CODE");
+    expect(within(details).getByText("{STYLE.name}").tagName).toBe("CODE");
     expect(within(details).getByText("Template")).toBeInTheDocument();
-    expect(within(details).getByText(/An f-string/)).toBeInTheDocument();
+    expect(within(details).getByText(/A template: the marked parts/)).toBeInTheDocument();
     // A setting can be a literal, an expression, or absent.
     expect(within(details).getByText("MAX_RETRIES", { selector: "dd code" })).toBeInTheDocument();
     expect(within(details).getByText("DESK.temperature", { selector: "dd code" })).toBeVisible();
@@ -100,6 +117,13 @@ describe("a blueprint read from source", () => {
     expect(within(stringer).getByText("Built by")).toBeInTheDocument();
     expect(within(stringer).queryByText("Decided at run time")).toBeNull();
     expect(screen.queryByText("at run time")).toBeNull();
+    // A tool Pydantic AI defines, read from the source of the installed Pydantic AI.
+    await user.click(screen.getByRole("button", { name: "Tool duckduckgo_search" }));
+    expect(within(stringer).getByText(/installed Pydantic AI 2\.70\.0/)).toBeVisible();
+    expect(within(stringer).getByText(/The project may use another version/)).toBeVisible();
+    expect(
+      within(stringer).getByRole("table", { name: "Parameters of duckduckgo_search" }),
+    ).toHaveTextContent("query");
 
     // A type the analysis could not follow, and a tool defined outside the analysed files.
     act(() => {
@@ -232,7 +256,10 @@ describe("a toolset, and the parts a panel names", () => {
       screen.getByRole("button", { name: "Toolset FunctionToolset 'wires', 2 tools" }),
     );
     expect(within(definition()).getByText("wires")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /^Toolset Agent tools/ }));
+    // The reporter's own tools; the stringer it delegates to has its own as well.
+    const [own] = screen.getAllByRole("button", { name: /^Toolset Agent tools/ });
+    if (!own) throw new Error("no toolset");
+    await user.click(own);
     expect(within(definition()).getByText("The agent's own tools")).toBeInTheDocument();
     expect(within(definition()).queryByText("Id")).toBeNull();
     expect(within(details()).queryByText("<agent>")).toBeNull();
@@ -384,7 +411,7 @@ describe("Copy Mermaid", () => {
     await user.click(screen.getByRole("button", { name: "Copy Mermaid" }));
     const [copied] = writeText.mock.calls.at(-1) ?? [];
     expect(copied).toMatch(/^flowchart LR\n/);
-    expect(copied).toContain('agent1["reporter<br/>model: get_model()"]');
+    expect(copied).toContain('agent1["reporter<br/>model: env NEWSROOM_MODEL"]');
     expect(copied).toContain('agent1_tool1 -. "found in code" .-> agent2');
     // The same text can be read in the panel before it is copied.
     const details = screen.getByRole("complementary", { name: "Blueprint details" });
@@ -518,6 +545,56 @@ describe("an instruction written across lines", () => {
     const details = screen.getByRole("complementary", { name: "Blueprint details" });
     expect(within(details).getByText(/You are a triage clinician\./).textContent).toBe(
       "You are a triage clinician.",
+    );
+  });
+});
+
+describe("a model the code works out", () => {
+  const render1 = (model: AgentBlueprint["model"]): HTMLElement => {
+    const agent = agentBlueprint({ id: "a1", source: "code", model });
+    const events = log(
+      [0, { ...sessionStarted(), mode: "blueprint" }],
+      [1, { type: "blueprint.agent", agent }],
+    );
+    window.location.hash = "#/agents/a1";
+    render(<App plan={{ kind: "embedded", events }} />);
+    return screen.getByRole("complementary", { name: "Blueprint details" });
+  };
+
+  test("a computed model is the expression, decided at run time", () => {
+    const details = render1({
+      id: null,
+      name: "get_model()",
+      provider: null,
+      offline: false,
+      expression: "get_model()",
+      model_class: null,
+      env: null,
+    });
+    expect(within(details).getByText("Set by")).toBeInTheDocument();
+    expect(within(details).getByText("get_model()", { selector: "dd code" })).toBeVisible();
+    expect(within(details).getByText("Decided at run time")).toBeInTheDocument();
+    expect(within(details).queryByText("Name")).toBeNull();
+  });
+
+  test("a model read from the environment without a default says the variable must be set", () => {
+    const details = render1({
+      id: null,
+      name: 'os.environ["MODEL"]',
+      provider: null,
+      offline: false,
+      expression: 'os.environ["MODEL"]',
+      model_class: null,
+      env: { variable: "MODEL", default: null },
+    });
+    expect(within(details).getByText("Model", { selector: "dt" })).toBeInTheDocument();
+    expect(within(details).getByText("MODEL", { selector: "dd code" })).toBeVisible();
+    expect(within(details).getByText("None in the source: MODEL has to be set.")).toBeVisible();
+    expect(within(details).getByText("Set by")).toBeInTheDocument();
+    expect(within(details).queryByText("Class")).toBeNull();
+    expect(screen.getByText("env MODEL").closest("[title]")).toHaveAttribute(
+      "title",
+      "From environment variable MODEL at run time; no default",
     );
   });
 });

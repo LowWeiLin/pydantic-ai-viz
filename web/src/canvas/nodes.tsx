@@ -5,6 +5,7 @@
  */
 import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
 import { createContext, type ReactNode, useContext } from "react";
+import { environmentWords, modelLabel } from "../data/model";
 import type { Activity, CanvasAgent, CanvasTool, GraphCanvasNode } from "../data/selectors";
 import { plural } from "../shell/format";
 import { Badge, Chip, StatusDot } from "../ui/Badge";
@@ -136,24 +137,28 @@ export function AgentNode({ data }: NodeProps<Node<AgentNodeData, "agent">>) {
   const toolCount = bp.tools.length;
   const warnings = bp.warnings.length;
   const computed = bp.model !== null && modelIsComputed(bp.model);
+  const fromEnvironment = bp.model ? environmentWords(bp.model) : null;
   const modelChip = bp.model ? (
-    // An expression is not a model name: it is set as code, with a dashed edge.
-    <Chip
-      tone="model"
-      icon={computed ? "code" : "model"}
-      mono
-      pulse={requesting}
-      // min-w-0: a long name gives way to what follows it in the row instead of pushing it
-      // out of the card.
-      className={cx("min-w-0", computed && "border-dashed")}
-    >
-      {bp.model.name}
-    </Chip>
+    // An expression is not a model name: it is set as code, with a dashed edge. A name from the
+    // environment is the variable's name, never the default the source gives for it.
+    <span title={fromEnvironment ?? undefined} className="inline-flex min-w-0 max-w-full">
+      <Chip
+        tone="model"
+        icon={computed ? "code" : "model"}
+        mono
+        pulse={requesting}
+        // min-w-0: a long name gives way to what follows it in the row instead of pushing it
+        // out of the card.
+        className={cx("min-w-0", computed && "border-dashed")}
+      >
+        {modelLabel(bp.model)}
+      </Chip>
+    </span>
   ) : (
     <Chip icon="model">No model set</Chip>
   );
   const modelWords = bp.model
-    ? `Model ${bp.model.name}${computed ? ", decided at run time," : ""} of ${bp.label}`
+    ? `Model ${modelLabel(bp.model)}${computed ? ", decided at run time," : ""} of ${bp.label}`
     : "";
   return (
     <div

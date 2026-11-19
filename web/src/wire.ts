@@ -125,6 +125,20 @@ export type ModelInfo = {
    * (`OpenAIChatModel("gpt-5.2", ...)`): that name is the `name`.
    */
   expression: string | null;
+  /** The Pydantic AI model class, e.g. "OpenAIChatModel", when it is known. */
+  model_class: string | null;
+  /**
+   * Set when the model name is read from an environment variable when the code runs. `name` and
+   * `expression` then hold the source text, and `model_class` the class built with that name.
+   */
+  env: EnvironmentValue | null;
+};
+
+/** A value the code reads from an environment variable when it runs (`os.getenv("X", default)`). */
+export type EnvironmentValue = {
+  variable: string;
+  /** The default the source gives, used only when the variable is not set; never the value. */
+  default: string | null;
 };
 
 export type OutputInfo = {
@@ -164,7 +178,11 @@ export type Delegate = {
 export type Instruction = {
   kind: "instructions" | "system_prompt";
   dynamic: boolean;
-  /** The literal text; for a dynamic f-string, its template with `{...}` placeholders. */
+  /**
+   * The literal text; for a template (a dynamic f-string or `str.format` call), the template, in
+   * the syntax of `str.format`: a part filled in at run time is a placeholder in braces (`{date}`),
+   * and a literal brace is doubled (`{{`).
+   */
   text: string | null;
   /** Qualified function name for dynamic ones. */
   function: string | null;
@@ -206,6 +224,11 @@ export type Tool = {
   function: string | null;
   origin: Provenance;
   location: SourceLocation | null;
+  /**
+   * Set for a tool Pydantic AI itself defines (`duckduckgo_search_tool()`), read from the installed
+   * Pydantic AI source by static analysis: that version. The project may use another one.
+   */
+  library_version: string | null;
 };
 
 export type GraphBlueprint = {

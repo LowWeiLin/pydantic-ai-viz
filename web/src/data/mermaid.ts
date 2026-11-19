@@ -16,6 +16,7 @@
  * Node ids are made here from positions, never from names, so no name can break the syntax.
  * Every label is quoted and its special characters are written as Mermaid entity codes.
  */
+import { modelLabel } from "./model";
 import type { DataState } from "./reduce";
 import { type CanvasModel, canvasModel, type RunSubject } from "./selectors";
 
@@ -54,7 +55,7 @@ export function agentMermaid(model: CanvasModel): string {
     lines.push(
       `  ${id}[${
         blueprint.model
-          ? twoLines(blueprint.label, `model: ${blueprint.model.name}`)
+          ? twoLines(blueprint.label, `model: ${modelLabel(blueprint.model)}`)
           : mermaidLabel(blueprint.label)
       }]`,
     );

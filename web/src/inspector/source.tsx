@@ -142,21 +142,65 @@ export function Expression({ code, hint = true }: { code: string; hint?: boolean
   );
 }
 
-/** An f-string as written: the `{...}` parts are set apart, since run time fills them in. */
+export type TemplatePart = { hole: boolean; text: string };
+
+/**
+ * A template in the syntax of `str.format`, as the backend writes it: literal text, in which a
+ * doubled brace stands for one, and placeholders in braces, which may hold braces of their own
+ * (`{ {"a": x}["a"]}`, `{total:{width}}`). Each placeholder keeps its braces.
+ */
+export function templateParts(text: string): TemplatePart[] {
+  const parts: TemplatePart[] = [];
+  let literal = "";
+  let i = 0;
+  while (i < text.length) {
+    const char = text.charAt(i);
+    if ((char === "{" || char === "}") && text.charAt(i + 1) === char) {
+      literal += char;
+      i += 2;
+      continue;
+    }
+    if (char !== "{") {
+      literal += char;
+      i += 1;
+      continue;
+    }
+    let depth = 1;
+    let end = i + 1;
+    while (end < text.length && depth > 0) {
+      const inner = text.charAt(end);
+      if (inner === "{") depth += 1;
+      else if (inner === "}") depth -= 1;
+      end += 1;
+    }
+    if (depth > 0) {
+      literal += text.slice(i); // a brace that is never closed is text
+      break;
+    }
+    if (literal) parts.push({ hole: false, text: literal });
+    literal = "";
+    parts.push({ hole: true, text: text.slice(i, end) });
+    i = end;
+  }
+  if (literal) parts.push({ hole: false, text: literal });
+  return parts;
+}
+
+/** A template as written: the `{...}` parts are set apart, since run time fills them in. */
 export function TemplateText({ text }: { text: string }) {
-  const parts = text.split(/(\{[^{}\n]*\})/g);
   return (
     <div className="whitespace-pre-wrap break-words text-fg text-ui">
-      {parts.map((part, i) =>
-        i % 2 === 1 ? (
+      {templateParts(text).map((part, i) =>
+        part.hole ? (
           <code
             key={i}
+            title="Filled in when the code runs"
             className="rounded-[3px] border border-line-strong border-dashed bg-bg px-0.5 text-accent"
           >
-            {part}
+            {part.text}
           </code>
         ) : (
-          <Fragment key={i}>{part}</Fragment>
+          <Fragment key={i}>{part.text}</Fragment>
         ),
       )}
     </div>

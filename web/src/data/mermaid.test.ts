@@ -126,6 +126,7 @@ const tool = (name: string, set = "ts0"): Tool => ({
   function: null,
   origin: "code",
   location: null,
+  library_version: null,
 });
 
 const newsroom = fixtureState("blueprint/newsroom.pviz.jsonl");
@@ -135,7 +136,8 @@ describe("agentMermaid", () => {
     expect(mermaidOf(newsroom, "a2")).toBe(
       [
         "flowchart LR",
-        '  agent1["reporter<br/>model: get_model()"]',
+        // The model name is read from the environment: the variable, not the default.
+        '  agent1["reporter<br/>model: env NEWSROOM_MODEL"]',
         '  subgraph agent1_tools1["Agent tools"]',
         '    agent1_tool1["ask_stringer"]',
         "  end",
@@ -153,7 +155,11 @@ describe("agentMermaid", () => {
         "  agent1 --> agent1_tools3_any",
         "  agent1 --> agent1_output",
         '  agent2["stringer<br/>model: claude-sonnet-4-5"]',
+        '  subgraph agent2_tools1["Agent tools"]',
+        '    agent2_tool1["duckduckgo_search"]',
+        "  end",
         '  agent2_output[/"output: str"/]',
+        "  agent2 --> agent2_tool1",
         "  agent2 --> agent2_output",
         '  agent1_tool1 -. "found in code" .-> agent2',
         "",
@@ -238,6 +244,8 @@ describe("agentMermaid", () => {
         provider: null,
         offline: false,
         expression: 'build("m", [1, 2])',
+        model_class: null,
+        env: null,
       },
       toolsets: [toolset("ts0", 'Toolset "quoted" [1]'), toolset("end", "end")],
       tools: [...names.map((name) => tool(name)), tool("end", "end")],

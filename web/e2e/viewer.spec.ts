@@ -969,11 +969,13 @@ test.describe("blueprint-only view", () => {
     await page.goto(blueprintOnly("#/agents/a2"));
     const inspector = page.getByRole("complementary", { name: "Blueprint details" });
 
-    // The model is an expression: set as code on the canvas and in the panel, and said to be.
+    // The model name is read from the environment: the card names the variable, never the
+    // default, and the panel labels the default as one.
     const card = page.locator(".react-flow__node-agent", { hasText: "reporter" }).first();
-    await expect(card).toContainText("get_model()");
+    await expect(card).toContainText("env NEWSROOM_MODEL");
+    await expect(card).not.toContainText("gpt-5.2-mini");
     await expect(card).toContainText("at run time");
-    await expect(inspector.getByText("Decided at run time").first()).toBeVisible();
+    await expect(inspector.getByText(/Only if NEWSROOM_MODEL is not set/)).toBeVisible();
 
     // Where it is defined can be copied, as a go-to-file box takes it.
     await inspector.getByRole("button", { name: "Copy newsroom/reporters.py:31" }).click();

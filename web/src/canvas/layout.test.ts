@@ -40,6 +40,7 @@ const tool = (name: string, toolset = "ts0"): AgentBlueprint["tools"][number] =>
   function: null,
   origin: "object",
   location: null,
+  library_version: null,
 });
 
 const toolset = (id: string, opaque = false): AgentBlueprint["toolsets"][number] => ({
