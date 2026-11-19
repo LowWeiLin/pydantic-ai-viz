@@ -402,7 +402,7 @@ def test_imports_are_followed_above_a_directory_target_but_not_out_of_the_projec
     assert inside.output.location == SourceLocation(file="../shared/models.py", line=3)
     assert beyond.output.json_schema is None
     assert beyond.warnings == [
-        "the output type `Outside` is defined outside the analysed source, so its schema is not shown"
+        "the schema of the output type `Outside` cannot be read from the analysed source, so it is not shown"
     ]
 
 

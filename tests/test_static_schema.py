@@ -491,7 +491,7 @@ def test_an_output_type_from_outside_the_file_has_no_schema(tmp_path: Path) -> N
     whole = agent(found, "whole")
     assert (whole.output.mode, whole.output.type_name, whole.output.json_schema) == ("auto", "Report", None)
     assert whole.warnings == [
-        "the output type `Report` is defined outside the analysed source, so its schema is not shown"
+        "the schema of the output type `Report` cannot be read from the analysed source, so it is not shown"
     ]
     partial = agent(found, "partial")
     assert partial.output.json_schema == {

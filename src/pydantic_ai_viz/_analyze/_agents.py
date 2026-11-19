@@ -1124,7 +1124,9 @@ class _AgentBuilder:
             self.warn(
                 f"the output schema is incomplete: {names} could not be resolved from the analysed source"
                 if document is not None and set(document) != {"x-python-type"}
-                else f"the output type {names} is defined outside the analysed source, so its schema is not shown"
+                # Not "defined outside": a class of the project derived from another library's class lands here too.
+                else f"the schema of the output type {names} cannot be read from the analysed source, "
+                "so it is not shown"
             )
         if document is not None and set(document) == {"x-python-type"}:
             document = None

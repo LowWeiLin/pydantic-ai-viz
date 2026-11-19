@@ -216,7 +216,7 @@ def test_another_librarys_classes_are_not_recognised_by_their_names(tmp_path: Pa
     assert mcp.output.json_schema is None
     assert mcp.warnings == [
         'a toolset is built by `MCPBridge("files")`; its tools are only known when the code runs',
-        "the output type `Answer` is defined outside the analysed source, so its schema is not shown",
+        "the schema of the output type `Answer` cannot be read from the analysed source, so it is not shown",
     ]
     other = agent(found, "other")
     assert other.settings.model_settings is None
