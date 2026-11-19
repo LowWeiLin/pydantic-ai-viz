@@ -782,3 +782,68 @@ def test_what_a_derived_class_adds_to_the_agent_of_its_base_class_is_shown_and_s
         "where this agent is made; only an agent made through `PDFAgent` has it",
         "one of the instructions is the expression `instructions`; its text is only known at run time",
     ]
+
+
+def test_function_toolsets_that_no_agent_is_given_are_counted_in_a_notice(tmp_path: Path) -> None:
+    source = """
+        from pydantic_ai import Agent
+        from pydantic_ai.toolsets import FunctionToolset
+
+
+        def search(query: str) -> str:
+            return query
+
+
+        used = FunctionToolset([search])
+        agent = Agent("test", toolsets=[used.prefixed("web")])
+
+
+        def create_memory_toolset() -> FunctionToolset:
+            toolset = FunctionToolset()
+
+            @toolset.tool_plain
+            def read_memory() -> str:
+                return ""
+
+            @toolset.tool_plain
+            def write_memory(text: str) -> None: ...
+
+            return toolset
+
+
+        class BrowserToolset(FunctionToolset):
+            def __init__(self) -> None:
+                super().__init__()
+
+                @self.tool_plain
+                def navigate(url: str) -> str:
+                    return url
+
+
+        empty = FunctionToolset()
+        """
+    found = analyze_source(tmp_path, source)
+    assert [t.name for t in agent(found, "agent").tools] == ["web_search"]
+    # The one that is used and the one that holds nothing are not counted.
+    assert found.notices == [
+        "2 function toolsets with 3 tools (for example the one at module.py:15) are given to no agent that the "
+        "source shows, so what they hold is shown on none"
+    ]
+
+    alone = analyze_source(
+        tmp_path,
+        """
+        from pydantic_ai.toolsets import FunctionToolset
+
+        toolset = FunctionToolset()
+
+
+        @toolset.tool_plain
+        def lookup(key: str) -> str:
+            return key
+        """,
+    )
+    assert alone.notices == [
+        "1 function toolset with 1 tool (at module.py:4) is given to no agent that the source shows, so what it "
+        "holds is shown on none"
+    ]

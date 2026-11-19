@@ -132,7 +132,10 @@ class _ToolsetSite:
 
     site: CallSite | None
     """The construction; ``None`` for a class, whose methods register the tools on ``self``."""
+    where: SourceLocation
     tools: list[_ToolSpec] = field(default_factory=list[_ToolSpec])
+    used: bool = False
+    """Whether an agent was found that is given this toolset."""
     notes: list[str] = field(default_factory=list[str])
     """Warnings about registrations that could not be read, for every agent that uses the toolset."""
 
@@ -213,7 +216,7 @@ class AgentExtractor:
                     if callee.is_library("Agent"):
                         self.agents[id(site.node)] = _AgentSite(site)
                     elif callee.is_library("FunctionToolset"):
-                        self.toolsets[id(site.node)] = _ToolsetSite(site)
+                        self.toolsets[id(site.node)] = _ToolsetSite(site, location(module, site.node))
                 elif isinstance(callee, Definition) and not isinstance(callee.node, ast.ClassDef):
                     self.calls_of.setdefault(id(callee.node), []).append(site)
             for body in module.class_scopes.values():
@@ -225,13 +228,33 @@ class AgentExtractor:
                     written = base.value if isinstance(base, ast.Subscript) else base
                     parent = self.resolver.resolve(written, body.parent, defined.lineno)
                     if isinstance(parent, External) and parent.is_library("FunctionToolset"):
-                        self.toolsets[id(defined)] = _ToolsetSite(None)
+                        self.toolsets[id(defined)] = _ToolsetSite(None, location(module, defined))
         for module in self.project.modules:
             self._registrations(module)
         self._attach_handed_in()
 
     def notices(self) -> list[str]:
-        """What was found that belongs to no agent the source shows."""
+        """What was found that belongs to no agent the source shows. Complete once ``blueprints`` has run."""
+        return [*self._unattached_notice(), *self._unused_notice()]
+
+    def _unused_notice(self) -> list[str]:
+        unused = [site for site in self.toolsets.values() if site.tools and not site.used]
+        if not unused:
+            return []
+        tools = sum(len(site.tools) for site in unused)
+        first = f"{unused[0].where.file}:{unused[0].where.line}"
+        counted = "1 tool" if tools == 1 else f"{tools} tools"
+        if len(unused) == 1:
+            return [
+                f"1 function toolset with {counted} (at {first}) is given to no agent that the source shows, "
+                "so what it holds is shown on none"
+            ]
+        return [
+            f"{len(unused)} function toolsets with {counted} (for example the one at {first}) are given to no "
+            "agent that the source shows, so what they hold is shown on none"
+        ]
+
+    def _unattached_notice(self) -> list[str]:
         if not self.unattached:
             return []
         first = self.unattached[0]
@@ -1498,6 +1521,7 @@ class _AgentBuilder:
             result.where = location(current.module, call)
             if made is not None:
                 site, own_class = made
+                site.used = True
                 result.kind, result.opaque = "function", False
                 result.label = (own_class or "FunctionToolset") + (f" {toolset_id!r}" if toolset_id else "")
                 # A class of the project takes whatever its own ``__init__`` asks for, not a list of tools.
