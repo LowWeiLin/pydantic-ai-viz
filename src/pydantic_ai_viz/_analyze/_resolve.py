@@ -45,6 +45,9 @@ _MAX_LOOP_ITEMS = 64
 _MAX_STAR_DEPTH = 4
 """How many ``from ... import *`` statements a name is followed through."""
 
+_MAX_BASES = 8
+"""How many classes, a class and the ones it derives from, an attribute of ``self`` is looked for in."""
+
 END_OF_MODULE = 10**9
 """A line number after every line: what a name means once its module has finished running."""
 
@@ -533,7 +536,7 @@ class Resolver:
         scope = current.scope
         owner = receiver_class(base.id, scope) if isinstance(base, ast.Name) else None
         if owner is not None:
-            found = owner.attributes.get(names[0]) or owner.bindings.get(names[0])
+            found = self._attribute_of(owner, names[0], depth)
             if not found:
                 return None
             value: Resolved = self._bound(found[-1])
@@ -563,6 +566,27 @@ class Resolver:
             else:
                 return None
         return value
+
+    def _attribute_of(self, owner: Scope, name: str, depth: int) -> list[Binding] | None:
+        """Where ``self.name`` is given a value: in the class itself, else in a base class among the analysed files."""
+        classes = [owner]
+        for scope in classes:
+            found = scope.attributes.get(name) or scope.bindings.get(name)
+            if found:
+                return found
+            node = scope.node
+            if not isinstance(node, ast.ClassDef) or scope.parent is None or len(classes) >= _MAX_BASES:
+                continue
+            for base in node.bases:
+                written = base.value if isinstance(base, ast.Subscript) else base
+                if not isinstance(written, ast.Name | ast.Attribute):
+                    continue
+                parent = self.resolve(written, scope.parent, node.lineno, depth=depth + 1)
+                if isinstance(parent, Definition) and isinstance(parent.node, ast.ClassDef):
+                    inherited = parent.body
+                    if all(inherited is not seen for seen in classes) and len(classes) < _MAX_BASES:
+                        classes.append(inherited)
+        return None
 
     def _factory(self, node: ast.Call, current: Expression, depth: int) -> Resolved | _Stop:
         """The value a call returns: of a function here that has exactly one ``return``, or of ``typing.cast``."""

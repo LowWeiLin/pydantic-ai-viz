@@ -706,3 +706,79 @@ REGISTRY["orphan"](coder)
         f"`list_files` at module.py:{line}); which agent gets them is decided when the code runs, so they are "
         "shown on none"
     ]
+
+
+# --------------------------------------------- an agent made in a base class
+
+
+def test_what_a_derived_class_adds_to_the_agent_of_its_base_class_is_shown_and_said(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    (tmp_path / "base.py").write_text(
+        textwrap.dedent(
+            """
+            from pydantic_ai import Agent, RunContext
+
+
+            class BaseAgent:
+                def __init__(self, instructions: str | None = None) -> None:
+                    self.agent = Agent("openai:gpt-5.2", instructions=instructions)
+
+                    @self.agent.instructions
+                    def add_language(ctx: RunContext[None]) -> str:
+                        return "Answer in English."
+
+                async def ask(self, question: str) -> str:
+                    return (await self.agent.run(question)).output
+            """
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "pdf.py").write_text(
+        textwrap.dedent(
+            '''
+            from pydantic_ai import RunContext
+
+            from base import BaseAgent
+
+
+            class PDFAgent(BaseAgent):
+                def __init__(self) -> None:
+                    super().__init__(instructions="Read the PDF.")
+
+                    @self.agent.tool
+                    def get_pdf(ctx: RunContext[None], page: int) -> str:
+                        """Get one page of the PDF."""
+                        return ""
+
+                    @self.agent.instructions
+                    def add_path(ctx: RunContext[None]) -> str:
+                        return "The file is example.pdf."
+
+
+            class Unrelated:
+                def __init__(self) -> None:
+                    @self.agent.tool
+                    def not_found(ctx: RunContext[None]) -> str:
+                        return ""
+            '''
+        ),
+        encoding="utf-8",
+    )
+    (found,) = analyze(tmp_path).agents
+    assert found.location is not None
+    assert (found.label, found.location.file, found.location.line) == ("agent", "base.py", 7)
+    assert [(t.name, t.function, t.description) for t in found.tools] == [
+        ("get_pdf", "pdf.PDFAgent.__init__.<locals>.get_pdf", "Get one page of the PDF.")
+    ]
+    assert [i.function for i in found.instructions if i.function] == [
+        "base.BaseAgent.__init__.<locals>.add_language",
+        "pdf.PDFAgent.__init__.<locals>.add_path",
+    ]
+    # One construction in the source, one agent per class when the code runs: the difference is said.
+    assert found.warnings == [
+        "the tool `get_pdf` is added by the class `PDFAgent`, which is derived from `BaseAgent` where this agent is "
+        "made; only an agent made through `PDFAgent` has it",
+        "the instructions function `add_path` is added by the class `PDFAgent`, which is derived from `BaseAgent` "
+        "where this agent is made; only an agent made through `PDFAgent` has it",
+        "one of the instructions is the expression `instructions`; its text is only known at run time",
+    ]

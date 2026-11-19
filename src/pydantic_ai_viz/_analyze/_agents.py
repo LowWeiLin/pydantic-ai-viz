@@ -91,6 +91,16 @@ _MAX_WRAPPERS = 4
 _MAX_EXPANSION_DEPTH = 6
 
 
+def _class_around(scope: Scope) -> ast.ClassDef | None:
+    """The class a scope lies in, if it lies in one."""
+    current: Scope | None = scope
+    while current is not None:
+        if isinstance(current.node, ast.ClassDef):
+            return current.node
+        current = current.parent
+    return None
+
+
 def brief(text: str) -> str:
     """Source text short enough to quote inside a warning."""
     return clip_expression(text, 80)
@@ -359,8 +369,11 @@ class AgentExtractor:
             spec = _ToolSpec(function.node.name, function, where, takes_ctx=takes_ctx)
             self._overrides(spec, keywords, scope, line)
             receiver.tools.append(spec)
+            self._note_subclass(receiver, scope, f"the tool `{spec.name}`")
         elif isinstance(receiver, _AgentSite):
             if name == "instructions" or name == "system_prompt":
+                what = "instructions" if name == "instructions" else "system prompt"
+                self._note_subclass(receiver, scope, f"the {what} function `{function.node.name}`")
                 prompt = Instruction(
                     kind=name,
                     dynamic=True,
@@ -372,6 +385,25 @@ class AgentExtractor:
                 (receiver.instructions if name == "instructions" else receiver.system_prompts).append(prompt)
             elif name == "toolset":
                 receiver.toolset_functions.append(function)
+
+    @staticmethod
+    def _note_subclass(receiver: _AgentSite | _ToolsetSite, scope: Scope, what: str) -> None:
+        """Say so when something is added to an agent by a class other than the one that makes the agent.
+
+        ``self.agent = Agent(...)`` in a base class and ``@self.agent.tool`` in a class
+        derived from it: one construction in the source, and at run time one agent
+        per class, of which only some have the tool.
+        """
+        if not isinstance(receiver, _AgentSite):
+            return
+        adding, making = _class_around(scope), _class_around(receiver.site.scope)
+        if adding is None or making is None or adding is making:
+            return
+        _compat.add_warning(
+            receiver.notes,
+            f"{what} is added by the class `{adding.name}`, which is derived from `{making.name}` where "
+            f"this agent is made; only an agent made through `{adding.name}` has it",
+        )
 
     def _on_a_parameter(
         self, method: ast.Attribute, call: ast.Call | None, scope: Scope, line: int, function: Definition
