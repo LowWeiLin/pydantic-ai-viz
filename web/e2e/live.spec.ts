@@ -148,7 +148,9 @@ test.describe("real view server", () => {
         const count = agent.tools.filter((tool) => tool.toolset === toolset.id).length;
         if (count === 0) continue;
         const name = `Toolset ${toolset.label}, ${count} tool${count === 1 ? "" : "s"}`;
-        await canvasNode(page, name).first().click({ position: { x: 40, y: 12 } });
+        await canvasNode(page, name)
+          .first()
+          .click({ position: { x: 40, y: 12 } });
         await expect(
           inspector.getByRole("list", { name: `Tools of ${toolset.label}` }).getByRole("button"),
         ).toHaveCount(count);
