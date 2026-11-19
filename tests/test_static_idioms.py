@@ -242,6 +242,58 @@ def test_running_a_wrapper_around_an_agent_is_delegation_to_that_agent(tmp_path:
     assert [b.name for b in selected.agents] == ["questioner", "answerer"]
 
 
+def test_running_an_agent_picked_from_a_written_out_dict_or_list_is_delegation_to_each_it_may_be(
+    tmp_path: Path,
+) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from pydantic_ai import Agent, RunContext
+
+        gp = Agent("test", name="gp")
+        cardiology = Agent("test", name="cardiology")
+        neurology = Agent("test", name="neurology")
+        SPECIALISTS = {"general": gp, "cardiology": cardiology, "neurology": neurology, "other": "not an agent"}
+        IN_ORDER = [gp, neurology]
+
+        triage = Agent("test", name="triage")
+
+
+        @triage.tool
+        async def consult(ctx: RunContext[None], specialty: str, question: str) -> str:
+            specialist = SPECIALISTS.get(specialty)
+            if specialist is None:
+                return "no such specialist"
+            return (await specialist.run(question)).output
+
+
+        @triage.tool_plain
+        async def consult_cardiology(question: str) -> str:
+            return (await SPECIALISTS["cardiology"].run(question)).output
+
+
+        @triage.tool_plain
+        def consult_first(index: int, question: str) -> str:
+            return IN_ORDER[index].run_sync(question).output
+
+
+        @triage.tool_plain
+        def look_up(specialty: str) -> str:
+            return SPECIALISTS.get(specialty).name
+        """,
+    )
+    gp, cardiology, neurology, triage = found.agents
+    assert [(d.tool_name, d.agent_id) for d in triage.delegates] == [
+        ("consult", gp.id),
+        ("consult", cardiology.id),
+        ("consult", neurology.id),
+        ("consult_cardiology", cardiology.id),
+        ("consult_first", gp.id),
+        ("consult_first", neurology.id),
+    ]
+    assert gp.delegates == cardiology.delegates == neurology.delegates == []
+
+
 # ------------------------------------------------------- tools that are not defs
 
 

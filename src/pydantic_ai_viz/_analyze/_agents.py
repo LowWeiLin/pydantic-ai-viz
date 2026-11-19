@@ -1737,16 +1737,68 @@ class _AgentBuilder:
             if not isinstance(node, ast.Call):
                 continue
             candidates: list[ast.expr] = []
+            receiver: ast.expr | None = None
             if isinstance(node.func, ast.Attribute) and node.func.attr in RUN_METHODS:
-                candidates.append(node.func.value)
+                receiver = node.func.value
+                candidates.append(receiver)
             candidates.extend(argument for argument in node.args if isinstance(argument, ast.Name | ast.Attribute))
             candidates.extend(
                 keyword.value for keyword in node.keywords if isinstance(keyword.value, ast.Name | ast.Attribute)
             )
             for candidate in candidates:
                 agent = self.extractor.agent_at(unwrap(candidate), body, node.lineno)
-                if agent is not None:
+                agents = [agent] if agent is not None else []
+                if agent is None and candidate is receiver:
+                    agents = self._chosen_from(candidate, body, node.lineno)
+                for agent in agents:
                     agent_id = self.ids[id(agent.site.node)]
                     if agent_id not in found:
                         found.append(agent_id)
         return found
+
+    def _chosen_from(self, node: ast.expr, scope: Scope, line: int) -> list[_AgentSite]:
+        """The agents of a written-out dict or list that the agent being run is picked from.
+
+        ``AGENTS[name].run(...)``, or ``agent = AGENTS.get(name)`` and then ``agent.run(...)``:
+        which one runs is decided by the key, so each agent the container holds is a delegate.
+        """
+        target = self.resolver.resolve(node, scope, line)
+        if not isinstance(target, Expression):
+            return []
+        picked = target.node
+        container: ast.expr | None = None
+        key: ast.expr | None = None
+        if isinstance(picked, ast.Subscript) and not isinstance(picked.slice, ast.Slice):
+            container, key = picked.value, picked.slice
+        elif (
+            isinstance(picked, ast.Call)
+            and isinstance(picked.func, ast.Attribute)
+            and picked.func.attr == "get"
+            and 1 <= len(picked.args) <= 2
+            and not isinstance(picked.args[0], ast.Starred)
+        ):
+            container, key = picked.func.value, picked.args[0]
+        if container is None or key is None:
+            return []
+        held = self.resolver.resolve(container, target.scope, target.line)
+        if not isinstance(held, Expression):
+            return []
+        if isinstance(held.node, ast.Dict):
+            values = held.node.values
+            # A key the source spells out picks one entry; any other key may pick any of them.
+            written = string(self.resolver, key, target.scope, target.line)
+            if written is not None:
+                keys = [None if k is None else string(self.resolver, k, held.scope, held.line) for k in held.node.keys]
+                if written in keys:
+                    last = len(keys) - 1 - keys[::-1].index(written)  # a key written twice holds the later value
+                    values = [held.node.values[last]]
+        elif isinstance(held.node, ast.List | ast.Tuple) and isinstance(picked, ast.Subscript):
+            values = held.node.elts
+        else:
+            return []
+        agents: list[_AgentSite] = []
+        for value in values[:_MAX_LIST_ITEMS]:
+            agent = self.extractor.agent_at(value, held.scope, held.line)
+            if agent is not None and agent not in agents:
+                agents.append(agent)
+        return agents
