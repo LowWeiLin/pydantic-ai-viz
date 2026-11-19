@@ -11,11 +11,24 @@ The short answer: it stays in the memory of your process, and reaches your brows
 | Your process's memory | The event log: blueprints and captured runs | Until the session closes or the process exits |
 | Your browser tab | A copy of the event log, received from the local server | Until you close the tab |
 | A file on disk | A recording or an export | Only if you ask for one: `session.save`, `session.export_html`, `--record`, `--export`, or the viewer's Export menu |
-| The network | Nothing | |
+| The cache directory | The `.py` files of a GitHub repository you named as a `view` target | Until you delete them |
+| The network | Nothing, except the `git` fetch of a GitHub repository you named as a `view` target | |
 
 There is no telemetry, no account and no cloud service. Spans go to a private OpenTelemetry tracer provider inside your process, not to a collector, and no global OpenTelemetry state is set. The viewer is a single HTML file that loads no scripts, fonts or styles from other hosts; its Content Security Policy forbids it.
 
 `pydantic-ai-viz open` writes an export to your system's temporary directory in order to open it. That file stays there until your system cleans the directory.
+
+## Reading source code with `view`
+
+`pydantic-ai-viz view` and `pviz.analyze` read your files on your machine and run none of them, so no agent runs, no model is called and no prompt of a user is involved. What they produce describes your code, not your data, but it does quote the code:
+
+- **Prompts written in the source appear in full**: instruction strings, docstrings that become tool descriptions, and default values of tool parameters.
+- **Computed values appear as the code that computes them**, for example `os.getenv("MODEL", "openai:gpt-5.2")`. The value of an environment variable is never read, so a secret held in one is not shown; a secret written as a literal in the code is, as it would be in any copy of the code.
+- **File paths are relative** to the directory that was read, so a blueprint export does not carry the layout of your machine.
+
+A blueprint-only export (`view ... --export`) holds no run data, but read it before you share it if your prompts are confidential.
+
+A GitHub target (`gh:owner/repo`, or a `https://github.com/...` URL) is the one case where `view` uses the network: `git` fetches that commit's `.py` files from GitHub, using your git configuration, and keeps them in a cache directory (`PYDANTIC_AI_VIZ_CACHE_DIR`, or your user cache directory). Nothing is sent but the request for the repository, and a commit already in the cache is read without the network.
 
 ## Capture without content
 

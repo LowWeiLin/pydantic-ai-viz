@@ -105,13 +105,30 @@ with pviz.serve(agent, open_browser=True) as session:
 
 Note that without `defer_model_check=True`, `Agent("openai:gpt-5.2")` raises `ImportError` at construction when the provider package is missing. That happens when your module is imported, so it affects `view --import` and your own code, but not plain `view`, which reads the source and imports nothing.
 
+## `view` fails with `ModuleNotFoundError` { #view-modulenotfounderror }
+
+For example `pydantic-ai-viz: error: ModuleNotFoundError: No module named 'dotenv'`.
+
+Plain `pydantic-ai-viz view` cannot raise this: it reads the source and imports nothing, so the packages your code imports do not have to be installed. The error comes from importing the code, which happens only with `view --import` (and with `run`, or in versions of pydantic-ai-viz before static analysis).
+
+- Leave out `--import`: `pydantic-ai-viz view my_app/agents.py`. What the source computes when it runs is then shown as an expression; see [How view works](concepts/how-view-works.md).
+- If you need `--import`, run it in the environment where your code's dependencies are installed, for example with `uv run pydantic-ai-viz view --import my_app.agents` from your project.
+
+`pydantic-ai-viz --version` shows which version you have.
+
+## `view` says a value is "decided at run time"
+
+The source computes it instead of spelling it out: a model read from an environment variable or returned by a factory that takes arguments, a prompt built by a function call, a toolset made by a function. `view` shows the code that computes it rather than guessing, and does not take a default passed to such a call, such as the second argument of `os.getenv`, for the value. [How view works](concepts/how-view-works.md#what-shows-as-decided-at-run-time-and-why) lists what is followed and what is not. To see the real value, pass the agent to [`serve`](reference/python-api.md#serve) and run it, or use `view --import` on code you trust.
+
 ## `view` cannot find my agent
 
 `view` reads source files; it does not import them.
 
-- Give it the path of a `.py` file: `pydantic-ai-viz view my_app/agents.py`. A module name such as `my_app.agents` needs `--import`.
+- A target can be a file, a directory, a module name or a GitHub repository: `pydantic-ai-viz view my_app/`, `pydantic-ai-viz view my_app.agents`. A module name is looked for on disk, below the working directory, its `src` directory and the entries of `sys.path`.
 - An agent is found where the source calls Pydantic AI's `Agent(...)`. An agent that comes out of a library function, or out of a class that subclasses `Agent`, is not visible in the source. Use `--import`, or pass the object to `pviz.serve(...)` or `pviz.export_html(...)` in Python.
 - `file.py:name` selects a name assigned at the **top level** of the file. Without `:name`, agents made inside functions and classes are drawn too.
+- A file read only because another one imports it adds no blueprints of its own. To see every agent of a project, give its directory.
+- In a directory, virtual environments, `node_modules`, `site-packages`, `build`, `dist` and hidden directories are passed over.
 - The message "no agents or graphs found in the source" means exactly that. If a file was skipped, the line before it says why.
 
 With `--import`:
@@ -140,7 +157,7 @@ Part of the agent could not be read, most often because a Pydantic AI release ch
 
 ## A delegation edge is missing, or dashed
 
-- **Missing:** the static check only sees an agent that the tool function refers to directly, as a module-level or enclosing-scope variable. An agent reached through `ctx.deps`, an attribute or a helper function is found when the delegation first runs.
+- **Missing:** reading the code only finds an agent that the tool runs itself and that can be traced to an `Agent(...)`; see [Evidence on delegation edges](concepts/blueprint-vs-run.md#evidence-on-delegation-edges). An agent run by a helper function, or reached in a way the code does not spell out, is found when the delegation first runs.
 - **Dashed:** the edge was read from the code and has not been seen in a run yet.
 
 Details in [Blueprint vs run](concepts/blueprint-vs-run.md#evidence-on-delegation-edges).
