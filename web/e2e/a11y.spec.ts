@@ -195,7 +195,7 @@ const SCREENS: { name: string; open: (page: Page) => Promise<void> }[] = [
     name: "blueprint-only view: a toolset that lists its tools only at run time",
     open: async (page) => {
       await page.goto(blueprintOnly("#/agents/a2"));
-      await canvasNode(page, "Toolset MCPServerStdio: its tools are resolved at run time").click();
+      await canvasNode(page, "Toolset MCPServerStdio: its tools are decided at run time").click();
       await expect(page.getByText(/lists its tools only when the code runs/)).toBeVisible();
     },
   },

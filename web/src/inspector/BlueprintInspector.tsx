@@ -143,7 +143,7 @@ function InstructionItem({ item }: { item: Instruction }) {
 }
 
 function toolsetMeta(toolset: Toolset, count: number): string {
-  if (toolset.opaque && count === 0) return "resolved at run time";
+  if (toolset.opaque && count === 0) return "decided at run time";
   return plural(count, "tool");
 }
 
@@ -662,7 +662,7 @@ export function UnlistedToolInspector({ agent, name }: { agent: AgentBlueprint; 
       </InspectorHeader>
       <div className="p-3">
         <Note>
-          The blueprint does not list this tool: it comes from a toolset that resolves its tools at
+          The blueprint does not list this tool: it comes from a toolset whose tools are decided at
           run time. Select one of its calls in the timeline to see arguments and results.
         </Note>
       </div>

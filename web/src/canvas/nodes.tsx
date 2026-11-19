@@ -234,8 +234,9 @@ export type ToolsetNodeData = {
   selected: boolean;
 };
 
-const toolsetCount = (toolset: Toolset | null, count: number): string =>
-  toolset?.opaque && count === 0 ? "dynamic" : plural(count, "tool");
+/** Null for a toolset whose tools are not known: its placeholder row below says why. */
+const toolsetCount = (toolset: Toolset | null, count: number): string | null =>
+  toolset?.opaque && count === 0 ? null : plural(count, "tool");
 
 /**
  * The box around a toolset's tools, with the toolset label as its header. The box picks the
@@ -254,7 +255,7 @@ export function ToolsetHeader({ data }: NodeProps<Node<ToolsetNodeData, "toolset
     >
       {toolset && (
         <Cover
-          label={`Toolset ${toolset.label}, ${count}`}
+          label={`Toolset ${toolset.label}${count === null ? "" : `, ${count}`}`}
           target={{ kind: "toolset", agentId: data.agentId, toolsetId: toolset.id }}
         />
       )}
@@ -263,7 +264,7 @@ export function ToolsetHeader({ data }: NodeProps<Node<ToolsetNodeData, "toolset
         <span className="min-w-0 flex-1 truncate font-medium text-muted">
           {toolset ? toolset.label : "Seen in this run"}
         </span>
-        <span className="shrink-0 text-faint">{count}</span>
+        {count !== null && <span className="shrink-0 text-faint">{count}</span>}
       </div>
     </div>
   );
@@ -321,12 +322,12 @@ export function PlaceholderNode({ data }: NodeProps<Node<PlaceholderNodeData, "p
     <div className="relative size-full rounded-control border border-line-strong border-dashed">
       <Ports />
       <Cover
-        label={`Toolset ${data.toolsetLabel}: its tools are resolved at run time`}
+        label={`Toolset ${data.toolsetLabel}: its tools are decided at run time`}
         target={{ kind: "toolset", agentId: data.agentId, toolsetId: data.toolsetId }}
       />
       <div className="pointer-events-none relative flex h-full items-center gap-2 px-2.5 text-data text-muted">
         <Icon name="idle" size={14} className="text-faint" />
-        resolved at run time
+        decided at run time
       </div>
     </div>
   );

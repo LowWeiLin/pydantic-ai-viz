@@ -67,7 +67,7 @@ export function agentMermaid(model: CanvasModel): string {
       lines.push(`  subgraph ${groupId}[${mermaidLabel(group.toolset.label)}]`);
       if (group.tools.length === 0) {
         // The toolset lists its tools only while a run is going.
-        lines.push(`    ${groupId}_any(["resolved at run time"])`);
+        lines.push(`    ${groupId}_any(["decided at run time"])`);
         flows.push(`${groupId}_any`);
       }
       for (const { tool } of group.tools) {

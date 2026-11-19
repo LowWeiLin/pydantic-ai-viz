@@ -144,7 +144,7 @@ describe("agentMermaid", () => {
         '    agent1_tool3["fetch_article"]',
         "  end",
         '  subgraph agent1_tools3["MCPServerStdio"]',
-        '    agent1_tools3_any(["resolved at run time"])',
+        '    agent1_tools3_any(["decided at run time"])',
         "  end",
         '  agent1_output[/"output: str"/]',
         "  agent1 --> agent1_tool1",

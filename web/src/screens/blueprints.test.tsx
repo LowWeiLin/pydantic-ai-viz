@@ -185,9 +185,16 @@ describe("a toolset, and the parts a panel names", () => {
     const user = userEvent.setup();
     window.location.hash = "#/agents/a2";
     render(<App plan={embedded(NEWSROOM)} />);
+    // Said once, in the words used for every value the code decides: the box's header has no
+    // count, and the agent's panel says the same of it.
+    expect(screen.getByRole("button", { name: "Toolset MCPServerStdio" })).toBeInTheDocument();
+    expect(screen.getByText("decided at run time", { selector: "div" })).toBeInTheDocument();
+    expect(screen.queryByText(/dynamic|resolved/)).toBeNull();
+    const toolsets = details().querySelector('[data-section="toolsets"]') as HTMLElement;
+    expect(within(toolsets).getByText("decided at run time")).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", {
-        name: "Toolset MCPServerStdio: its tools are resolved at run time",
+        name: "Toolset MCPServerStdio: its tools are decided at run time",
       }),
     );
     expect(title()).toBe("MCPServerStdio");
