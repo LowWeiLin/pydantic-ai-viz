@@ -380,14 +380,8 @@ function toolCallTabs(span: ToolCallSpan): TabItem[] {
           title: data.retry ? "Retry" : "Error",
           content: (
             <>
-              {data.retry && (
-                <Facts
-                  items={[
-                    ["Attempt", `${data.retry.attempt} of ${data.retry.max_retries} retries`],
-                    ["Cause", data.retry.cause],
-                  ]}
-                />
-              )}
+              {/* Which attempt it was is the status in the header ("Retry 1 of 2"). */}
+              {data.retry && <Facts items={[["Cause", data.retry.cause]]} />}
               {span.error && <ErrorBox error={span.error} retry={data.retry !== null} />}
               {data.retry && (
                 <Note>

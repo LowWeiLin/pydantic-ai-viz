@@ -482,6 +482,12 @@ describe("screens", () => {
     expect(rows[0]).toHaveAttribute("aria-level", "1");
     expect(rows[0]).toHaveTextContent(/triage.*OK/);
     expect(rows[2]).toHaveTextContent(/get_order.*Retry 1 of 2/);
+    // Its panel says which attempt it was once, as the status beside its name.
+    await user.click(rows[2] as HTMLElement);
+    const details = screen.getByRole("complementary", { name: "Span details" });
+    expect(within(details).getAllByText(/1 of 2/)).toHaveLength(1);
+    expect(within(details).getByText("Retry 1 of 2").closest("header")).not.toBeNull();
+    expect(within(details).getByText("model_retry")).toBeInTheDocument();
     expect(within(tree).getAllByRole("treeitem", { name: /refunds/ })[0]).toHaveAttribute(
       "aria-level",
       "3",

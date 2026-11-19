@@ -121,7 +121,9 @@ test.describe("real demo recordings", () => {
       "Arguments",
       "Result",
     ]);
-    await expect(inspector).toContainText("1 of 2 retries");
+    // Which attempt it was is said once, as the status beside the call's name.
+    await expect(inspector.locator("header")).toContainText("Retry 1 of 2");
+    await expect(inspector).not.toContainText("1 of 2 retries");
     await expect(inspector).toContainText("ToolRetryError");
 
     // The structured output of the run, as data.
