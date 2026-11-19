@@ -158,7 +158,7 @@ def test_a_prompt_built_by_a_library_call_is_kept_as_its_source_written_out(tmp_
     )
     assert agent(found, "agent").warnings == [
         'one of the instructions is the expression `dedent( """ You are a careful assistant. Answer briefly. """ )`; '
-        "its text is only known at run time"
+        "its text is only known when the code runs"
     ]
 
 

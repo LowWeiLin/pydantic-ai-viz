@@ -180,7 +180,7 @@ def test_a_prompt_filled_in_with_format_is_shown_as_its_template(tmp_path: Path)
     ]
     assert found.warnings == [
         "one of the system prompts is the expression `load_prompt().format(date=today())`; its text is only "
-        "known at run time"
+        "known when the code runs"
     ]
 
 
@@ -969,7 +969,7 @@ def test_what_a_derived_class_adds_to_the_agent_of_its_base_class_is_shown_and_s
         "made; only an agent made through `PDFAgent` has it",
         "the instructions function `add_path` is added by the class `PDFAgent`, which is derived from `BaseAgent` "
         "where this agent is made; only an agent made through `PDFAgent` has it",
-        "one of the instructions is the expression `instructions`; its text is only known at run time",
+        "one of the instructions is the expression `instructions`; its text is only known when the code runs",
     ]
 
 

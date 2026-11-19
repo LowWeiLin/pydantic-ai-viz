@@ -1086,7 +1086,7 @@ class _AgentBuilder:
                 "source; whether it is text or a function is not known"
             )
         elif not isinstance(node, ast.Lambda):
-            self.warn(f"one of the {what} is the expression `{brief(text)}`; its text is only known at run time")
+            self.warn(f"one of the {what} is the expression `{brief(text)}`; its text is only known when the code runs")
         return Instruction(kind=kind, dynamic=True, text=None, function=None, expression=text, location=where)
 
     # -------------------------------------------------------------- output

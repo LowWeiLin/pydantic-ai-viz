@@ -197,13 +197,13 @@ def test_computed_values_are_reported_as_source_text_never_guessed() -> None:
         'the name is computed by `f"support-{TEAM}"`, so it is only known when the code runs',
         'the description is computed by `house_style("support")`, so it is only known when the code runs',
         "the model is set by `get_model()`, so it is only known when the code runs",
-        "one of the instructions is the expression `PREAMBLE`; its text is only known at run time",
-        'one of the instructions is the expression `PROMPTS["support"]`; its text is only known at run time',
+        "one of the instructions is the expression `PREAMBLE`; its text is only known when the code runs",
+        'one of the instructions is the expression `PROMPTS["support"]`; its text is only known when the code runs',
         "one of the instructions is `house_style` (my_company.prompts.house_style), which is defined outside the "
         "analysed source; whether it is text or a function is not known",
-        "one of the instructions is the expression `GREETING`; its text is only known at run time",
+        "one of the instructions is the expression `GREETING`; its text is only known when the code runs",
         'one of the system prompts is the expression `PREAMBLE + " Answer in English."`; '
-        "its text is only known at run time",
+        "its text is only known when the code runs",
     ]
 
 
