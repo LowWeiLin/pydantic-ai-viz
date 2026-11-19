@@ -963,13 +963,14 @@ test.describe("blueprint-only view", () => {
     const warnings = inspector.locator('[data-section="warnings"]');
     await expect(warnings.getByRole("listitem")).toHaveCount(3);
     // The count leads to the list: from a tool's panel, and from the end of the agent's own.
+    const count = page.locator("main").getByRole("button", { name: /^3 warnings/ });
     await canvasNode(page, "Tool fetch_article").click();
     await expect(warnings).toHaveCount(0);
-    await page.locator("main").getByRole("button", { name: /^3 warnings/ }).click();
+    await count.click();
     const panel = inspector.getByRole("region", { name: "Agent blueprint" });
     await panel.evaluate((el) => el.scrollTo(0, el.scrollHeight));
     await expect(warnings).not.toBeInViewport();
-    await page.locator("main").getByRole("button", { name: /^3 warnings/ }).click();
+    await count.click();
     await expect(warnings).toBeInViewport();
     expect(
       await warnings.evaluate(
