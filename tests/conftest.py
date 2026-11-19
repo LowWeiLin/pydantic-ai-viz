@@ -9,6 +9,11 @@ import pytest
 # Must be set before anything imports pydantic_ai.
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
+# Python 3.14's argparse colours help and errors when FORCE_COLOR is set, as it is in CI,
+# which puts escape codes into the output the CLI tests compare.
+os.environ.pop("FORCE_COLOR", None)
+os.environ["NO_COLOR"] = "1"
+
 
 @pytest.fixture
 def anyio_backend() -> str:
