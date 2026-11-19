@@ -38,6 +38,14 @@ if (!html.includes(BOOT_SLOT))
 if (/<script[^>]+\bsrc=|<link[^>]+rel="stylesheet"/i.test(html)) {
   fail("viewer.html references an external script or stylesheet");
 }
+// The licences of the bundled libraries open the page (see `licenceNotices` in vite.config.ts).
+const notices = /^<!doctype html>\s*<!--\nThird-party software in this file\n([\s\S]*?)\n-->/i.exec(
+  html,
+);
+if (!notices) fail("viewer.html does not open with the third-party licence notices");
+for (const name of ["@xyflow/react", "react", "react-dom", "tailwindcss"]) {
+  if (!new RegExp(`^${name} \\d`, "m").test(notices[1])) fail(`the notices do not list ${name}`);
+}
 
 if (!existsSync(path.join(targetDir, ".gitignore"))) {
   fail(`${targetDir} does not look like the package static directory`);
