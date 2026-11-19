@@ -12,7 +12,9 @@ from pydantic_ai_viz import analyze
 # ------------------------------------------------- the model, from a setting
 
 
-def test_a_model_read_from_the_environment_is_shown_with_the_default_the_source_gives(tmp_path: Path) -> None:
+def test_a_model_read_at_run_time_is_its_expression_with_one_message_whatever_reads_it(tmp_path: Path) -> None:
+    # The environment, a config object, a function: all are outside the source, so none is singled out,
+    # and no default the source passes along is taken for the value.
     found = analyze_source(
         tmp_path,
         """
@@ -49,32 +51,23 @@ def test_a_model_read_from_the_environment_is_shown_with_the_default_the_source_
         assert info is not None
         return info.id, info.provider, info.name, info.offline, info.expression
 
-    # Never an id: which model runs is decided by the environment. The default is what the source says.
-    assert model("by_default") == (None, "openai", "gpt-5.2", False, 'os.getenv("PYDANTIC_AI_MODEL", "openai:gpt-5.2")')
-    assert agent(found, "by_default").warnings == [
-        "the model is read from the environment variable `PYDANTIC_AI_MODEL` when the code runs; "
-        "`openai:gpt-5.2` is the default the source gives"
-    ]
-    assert model("inline") == (None, None, "gpt-5-mini", False, 'os.environ.get("MODEL", "gpt-5-mini")')
-    assert model("with_or")[:3] == (None, "anthropic", "claude-sonnet-5")
-    assert model("keyword")[:4] == (None, None, "test", False)
-    for label in ("required", "optional"):
-        assert model(label)[:3] == (None, None, agent(found, label).model.expression)  # type: ignore[union-attr]
+    expressions = {
+        "by_default": 'os.getenv("PYDANTIC_AI_MODEL", "openai:gpt-5.2")',  # what MODEL was assigned
+        "inline": 'os.environ.get("MODEL", "gpt-5-mini")',
+        "with_or": 'getenv("MODEL") or "anthropic:claude-sonnet-5"',
+        "keyword": 'os.getenv("MODEL", default="test")',
+        "required": 'environ["MODEL"]',
+        "optional": 'os.getenv("MODEL")',
+        "computed_default": 'os.getenv("MODEL", pick_default())',
+        "other_function": 'config.get("MODEL", "openai:gpt-5.2")',
+        "through_class": "get_model()",
+        "class_without_default": 'OpenAIChatModel(os.environ["LLM"])',
+    }
+    for label, expression in expressions.items():
+        assert model(label) == (None, None, expression, False, expression)
         assert agent(found, label).warnings == [
-            "the model is read from the environment variable `MODEL`, so it is only known when the code runs"
+            f"the model is set by `{expression}`, so it is only known when the code runs"
         ]
-    for label in ("computed_default", "other_function"):
-        assert agent(found, label).warnings[0].startswith("the model is set by `")
-
-    assert model("through_class") == (None, None, "gpt-4.1-mini", False, "get_model()")
-    assert agent(found, "through_class").warnings == [
-        "the model name is read from the environment variable `MODEL_CHOICE` when the code runs; "
-        "`gpt-4.1-mini` is the default the source gives"
-    ]
-    assert model("class_without_default")[2] == 'OpenAIChatModel(os.environ["LLM"])'
-    assert agent(found, "class_without_default").warnings == [
-        "the model is read from the environment variable `LLM`, so it is only known when the code runs"
-    ]
 
 
 def test_a_model_held_in_a_variable_is_shown_as_what_the_variable_was_assigned(tmp_path: Path) -> None:
@@ -118,10 +111,10 @@ def test_a_cast_is_looked_through_to_the_value_it_wraps(tmp_path: Path) -> None:
     assert literal.warnings == []
     from_environment = agent(found, "from_environment").model
     assert from_environment is not None
-    assert (from_environment.id, from_environment.provider, from_environment.name) == (None, "openai", "gpt-5.2")
+    assert (from_environment.id, from_environment.provider) == (None, None)
     assert agent(found, "from_environment").warnings == [
-        "the model is read from the environment variable `PYDANTIC_AI_MODEL` when the code runs; "
-        "`openai:gpt-5.2` is the default the source gives"
+        'the model is set by `cast(KnownModelName, os.getenv("PYDANTIC_AI_MODEL", "openai:gpt-5.2"))`, '
+        "so it is only known when the code runs"
     ]
     # Only the cast of the typing module is known to hand its argument back.
     assert agent(found, "another_cast").warnings == [
@@ -593,9 +586,13 @@ def test_a_toolset_class_that_is_handed_a_toolset_is_a_wrapper_around_it(tmp_pat
     assert [t.name for t in agent(found, "by_keyword").tools] == ["add"]
     assert toolsets("own_class") == [("FunctionToolset", "function", ["Logged", "PrefixedToolset"], False)]
     assert [t.name for t in agent(found, "own_class").tools] == ["math_add"]
-    assert toolsets("elsewhere") == [("FunctionToolset", "function", ["TheirToolset"], False)]
-    for label in ("by_keyword", "own_class", "elsewhere"):
+    for label in ("by_keyword", "own_class"):
         assert agent(found, label).warnings == []
+    # Another library's class is not taken for a wrapper because of its name: what it does is not in the source.
+    assert toolsets("elsewhere") == [("TheirToolset(wrapped=tools, limit=3)", "other", [], True)]
+    assert agent(found, "elsewhere").warnings == [
+        "a toolset is built by `TheirToolset(wrapped=tools, limit=3)`; its tools are only known when the code runs"
+    ]
     # A class that is no toolset, and a toolset whose inside is computed, stay what they are: opaque.
     assert toolsets("not_a_toolset") == [("Registry", "other", [], True)]
     assert toolsets("nothing_known_inside") == [("CodeExecutionToolset", "other", [], True)]

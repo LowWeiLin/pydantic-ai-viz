@@ -1,11 +1,11 @@
 """Reading literal values out of expressions, without evaluating anything.
 
 A value is read only when the source spells it out: constants, containers of
-constants, string concatenation, and a name that is assigned such a value once
-and whose value is not changed in place afterwards. A
-handful of pure string helpers that prompts are commonly wrapped in
-(``textwrap.dedent``, ``str.strip``) are applied too. Everything else raises
-``NotLiteral``; the caller then reports the source text instead of a value.
+constants, string concatenation, f-strings whose every placeholder is itself
+such a value, the ``strip`` methods of ``str``, and a name that is assigned
+such a value once and whose value is not changed in place afterwards. A call of
+any function, of the standard library or not, is not evaluated. Everything else
+raises ``NotLiteral``; the caller then reports the source text instead of a value.
 
 There is no ``eval`` and no ``ast.literal_eval`` here: both walk recursively
 without a bound. This reader counts what it visits and gives up on anything
@@ -15,17 +15,18 @@ deeper or larger than a prompt or a settings dict could plausibly be.
 from __future__ import annotations
 
 import ast
-import inspect
-import textwrap
+from collections.abc import Callable
 from typing import Any
 
-from ._resolve import Expression, External, Resolver
+from ._resolve import Expression, Resolver
 from ._source import Scope, clip_expression
 
 MAX_DEPTH = 24
 MAX_NODES = 5_000
 MAX_STRING_CHARS = 200_000
 _MAX_INT = 2**63
+_STR_METHODS = frozenset({"strip", "lstrip", "rstrip"})
+"""Methods of ``str`` applied to a literal string, when called without arguments."""
 
 
 class NotLiteral(Exception):
@@ -70,9 +71,8 @@ def _read(resolver: Resolver, expression: Expression, depth: int, budget: _Budge
     if isinstance(node, ast.Constant):
         return _constant(node.value)
     if isinstance(node, ast.JoinedStr):
-        if any(not isinstance(part, ast.Constant) for part in node.values):
-            raise NotLiteral  # an f-string with placeholders is a template, not a value
-        return _bounded("".join(str(part.value) for part in node.values if isinstance(part, ast.Constant)))
+        # A placeholder that holds a literal is folded in; any other makes the f-string a template.
+        return _bounded("".join(_fstring_part(part, child) for part in node.values))
     if isinstance(node, ast.List | ast.Tuple | ast.Set):
         if any(isinstance(item, ast.Starred) for item in node.elts):
             raise NotLiteral
@@ -103,16 +103,24 @@ def _read(resolver: Resolver, expression: Expression, depth: int, budget: _Budge
         if binding is not None and binding.kind == "assign" and isinstance(binding.node, ast.expr):
             # One assignment at a time, so every name on the way is held to the same rule.
             return _read(resolver, Expression(binding.node, binding.scope, binding.line - 1), depth + 1, budget)
-    if isinstance(node, ast.Name | ast.Attribute):
-        target = resolver.resolve(node, expression.scope, expression.line)
-        if isinstance(target, Expression) and target.node is not node and not resolver.changed():
-            return _read(resolver, target, depth + 1, budget)
-        raise NotLiteral
+    if isinstance(node, ast.Name | ast.Attribute | ast.Subscript):
+        return _followed(resolver, expression, depth, budget)
     if isinstance(node, ast.Call):
         inside = resolver.cast_value(node, expression.scope, expression.line)
         if inside is not None:
             return child(inside)
-        return _string_helper(resolver, expression, node, depth, budget)
+        if isinstance(node.func, ast.Attribute) and node.func.attr in _STR_METHODS:
+            return _string_method(resolver, expression, node, depth, budget)
+        # What a function or method of the analysed files returns, when it has one ``return``.
+        return _followed(resolver, expression, depth, budget)
+    raise NotLiteral
+
+
+def _followed(resolver: Resolver, expression: Expression, depth: int, budget: _Budget) -> Any:
+    """The value of what an expression resolves to: a name's value, an item, a function's return value."""
+    target = resolver.resolve(expression.node, expression.scope, expression.line)
+    if isinstance(target, Expression) and target.node is not expression.node and not resolver.changed():
+        return _read(resolver, target, depth + 1, budget)
     raise NotLiteral
 
 
@@ -156,31 +164,31 @@ def _concatenate(resolver: Resolver, expression: Expression, depth: int, budget:
     return _bounded("".join(parts))
 
 
-def _string_helper(resolver: Resolver, expression: Expression, node: ast.Call, depth: int, budget: _Budget) -> str:
-    """``dedent("...")``, ``cleandoc("...")`` and ``"...".strip()``: pure functions of a literal string."""
-    if node.keywords:
-        raise NotLiteral
+def _fstring_part(part: ast.expr, read: Callable[[ast.expr], Any]) -> str:
+    """One part of an f-string as text: literal text, or a placeholder whose value is a literal scalar."""
+    if isinstance(part, ast.Constant):
+        return str(part.value)
+    if not isinstance(part, ast.FormattedValue) or part.format_spec is not None:
+        raise NotLiteral  # a format spec is applied by the running code; it is not read here
+    value = read(part.value)
+    if not isinstance(value, str | int | float):
+        raise NotLiteral  # a container would be written out as Python writes it, which is not read here
+    if part.conversion == ord("r"):
+        return repr(value)
+    if part.conversion == ord("a"):
+        return ascii(value)
+    return str(value)
+
+
+def _string_method(resolver: Resolver, expression: Expression, node: ast.Call, depth: int, budget: _Budget) -> str:
+    """``"...".strip()``, ``lstrip()`` and ``rstrip()``: methods of the ``str`` a literal is."""
     function = node.func
-    if isinstance(function, ast.Attribute) and function.attr in ("strip", "lstrip", "rstrip") and not node.args:
-        value = _read(resolver, Expression(function.value, expression.scope, expression.line), depth + 1, budget)
-        if isinstance(value, str):
-            return getattr(value, function.attr)()
+    if node.keywords or node.args or not isinstance(function, ast.Attribute) or function.attr not in _STR_METHODS:
         raise NotLiteral
-    if len(node.args) != 1 or isinstance(node.args[0], ast.Starred):
-        raise NotLiteral
-    callee = resolver.callee(node, expression.scope, expression.line)
-    if not isinstance(callee, External):
-        raise NotLiteral
-    if callee.name == "textwrap.dedent":
-        helper = textwrap.dedent
-    elif callee.name == "inspect.cleandoc":
-        helper = inspect.cleandoc
-    else:
-        raise NotLiteral
-    value = _read(resolver, Expression(node.args[0], expression.scope, expression.line), depth + 1, budget)
-    if not isinstance(value, str):
-        raise NotLiteral
-    return helper(value)
+    value = _read(resolver, Expression(function.value, expression.scope, expression.line), depth + 1, budget)
+    if isinstance(value, str):
+        return getattr(value, function.attr)()
+    raise NotLiteral
 
 
 # --------------------------------------------------------------- templates

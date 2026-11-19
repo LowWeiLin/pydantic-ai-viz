@@ -363,6 +363,102 @@ def test_self_attributes_are_followed_inside_the_class_and_its_closures() -> Non
     assert returned("Team.static") is None  # no instance there
 
 
+def test_attributes_and_methods_of_an_instance_of_a_project_class_are_followed() -> None:
+    source = """
+        from dataclasses import dataclass
+        from pydantic import BaseModel
+        from pydantic_settings import BaseSettings
+
+        class Base:
+            model = "openai:gpt-5.2"
+
+        class Plain(Base):
+            def __init__(self):
+                self.made = make("in init")
+                self.twice = "a"
+
+            def reset(self):
+                self.twice = "b"
+
+            def build(self):
+                return make("built")
+
+        class FromEnvironment(BaseSettings):
+            model: str = "openai:gpt-5.2"
+
+        class Model(BaseModel):
+            model: str = "openai:gpt-5.2"
+
+        @dataclass
+        class Data:
+            model: str = "openai:gpt-5.2"
+
+        plain = Plain()
+        inherited = plain.model
+        made = plain.made
+        twice = plain.twice
+        built = Plain().build()
+        method = plain.build
+        missing = plain.nothing
+        from_environment = FromEnvironment().model
+        from_model = Model(model="other").model
+        from_data = Data().model
+        method_of_model = Model().build
+    """
+    assert source_of(resolve(source, "inherited")) == '"openai:gpt-5.2"'
+    assert source_of(resolve(source, "made")) == 'make("in init")'
+    assert source_of(resolve(source, "built")) == 'make("built")'  # what the method returns
+    method = resolve(source, "method")
+    assert isinstance(method, Definition)
+    assert method.node.name == "build"
+    # Set in two methods: which value an instance has depends on what ran.
+    assert source_of(resolve(source, "twice")) == "plain.twice"
+    assert source_of(resolve(source, "missing")) == "plain.nothing"
+    # A class that a library shapes takes its fields from the constructor or the environment, not its body.
+    for name, text in (
+        ("from_environment", "FromEnvironment().model"),
+        ("from_model", 'Model(model="other").model'),
+        ("from_data", "Data().model"),
+        ("method_of_model", "Model().build"),
+    ):
+        assert source_of(resolve(source, name)) == text
+
+
+def test_an_item_of_a_written_out_container_is_followed() -> None:
+    source = """
+        KEY = "fast"
+        MODELS = {"fast": "openai:gpt-5-mini", "slow": "openai:gpt-5.2", "fast": "test"}
+        PAIR = ("first", "second")
+        GROWN = {"a": "x"}
+        GROWN["b"] = "y"
+        SPREAD = {**MODELS, "own": "z"}
+
+        by_literal = MODELS["slow"]
+        by_name = MODELS[KEY]  # a key written twice holds the later value
+        by_index = PAIR[-1]
+        out_of_range = PAIR[2]
+        missing = MODELS["none"]
+        changed = GROWN["a"]
+        spread = SPREAD["own"]
+        computed = MODELS[pick()]
+        sliced = PAIR[0:1]
+        external = os.environ["MODEL"]
+    """
+    assert source_of(resolve(source, "by_literal")) == '"openai:gpt-5.2"'
+    assert source_of(resolve(source, "by_name")) == '"test"'
+    assert source_of(resolve(source, "by_index")) == '"second"'
+    for name, text in (
+        ("out_of_range", "PAIR[2]"),
+        ("missing", 'MODELS["none"]'),
+        ("changed", 'GROWN["a"]'),  # changed in place after it was written
+        ("spread", 'SPREAD["own"]'),
+        ("computed", "MODELS[pick()]"),
+        ("sliced", "PAIR[0:1]"),
+        ("external", 'os.environ["MODEL"]'),
+    ):
+        assert source_of(resolve(source, name)) == text
+
+
 def test_imports_lead_to_external_names() -> None:
     source = """
         import os
@@ -545,32 +641,37 @@ def test_literals_are_read() -> None:
     }
 
 
-def test_pure_string_helpers_are_applied_to_literals() -> None:
-    source = '''
-        from textwrap import dedent
-        import inspect, textwrap
-        value = [
-            dedent("""
-                Line one.
-                  Indented.
-            """).strip(),
-            textwrap.dedent("  x\\n  y"),
-            inspect.cleandoc("""
-                Doc.
+def test_the_strip_methods_of_a_literal_string_are_applied() -> None:
+    source = """
+        value = ["  padded  ".strip(), "  padded  ".lstrip(), ("  padded  " "!  ").rstrip()]
+    """
+    assert value(source) == ["padded", "padded  ", "  padded  !"]
 
-                More.
-            """),
-            "  padded  ".lstrip(),
-            "  padded  ".rstrip(),
-        ]
-    '''
-    assert value(source) == ["Line one.\n  Indented.", "x\ny", "Doc.\n\nMore.", "padded  ", "  padded"]
+
+def test_a_call_of_a_library_function_is_not_evaluated_even_when_it_is_pure() -> None:
+    # ``textwrap.dedent`` would give the same text every time; it is still code outside the source.
+    for call in ('dedent("  x")', 'textwrap.dedent("  x")', 'inspect.cleandoc("x")', 'dedent("  x").strip()'):
+        with pytest.raises(NotLiteral):
+            value(f"import inspect, textwrap\nfrom textwrap import dedent\nvalue = {call}\n")
+
+
+def test_an_f_string_whose_placeholders_are_literals_is_folded() -> None:
+    source = """
+        PROVIDER = "openai"
+        NAME = "gpt-5.2"
+        TIER = 2
+        value = [f"{PROVIDER}:{NAME}", f"tier {TIER}, ratio {0.5}", f"{NAME!r}", f"{'é'!a}", f"{PROVIDER + ':x'}"]
+    """
+    assert value(source) == ["openai:gpt-5.2", "tier 2, ratio 0.5", "'gpt-5.2'", "'\\xe9'", "openai:x"]
 
 
 @pytest.mark.parametrize(
     "expression",
     [
         'f"hello {name}"',
+        'f"{3:>5}"',  # a format spec is not applied
+        'f"{[1, 2]}"',  # nor is a container written out as text
+        'f"{os.environ}"',
         "compute()",
         "os.environ['X']",
         "1 + 2",

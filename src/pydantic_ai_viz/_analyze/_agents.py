@@ -83,8 +83,9 @@ _TOOL_FACTORIES: dict[str, str] = {
     "image_generation_tool": "generate_image",
 }
 """Functions in ``pydantic_ai.common_tools`` that return a ready-made ``Tool`` -> the name that tool has."""
-_ENVIRONMENT_READERS = frozenset({"os.getenv", "os.environ.get"})
 _MAX_LIST_ITEMS = 500
+_MAX_VERBATIM_CHARS = 20_000
+"""How much of the source of a computed instruction is kept, as written."""
 _MAX_HANDED_ON = 4
 """Through how many functions an agent is followed that each hands it on to the next as an argument."""
 _TOOL_RECEIVERS = ("Agent", "FunctionToolset", "AbstractToolset")
@@ -977,7 +978,6 @@ class _AgentBuilder:
         if isinstance(unwrap(node), ast.Name | ast.Attribute) and isinstance(target, Expression):
             # ``Agent(model)``: what ``model`` was assigned says more than its name does.
             text = target.module.text(target.node)
-        variable: str | None = None
         if isinstance(target, Expression) and isinstance(target.node, ast.JoinedStr):
             # ``f"openai:{settings.model}"``: the provider is spelled out, the name is computed.
             written, separator, rest = fstring_template(target.node).partition(":")
@@ -990,20 +990,6 @@ class _AgentBuilder:
                 )
                 offline = written in _compat.OFFLINE_PROVIDERS
                 return ModelInfo(id=None, name=rest, provider=written, offline=offline, expression=text)
-        if isinstance(target, Expression):
-            environment = self._environment(target)
-            if environment is not None:
-                variable, default = environment
-                if default is not None:
-                    provider, separator, name = default.partition(":")
-                    if not separator:
-                        provider, name = None, default
-                    self.warn(
-                        f"the model is read from the environment variable `{variable}` when the code runs; "
-                        f"`{default}` is the default the source gives"
-                    )
-                    offline = provider in _compat.OFFLINE_PROVIDERS
-                    return ModelInfo(id=None, name=name, provider=provider, offline=offline, expression=text)
         if isinstance(target, Expression) and isinstance(target.node, ast.Call):
             callee = self.resolver.callee(target.node, target.scope, target.line)
             if isinstance(callee, External) and callee.is_library(*_OFFLINE_MODELS):
@@ -1015,63 +1001,9 @@ class _AgentBuilder:
                 spelled = spelled or next((item.value for item in call.keywords if item.arg == "model_name"), None)
                 if spelled is not None:
                     name = string(self.resolver, spelled, target.scope, target.line)
-                if spelled is not None and name is None:
-                    named = self.resolver.resolve(spelled, target.scope, target.line)
-                    environment = self._environment(named) if isinstance(named, Expression) else None
-                    if environment is not None and environment[1] is not None:
-                        variable, name = environment
-                        self.warn(
-                            f"the model name is read from the environment variable `{variable}` when the code "
-                            f"runs; `{name}` is the default the source gives"
-                        )
-                    elif environment is not None:
-                        variable = environment[0]
         if provider is None and name is None:
-            if variable is not None:
-                self.warn(
-                    f"the model is read from the environment variable `{variable}`, so it is only known "
-                    "when the code runs"
-                )
-            else:
-                self.warn(f"the model is set by `{brief(text)}`, so it is only known when the code runs")
+            self.warn(f"the model is set by `{brief(text)}`, so it is only known when the code runs")
         return ModelInfo(id=None, name=name or text, provider=provider, offline=provider is not None, expression=text)
-
-    def _environment(self, value: Expression) -> tuple[str, str | None] | None:
-        """``(variable, default)`` when an expression reads an environment variable, with the default it names.
-
-        ``os.getenv("MODEL", "openai:gpt-5.2")``, ``os.environ.get("MODEL")``,
-        ``os.environ["MODEL"]`` and ``os.getenv("MODEL") or "openai:gpt-5.2"``.
-        """
-        node = value.node
-        fallback: str | None = None
-        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or) and len(node.values) == 2:
-            fallback = string(self.resolver, node.values[1], value.scope, value.line)
-            if fallback is None:
-                return None
-            node = node.values[0]
-        if isinstance(node, ast.Subscript):
-            container = self.resolver.resolve(node.value, value.scope, value.line)
-            if isinstance(container, External) and container.name == "os.environ":
-                variable = string(self.resolver, node.slice, value.scope, value.line)
-                return None if variable is None else (variable, fallback)
-            return None
-        if not isinstance(node, ast.Call) or not node.args or isinstance(node.args[0], ast.Starred):
-            return None
-        callee = self.resolver.callee(node, value.scope, value.line)
-        if not isinstance(callee, External) or callee.name not in _ENVIRONMENT_READERS:
-            return None
-        variable = string(self.resolver, node.args[0], value.scope, value.line)
-        if variable is None:
-            return None
-        given = (
-            node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "default"), None)
-        )
-        if given is not None and not isinstance(given, ast.Starred):
-            default = string(self.resolver, given, value.scope, value.line)
-            if default is None and not (isinstance(given, ast.Constant) and given.value is None):
-                return None  # a default that is itself computed
-            return variable, default if default is not None else fallback
-        return variable, fallback
 
     def _deps_type(self) -> str | None:
         node = self.arguments.get("deps_type")
@@ -1139,7 +1071,10 @@ class _AgentBuilder:
                     return Instruction(
                         kind=kind, dynamic=True, text=template, function=None, expression=None, location=where
                     )
-        text = entry.module.text(node)
+        # The source as written, line breaks and all: a prompt built by a call is still readable in it.
+        text = entry.module.raw_text(node)
+        if len(text) > _MAX_VERBATIM_CHARS:
+            text = text[: _MAX_VERBATIM_CHARS - 3] + "..."
         what = "instructions" if kind == "instructions" else "system prompts"
         if isinstance(target, External):
             self.warn(
@@ -1320,14 +1255,42 @@ class _AgentBuilder:
         return entry.module.text(entry.node)
 
     def _class_name(self, entry: Expression) -> str | None:
-        """The class an expression constructs (or is), when that can be read."""
+        """The class an expression constructs (or is), when that can be read.
+
+        That is a class of the analysed files, or one of Pydantic AI's. What a call into
+        any other library returns is only known when the code runs, whatever its name.
+        """
         target = self.resolver.resolve(entry.node, entry.scope, entry.line)
         if isinstance(target, Expression) and isinstance(target.node, ast.Call):
             target = self.resolver.callee(target.node, target.scope, target.line)
         if isinstance(target, External):
-            return target.last if target.last[:1].isupper() else None
+            return target.last if target.is_library_class() else None
         if isinstance(target, Definition) and isinstance(target.node, ast.ClassDef):
             return target.node.name
+        return None
+
+    def _library_base(self, callee: Resolved) -> External | None:
+        """The class of Pydantic AI that ``callee`` is, or that a class of the analysed files derives from."""
+        if isinstance(callee, External):
+            return callee if callee.is_library_class() else None
+        if not isinstance(callee, Definition) or not isinstance(callee.node, ast.ClassDef):
+            return None
+        classes: list[Definition] = [callee]
+        for current in classes:  # grows while it is gone through: the bases, breadth first
+            node = current.node
+            assert isinstance(node, ast.ClassDef)
+            for base in node.bases[:_MAX_WRAPPERS]:
+                written = base.value if isinstance(base, ast.Subscript) else base
+                parent = self.resolver.resolve(written, current.scope, node.lineno)
+                if isinstance(parent, External) and parent.is_library_class():
+                    return parent
+                if (
+                    isinstance(parent, Definition)
+                    and isinstance(parent.node, ast.ClassDef)
+                    and all(parent.node is not seen.node for seen in classes)
+                    and len(classes) < 2 * _MAX_WRAPPERS
+                ):
+                    classes.append(parent)
         return None
 
     # ------------------------------------------------------------ settings
@@ -1437,7 +1400,11 @@ class _AgentBuilder:
                     pairs.append((name, Expression(value, target.scope, target.line)))
             elif isinstance(inner, ast.Call) and not inner.args:
                 callee = self.resolver.callee(inner, target.scope, target.line)
-                is_settings = isinstance(callee, External) and callee.last.endswith("Settings")
+                # ``ModelSettings(temperature=0)`` and the provider-specific ones: Pydantic AI's settings are
+                # ``TypedDict``s, so the keywords are the keys. Another library's class may be anything.
+                is_settings = (
+                    isinstance(callee, External) and callee.is_library_class() and callee.last.endswith("Settings")
+                )
                 if is_settings and all(keyword.arg is not None for keyword in inner.keywords):
                     pairs = [
                         (keyword.arg, Expression(keyword.value, target.scope, target.line))
@@ -1568,8 +1535,8 @@ class _AgentBuilder:
                     if inner is None:
                         inner = next((item.value for item in call.keywords if item.arg == "wrapped"), None)
                 elif self.extractor.toolset_made_by(call, current.scope, current.line) is None:
-                    # Any other class called ``...Toolset`` that is handed a toolset wraps that toolset:
-                    # ``CodeExecutionToolset(toolset=tools)``, or a project's own subclass of a wrapper.
+                    # Any other toolset class of Pydantic AI that is handed a toolset wraps that toolset:
+                    # ``CodeExecutionToolset(toolset=tools)``, or a project's own class derived from one.
                     name = self._toolset_class(callee)
                     handed = self._handed_toolset(call, current) if name is not None else None
                     if name is not None and handed is not None:
@@ -1616,7 +1583,8 @@ class _AgentBuilder:
             name = self._class_name(current)
             if name is not None:
                 result.label = name + (f" {toolset_id!r}" if toolset_id else "")
-                if "MCP" in name or (isinstance(callee, External) and callee.name.startswith("pydantic_ai.mcp")):
+                library = self._library_base(callee)
+                if library is not None and ("MCP" in library.last or library.name.startswith("pydantic_ai.mcp")):
                     result.kind = "mcp"
                 elif name == "DynamicToolset":
                     result.kind = "dynamic"
@@ -1633,19 +1601,11 @@ class _AgentBuilder:
         return [result]
 
     def _toolset_class(self, callee: Resolved) -> str | None:
-        """The name of a class that is a toolset by its name, or by a base class from Pydantic AI."""
-        if isinstance(callee, External):
-            return callee.last if callee.last.endswith("Toolset") else None
-        if not isinstance(callee, Definition) or not isinstance(callee.node, ast.ClassDef):
+        """The name of a class that is one of Pydantic AI's toolset classes, or is derived from one."""
+        library = self._library_base(callee)
+        if library is None or not library.last.endswith("Toolset"):
             return None
-        if callee.node.name.endswith("Toolset"):
-            return callee.node.name
-        for base in callee.node.bases[:_MAX_WRAPPERS]:
-            written = base.value if isinstance(base, ast.Subscript) else base
-            parent = self.resolver.resolve(written, callee.scope, callee.node.lineno)
-            if isinstance(parent, External) and parent.is_library_class() and parent.last.endswith("Toolset"):
-                return callee.node.name
-        return None
+        return callee.node.name if isinstance(callee, Definition) else library.last
 
     def _handed_toolset(self, call: ast.Call, context: Expression) -> ast.expr | None:
         """The argument of a call that is a ``FunctionToolset`` made in the analysed source, if one is."""

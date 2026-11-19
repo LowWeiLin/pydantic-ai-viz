@@ -171,14 +171,14 @@ def test_computed_values_are_reported_as_source_text_never_guessed() -> None:
         return (instruction.dynamic, instruction.text, instruction.function, instruction.expression)
 
     assert [shape(i) for i in computed.instructions] == [
-        (False, "You are part of the support team.\nStay polite.", None, None),  # dedent(...).strip()
+        (True, None, None, "PREAMBLE"),  # dedent(...).strip(): a call of a library function is not evaluated
         (True, "You work for the {TEAM} team, tier {os.environ.get('TIER', 'basic')!r}.", None, None),
         (True, None, None, 'PROMPTS["support"]'),
         (True, None, None, "house_style"),
         (True, None, None, "lambda ctx: ctx.deps.motto"),
         (True, None, None, "GREETING"),  # assigned twice in the file
         (True, None, "dynamic_values.with_context", None),
-        (False, "You are part of the support team.\nStay polite. Answer in English.", None, None),
+        (True, None, None, 'PREAMBLE + " Answer in English."'),
     ]
 
     assert computed.settings.model_dump() == {
@@ -197,10 +197,13 @@ def test_computed_values_are_reported_as_source_text_never_guessed() -> None:
         'the name is computed by `f"support-{TEAM}"`, so it is only known when the code runs',
         'the description is computed by `house_style("support")`, so it is only known when the code runs',
         "the model is set by `get_model()`, so it is only known when the code runs",
+        "one of the instructions is the expression `PREAMBLE`; its text is only known at run time",
         'one of the instructions is the expression `PROMPTS["support"]`; its text is only known at run time',
         "one of the instructions is `house_style` (my_company.prompts.house_style), which is defined outside the "
         "analysed source; whether it is text or a function is not known",
         "one of the instructions is the expression `GREETING`; its text is only known at run time",
+        'one of the system prompts is the expression `PREAMBLE + " Answer in English."`; '
+        "its text is only known at run time",
     ]
 
 
@@ -341,7 +344,7 @@ def test_a_model_class_given_a_literal_name_names_the_model(tmp_path: Path) -> N
     ]
     assert (warnings["through_variable"], warnings["through_factory"]) == ([], [])
     assert warnings["from_environment"] == [
-        "the model is read from the environment variable `MODEL`, so it is only known when the code runs"
+        'the model is set by `OpenAIChatModel(os.environ["MODEL"])`, so it is only known when the code runs'
     ]
     assert len(warnings["wrapped"]) == len(warnings["not_ours"]) == 1
 
@@ -441,12 +444,16 @@ def test_capabilities_are_listed_by_class_name(tmp_path: Path) -> None:
         from pydantic_ai import Agent
         from pydantic_ai.capabilities import Thinking, ToolSearch
         import pydantic_ai.capabilities as caps
+        from vendor.capabilities import VendorGuard
 
         class Audit:
             pass
 
         thinking = Thinking(effort="high")
-        listed = Agent("test", capabilities=[thinking, caps.Hooks(), ToolSearch(), Audit(), make_capability(), *MORE])
+        listed = Agent(
+            "test",
+            capabilities=[thinking, caps.Hooks(), ToolSearch(), Audit(), make_capability(), VendorGuard(), *MORE],
+        )
         MORE = [Thinking()]
         computed = Agent("test", capabilities=load_capabilities())
         none = Agent("test", capabilities=None)
@@ -459,10 +466,12 @@ def test_capabilities_are_listed_by_class_name(tmp_path: Path) -> None:
         ("ToolSearch", True),
         ("Audit", False),
         ("make_capability()", False),
+        ("VendorGuard()", False),  # another library's: a class by its name, but nothing in the source says so
         ("Thinking", False),
     ]
     assert listed.warnings == [
-        "a capability is built by `make_capability()`; its type is only known when the code runs"
+        "a capability is built by `make_capability()`; its type is only known when the code runs",
+        "a capability is built by `VendorGuard()`; its type is only known when the code runs",
     ]
     computed = agent(found, "computed")
     assert computed.capabilities == []
@@ -509,6 +518,8 @@ def test_tools_given_as_arguments_and_tools_that_cannot_be_read() -> None:
     assert external.location == SourceLocation(file="toolsets.py", line=71)
     assert worker.warnings == [
         "a tool is built by `make_tool()`; it cannot be described without running the code",
+        # Another library's class, whatever it is called: what it holds is known when the code runs.
+        'a toolset is built by `VendorToolset(region="eu")`; its tools are only known when the code runs',
         'a toolset is built by `build_toolset("extra")`; its tools are only known when the code runs',
         "the tool `fetch_page` is `external_tools.fetch_page`, which is defined outside the analysed source, "
         "so its description and parameters are not shown",
@@ -534,7 +545,7 @@ def test_toolsets_of_every_kind() -> None:
         ("ts4", "function", "FunctionToolset 'kb'", "kb", ["PrefixedToolset"], False, None),
         ("ts5", "mcp", "MCPServerStdio 'files'", "files", [], True, None),
         ("ts6", "mcp", "MCPServerStdio", None, ["PrefixedToolset"], True, None),
-        ("ts7", "other", "VendorToolset", None, [], True, 'VendorToolset(region="eu")'),
+        ("ts7", "other", 'VendorToolset(region="eu")', None, [], True, 'VendorToolset(region="eu")'),
         ("ts8", "other", 'build_toolset("extra")', None, [], True, 'build_toolset("extra")'),
         ("ts9", "dynamic", "per_run", None, [], True, None),
         ("ts10", "function", "FunctionToolset", None, [], False, None),  # CombinedToolset is flattened

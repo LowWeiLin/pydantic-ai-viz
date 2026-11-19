@@ -93,6 +93,8 @@ _NOTHING: Schema = {"not": {}}
 """The schema nothing satisfies: what such a type contributes to the schema the model is given."""
 
 _TYPING = frozenset({"typing", "typing_extensions", "collections", "builtins"})
+_DATACLASSES = frozenset({"dataclasses", "pydantic"})
+"""Where ``dataclass`` and ``field``/``Field`` come from when they declare fields that a schema is made of."""
 _ARRAYS = frozenset(
     {"list", "List", "Sequence", "MutableSequence", "Iterable", "Iterator", "Collection", "deque", "AsyncIterable"}
 )
@@ -137,9 +139,14 @@ class _Field:
 
 def _wrapper_name(target: object) -> str | None:
     """The name of a ``typing`` construct, if that is what a subscript's base resolved to."""
-    if isinstance(target, External) and target.name.partition(".")[0] in _TYPING:
+    if isinstance(target, External) and _package(target) in _TYPING:
         return target.last
     return None
+
+
+def _package(target: External) -> str:
+    """The top-level package a name comes from: ``pydantic`` for ``pydantic.dataclasses.dataclass``."""
+    return target.name.partition(".")[0]
 
 
 class SchemaBuilder:
@@ -413,16 +420,17 @@ class SchemaBuilder:
             return None
         for decorator in node.decorator_list:
             target = self._callable(decorator, definition.scope)
-            if isinstance(target, External) and target.last == "dataclass":
+            # ``dataclasses.dataclass``, or pydantic's ``pydantic.dataclasses.dataclass``.
+            if isinstance(target, External) and target.last == "dataclass" and _package(target) in _DATACLASSES:
                 return "dataclass"
         for base in node.bases:
             target = self._callable(base, definition.scope)
             if isinstance(target, External):
-                if target.last in ("BaseModel", "BaseSettings", "SQLModel"):
+                if target.comes_from("pydantic", "BaseModel"):
                     return "model"
-                if target.last == "TypedDict":
+                if target.last == "TypedDict" and _package(target) in _TYPING:
                     return "typeddict"
-                if target.last == "NamedTuple":
+                if target.last == "NamedTuple" and _package(target) in _TYPING:
                     return "namedtuple"
                 if target.comes_from("enum", "Enum", "StrEnum", "IntEnum"):
                     return "enum"
@@ -504,7 +512,7 @@ class SchemaBuilder:
         callee = self.resolver.callee(node, context.scope, context.line)
         if not isinstance(callee, External) or callee.last not in ("Field", "field"):
             return None
-        if callee.name.partition(".")[0] not in ("pydantic", "dataclasses", "sqlmodel"):
+        if _package(callee) not in _DATACLASSES:
             return None
         result = _FieldCall()
         if node.args and not isinstance(node.args[0], ast.Starred) and callee.last == "Field":

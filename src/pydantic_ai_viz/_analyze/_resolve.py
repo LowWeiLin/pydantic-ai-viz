@@ -53,7 +53,8 @@ END_OF_MODULE = 10**9
 
 _BUILTINS = frozenset(dir(builtins))
 _CASTS = frozenset({"typing.cast", "typing_extensions.cast"})
-_LIBRARIES = frozenset({"pydantic_ai", "pydantic_ai_slim", "pydantic_graph"})
+_LIBRARIES = frozenset({"pydantic_ai", "pydantic_ai_slim", "pydantic_graph", "pydantic_evals", "pydantic_ai_harness"})
+"""The packages of the Pydantic AI project, whose public API the analysis knows."""
 _NEVER_PROJECT = _LIBRARIES | {"pydantic", "pydantic_core", "pydantic_settings", "typing_extensions"}
 """Packages whose names are recognised by the analysis. A project file never stands in for one of them."""
 
@@ -69,11 +70,11 @@ class External:
         return self.name.rpartition(".")[2]
 
     def is_library(self, *names: str) -> bool:
-        """Whether this is one of ``names`` from Pydantic AI or pydantic-graph, whichever submodule it came from."""
+        """Whether this is one of ``names`` from a package of Pydantic AI, whichever submodule it came from."""
         return self.name.partition(".")[0] in _LIBRARIES and self.last in names
 
     def is_library_class(self) -> bool:
-        """Whether this is a class (a capitalised name) of Pydantic AI or pydantic-graph."""
+        """Whether this is a class of a package of Pydantic AI, which names its classes, and only them, capitalised."""
         return self.name.partition(".")[0] in _LIBRARIES and self.last[:1].isupper()
 
     def comes_from(self, package: str, *names: str) -> bool:
@@ -455,6 +456,8 @@ class Resolver:
             return self._attribute(node, current, depth)
         if isinstance(node, ast.Call):
             return self._factory(node, current, depth)
+        if isinstance(node, ast.Subscript):
+            return self._item(node, current, depth)
         if node is not current.node:
             return Expression(node, current.scope, current.line)
         return _STOP
@@ -549,7 +552,13 @@ class Resolver:
                 # A binding's value: see what it is before taking an attribute of it.
                 value = self.resolve(value.node, value.scope, value.line, depth=depth + 1)
                 if isinstance(value, Expression):
-                    return _STOP  # an attribute of something that only exists at run time
+                    # ``Settings().model``, ``Factory().build``: an instance of a class of the analysed files.
+                    made = self._instance_class(value, depth)
+                    member = None if made is None else self._instance_member(made, name, depth)
+                    if member is None:
+                        return _STOP  # an attribute of something that only exists at run time
+                    value = member
+                    continue
             if isinstance(value, External):
                 dotted = f"{value.name}.{name}"
                 module = self.project.find_module(scope.module, dotted, 0)
@@ -596,6 +605,98 @@ class Resolver:
         value = self._bound(found[-1]) if found else None
         if isinstance(value, Definition) and not isinstance(value.node, ast.ClassDef):
             return value
+        return None
+
+    def _instance_class(self, value: Expression, depth: int) -> Definition | None:
+        """The class of the analysed files that ``value`` constructs: ``Settings()`` -> ``class Settings``."""
+        if not isinstance(value.node, ast.Call):
+            return None
+        made = self.callee(value.node, value.scope, value.line, depth=depth + 1)
+        if isinstance(made, Definition) and isinstance(made.node, ast.ClassDef):
+            return made
+        return None
+
+    def _instance_member(self, cls: Definition, name: str, depth: int) -> Resolved:
+        """What ``instance.name`` is, for an instance of ``cls``; ``None`` when only the running code knows.
+
+        A method is the method. ``self.name = value``, written once in the class's
+        methods, is that value. A value given in the class body is what the instance
+        has only for a class that nothing outside the analysed files shapes: a
+        pydantic model, a dataclass or any class with a base or decorator from a
+        library sets its fields from the constructor's arguments, or the environment.
+        """
+        found = self._attribute_of(cls.body, name, depth)
+        if not found:
+            return None
+        binding = found[-1]
+        if binding.kind == "def":
+            return self._bound(binding)
+        if binding.scope.kind == "class":
+            return self._bound(binding) if self._plain(cls, depth) else None
+        return self._bound(binding) if len(found) == 1 else None  # set in two places: which one holds is not known
+
+    def _plain(self, cls: Definition, depth: int) -> bool:
+        """Whether a class and every class it derives from are classes of the analysed files with no decorator."""
+        classes = [cls]
+        for current in classes:
+            node = current.node
+            if not isinstance(node, ast.ClassDef) or node.decorator_list or node.keywords:
+                return False
+            for base in node.bases:
+                parent = self.resolve(base, current.scope, node.lineno, depth=depth + 1)
+                if isinstance(parent, External) and parent.name == "builtins.object":
+                    continue
+                if not isinstance(parent, Definition) or not isinstance(parent.node, ast.ClassDef):
+                    return False
+                if all(parent.node is not seen.node for seen in classes):
+                    if len(classes) >= _MAX_BASES:
+                        return False
+                    classes.append(parent)
+        return True
+
+    def _item(self, node: ast.Subscript, current: Expression, depth: int) -> Resolved | _Stop:
+        """``MODELS["fast"]``, ``PAIR[0]``: an item of a dict, list or tuple written out in the source.
+
+        The key has to be a literal, and the container must not be changed in place
+        after it is written: otherwise which item it is is only known at run time.
+        """
+        if isinstance(node.slice, ast.Slice):
+            return _STOP
+        key = self._key(node.slice, current, depth)
+        if key is None:
+            return _STOP
+        container = unwrap(node.value)
+        held = self.resolve(container, current.scope, current.line, depth=depth + 1)
+        if not isinstance(held, Expression):
+            return _STOP
+        if isinstance(container, ast.Name | ast.Attribute) and self.changes(container, current.scope, current.line):
+            return _STOP
+        written = held.node
+        if isinstance(written, ast.Dict) and isinstance(key, str):
+            keys = [self._key(item, held, depth) if item is not None else None for item in written.keys]
+            if None in keys or key not in keys:
+                return _STOP  # a ``**spread`` or a computed key may be the one asked for
+            last = len(keys) - 1 - keys[::-1].index(key)  # a key written twice holds the later value
+            return Expression(written.values[last], held.scope, held.line)
+        if isinstance(written, ast.List | ast.Tuple) and isinstance(key, int):
+            if any(isinstance(item, ast.Starred) for item in written.elts) or not -len(written.elts) <= key < len(
+                written.elts
+            ):
+                return _STOP
+            return Expression(written.elts[key], held.scope, held.line)
+        return _STOP
+
+    def _key(self, node: ast.expr, context: Expression, depth: int) -> str | int | None:
+        """A subscript key or dict key the source spells out: a string or an integer constant, or a name for one."""
+        node = unwrap(node)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            inner = self._key(node.operand, context, depth)
+            return -inner if isinstance(inner, int) else None
+        if isinstance(node, ast.Name | ast.Attribute | ast.Subscript):
+            target = self.resolve(node, context.scope, context.line, depth=depth + 1)
+            node = target.node if isinstance(target, Expression) else node
+        if isinstance(node, ast.Constant) and isinstance(node.value, str | int) and not isinstance(node.value, bool):
+            return node.value
         return None
 
     def _factory(self, node: ast.Call, current: Expression, depth: int) -> Resolved | _Stop:
