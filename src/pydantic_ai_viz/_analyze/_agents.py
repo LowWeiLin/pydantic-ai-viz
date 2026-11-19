@@ -93,6 +93,18 @@ _MAX_WRAPPERS = 4
 _MAX_EXPANSION_DEPTH = 6
 _MAX_DEPS_PATH = 3
 """How long ``ctx.deps.a.b`` may be, ``deps`` included, for the agent it holds to be looked for."""
+_MAX_INSTANCES = 16
+"""Up to how many calls of a function that makes an agent are each shown as an agent of their own."""
+
+
+def _inside(scope: Scope, outer: Scope) -> bool:
+    """Whether ``scope`` is ``outer`` or lies in it."""
+    current: Scope | None = scope
+    while current is not None:
+        if current is outer:
+            return True
+        current = current.parent
+    return False
 
 
 def _class_around(scope: Scope) -> ast.ClassDef | None:
@@ -160,6 +172,9 @@ class _AgentSite:
     """An ``Agent(...)`` construction and what decorators and calls add to it."""
 
     site: CallSite
+    via: CallSite | None = None
+    """The call of the function that makes this agent, when the function's own ``Agent(...)`` is
+    one agent per call of it: each call gives the parameters its own arguments."""
     tools: list[_ToolSpec] = field(default_factory=list[_ToolSpec])
     instructions: list[Instruction] = field(default_factory=list[Instruction])
     system_prompts: list[Instruction] = field(default_factory=list[Instruction])
@@ -170,6 +185,11 @@ class _AgentSite:
     @property
     def module(self) -> Module:
         return self.site.scope.module
+
+    @property
+    def key(self) -> tuple[int, int]:
+        """What tells this agent from the others: its construction, and the call that makes it."""
+        return id(self.site.node), 0 if self.via is None else id(self.via.node)
 
 
 @dataclass(slots=True)
@@ -194,8 +214,12 @@ class AgentExtractor:
     def __init__(self, project: Project, resolver: Resolver) -> None:
         self.project = project
         self.resolver = resolver
-        self.agents: dict[int, _AgentSite] = {}
-        """``id(ast.Call)`` -> the agent constructed there, in discovery order."""
+        self.agents: dict[tuple[int, int], _AgentSite] = {}
+        """``_AgentSite.key`` -> the agent, in discovery order."""
+        self.instances: dict[int, list[_AgentSite]] = {}
+        """``id(ast.Call)`` of an ``Agent(...)`` -> the agents it makes: one, or one per call of its function."""
+        self._alias: dict[tuple[int, int], _AgentSite] = {}
+        """Filled by ``blueprints``: an agent whose blueprint is the same as another's -> the one it is shown as."""
         self.toolsets: dict[int, _ToolsetSite] = {}
         """``id(ast.Call)`` of a ``FunctionToolset(...)``, or ``id(ast.ClassDef)`` of a class derived from it."""
         self.conditional = False
@@ -213,12 +237,13 @@ class AgentExtractor:
 
     def find(self) -> None:
         """Locate the agents and toolsets, then attach what decorators and calls register on them."""
+        constructions: list[CallSite] = []
         for module in self.project.modules:
             for site in sorted(module.calls, key=lambda item: (item.node.lineno, item.node.col_offset)):
                 callee = self.resolver.callee(site.node, site.scope)
                 if isinstance(callee, External):
                     if callee.is_library("Agent"):
-                        self.agents[id(site.node)] = _AgentSite(site)
+                        constructions.append(site)
                     elif callee.is_library("FunctionToolset"):
                         self.toolsets[id(site.node)] = _ToolsetSite(site, location(module, site.node))
                 elif isinstance(callee, Definition) and not isinstance(callee.node, ast.ClassDef):
@@ -233,9 +258,74 @@ class AgentExtractor:
                     parent = self.resolver.resolve(written, body.parent, defined.lineno)
                     if isinstance(parent, External) and parent.is_library("FunctionToolset"):
                         self.toolsets[id(defined)] = _ToolsetSite(None, location(module, defined))
+        for site in constructions:
+            for agent in self._made_by(site):
+                self.agents[agent.key] = agent
+                self.instances.setdefault(id(site.node), []).append(agent)
         for module in self.project.modules:
             self._registrations(module)
         self._attach_handed_in()
+
+    def _made_by(self, site: CallSite) -> list[_AgentSite]:
+        """The agents an ``Agent(...)`` makes: one per call of the function it stands in, or one.
+
+        ``def make(name): return Agent(..., name=name)`` called as ``researcher = make("researcher")``
+        and ``writer = make("writer")`` makes two agents, each with its own arguments. A function
+        with a decorator is left whole: the decorator may hand out one agent for every call.
+        Agents of one function whose blueprints turn out the same are shown as one, by ``blueprints``.
+        """
+        function = site.scope.node
+        if site.scope.kind != "function" or not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+            return [_AgentSite(site)]
+        calls = [
+            call
+            for call in self.calls_of.get(id(function), ())
+            if not _inside(call.scope, site.scope)  # a call of the function from its own body is no new caller
+        ]
+        if function.decorator_list or not calls:
+            return [_AgentSite(site)]
+        if len(calls) > _MAX_INSTANCES:
+            agent = _AgentSite(site)
+            agent.notes.append(
+                f"`{function.name}`, which makes this agent, is called in {len(calls)} places; "
+                "it is shown once, with what each of them adds to it"
+            )
+            return [agent]
+        return [_AgentSite(site, via=call) for call in calls]
+
+    def parameters(self, agent: _AgentSite) -> dict[int, Expression]:
+        """What each parameter of the function that makes ``agent`` stands for in the call that makes it.
+
+        That is the argument the call gives it or, when the call leaves it out, its default.
+        A parameter the call may set through ``*args`` or ``**kwargs`` stands for nothing known.
+        """
+        via, body = agent.via, agent.site.scope
+        function = body.node
+        if via is None or not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+            return {}
+        arguments = function.args
+        positional = [*arguments.posonlyargs, *arguments.args]
+        with_default = positional[len(positional) - len(arguments.defaults) :]
+        defaults = {item.arg: default for item, default in zip(with_default, arguments.defaults, strict=True)}
+        defaults.update(
+            (item.arg, default)
+            for item, default in zip(arguments.kwonlyargs, arguments.kw_defaults, strict=True)
+            if default is not None
+        )
+        spread = any(keyword.arg is None for keyword in via.node.keywords) or any(
+            isinstance(argument, ast.Starred) for argument in via.node.args
+        )
+        found: dict[int, Expression] = {}
+        for parameter in [*positional[1 if body.receiver is not None else 0 :], *arguments.kwonlyargs]:
+            bindings = body.bindings.get(parameter.arg, [])
+            if len(bindings) != 1:
+                continue  # given another value in the body too: which one holds is up to the run
+            argument = self._argument_for(via.node, body, parameter.arg)
+            if argument is not None:
+                found[id(bindings[0])] = Expression(argument, via.scope, via.node.lineno)
+            elif not spread and parameter.arg in defaults and body.parent is not None:
+                found[id(bindings[0])] = Expression(defaults[parameter.arg], body.parent, function.lineno)
+        return found
 
     def notices(self) -> list[str]:
         """What was found that belongs to no agent the source shows. Complete once ``blueprints`` has run."""
@@ -275,9 +365,9 @@ class AgentExtractor:
         ]
 
     @cached_property
-    def _deps_given(self) -> dict[int, list[Expression]]:
-        """``id`` of an agent's construction -> the ``deps=`` values that the source's runs of it are given."""
-        given: dict[int, list[Expression]] = {}
+    def _deps_given(self) -> dict[tuple[int, int], list[Expression]]:
+        """``_AgentSite.key`` -> the ``deps=`` values that the source's runs of the agent are given."""
+        given: dict[tuple[int, int], list[Expression]] = {}
         for module in self.project.modules:
             for site in module.calls:
                 call = site.node
@@ -286,9 +376,8 @@ class AgentExtractor:
                 deps = next((keyword.value for keyword in call.keywords if keyword.arg == "deps"), None)
                 if deps is None:
                     continue
-                agent = self.agent_at(call.func.value, site.scope, call.lineno)
-                if agent is not None:
-                    given.setdefault(id(agent.site.node), []).append(Expression(deps, site.scope, call.lineno))
+                for agent in self.agents_at(call.func.value, site.scope, call.lineno):
+                    given.setdefault(agent.key, []).append(Expression(deps, site.scope, call.lineno))
         return given
 
     def agents_in_deps(self, agent: _AgentSite, path: list[str]) -> list[_AgentSite]:
@@ -298,7 +387,7 @@ class AgentExtractor:
         ``["searcher"]`` for ``deps=Deps(searcher=other_agent)``.
         """
         found: list[_AgentSite] = []
-        for deps in self._deps_given.get(id(agent.site.node), [])[:_MAX_LIST_ITEMS]:
+        for deps in self._deps_given.get(agent.key, [])[:_MAX_LIST_ITEMS]:
             node: ast.expr | None = deps.node
             scope, line = deps.scope, deps.line
             for attribute in path:
@@ -315,35 +404,106 @@ class AgentExtractor:
 
     def blueprints(self) -> list[AgentBlueprint]:
         ids = {key: f"a{index}" for index, key in enumerate(self.agents, start=1)}
-        return [_AgentBuilder(self, agent, ids).build() for agent in self.agents.values()]
+        _ = self._deps_given  # read before any parameter is given the argument of one call
+        built: dict[tuple[int, int], AgentBlueprint] = {}
+        for agent in self.agents.values():
+            with self.resolver.standing_for(self.parameters(agent)):
+                built[agent.key] = _AgentBuilder(self, agent, ids).build()
+        several = self._fold_alike(built)
+        # What is left is numbered again, and every edge to an agent shown as another one follows it.
+        kept = [key for key in self.agents if key not in self._alias]
+        final = {ids[key]: f"a{index}" for index, key in enumerate(kept, start=1)}
+        for key, agent in self._alias.items():
+            final[ids[key]] = final[ids[agent.key]]
+        blueprints: list[AgentBlueprint] = []
+        for key in kept:
+            blueprint, new = built[key], final[ids[key]]
+            label = blueprint.label
+            if key in several:
+                label = blueprint.name or self.agents[key].site.bound_to or f"agent-{new[1:]}"
+            elif label == f"agent-{blueprint.id[1:]}":
+                label = f"agent-{new[1:]}"
+            delegates: list[Delegate] = []
+            for delegate in blueprint.delegates:
+                moved = delegate.model_copy(update={"agent_id": final[delegate.agent_id]})
+                if moved not in delegates:
+                    delegates.append(moved)
+            blueprints.append(blueprint.model_copy(update={"id": new, "label": label, "delegates": delegates}))
+        self.agents = {key: self.agents[key] for key in kept}
+        return blueprints
 
-    def agent_at(self, node: ast.expr, scope: Scope, line: int | None = None) -> _AgentSite | None:
-        """The agent an expression stands for, if it can be traced to one construction."""
+    def _fold_alike(self, built: dict[tuple[int, int], AgentBlueprint]) -> set[tuple[int, int]]:
+        """Show the agents of one function whose blueprints are the same as one; the keys of those standing for several.
+
+        Tests that each call ``make_agent()``, or calls that differ only in arguments the agent
+        does not depend on, make agents that nothing in the source tells apart.
+        """
+        several: set[tuple[int, int]] = set()
+        for made in self.instances.values():
+            if len(made) < 2:
+                continue
+            first_of: dict[str, _AgentSite] = {}
+            for agent in made:
+                shown = built[agent.key].model_dump_json(exclude={"id", "label"})
+                first = first_of.setdefault(shown, agent)
+                if first is not agent:
+                    self._alias[agent.key] = first
+                    several.add(first.key)
+        return several
+
+    def _instances(self, call: ast.Call, through: list[ast.Call], prefer: CallSite | None = None) -> list[_AgentSite]:
+        """The agents an ``Agent(...)`` call makes that a value reached through the calls ``through`` is.
+
+        A value that went through one of the calls that make an agent is that agent. One that went
+        through none (``agent`` inside the function that makes it) is any of them, or, given ``prefer``,
+        the one made by that call: an agent made alongside another one is made by the same call.
+        """
+        made = self.instances.get(id(call), [])
+        if len(made) <= 1:
+            return made
+        passed = {id(item) for item in through}
+        chosen = [agent for agent in made if agent.via is not None and id(agent.via.node) in passed]
+        if not chosen and prefer is not None:
+            chosen = [agent for agent in made if agent.via is prefer]
+        # Once blueprints are made, an agent shown as another one is that one.
+        return list(dict.fromkeys(self._alias.get(agent.key, agent) for agent in chosen or made))
+
+    def agents_at(
+        self, node: ast.expr, scope: Scope, line: int | None = None, *, prefer: CallSite | None = None
+    ) -> list[_AgentSite]:
+        """The agents an expression stands for: one construction, or each agent a function makes there."""
         target = self.resolver.resolve(node, scope, line)
+        through = list(self.resolver.through)
         for _ in range(_MAX_WRAPPERS):
             if not isinstance(target, Expression) or not isinstance(target.node, ast.Call):
-                return None
+                return []
             call = target.node
-            found = self.agents.get(id(call))
-            if found is not None:
+            found = self._instances(call, through, prefer)
+            if found:
                 return found
             # ``TemporalAgent(agent)``, ``DBOSAgent(agent)``: Pydantic AI's wrappers run the agent they are given.
             callee = self.resolver.callee(call, target.scope, target.line)
             if not (isinstance(callee, External) and callee.is_library_class() and callee.last.endswith("Agent")):
-                return None
+                return []
             wrapped = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
             wrapped = wrapped or next((item.value for item in call.keywords if item.arg == "wrapped"), None)
             if wrapped is None:
-                return None
+                return []
             target = self.resolver.resolve(wrapped, target.scope, target.line)
-        return None
+            through.extend(self.resolver.through)
+        return []
+
+    def agent_at(self, node: ast.expr, scope: Scope, line: int | None = None) -> _AgentSite | None:
+        """The agent an expression stands for, if it can be traced to one agent."""
+        found = self.agents_at(node, scope, line)
+        return found[0] if len(found) == 1 else None
 
     def agent_id(self, node: ast.expr, scope: Scope, line: int | None = None) -> str | None:
         """Blueprint id of the agent an expression stands for."""
         found = self.agent_at(node, scope, line)
         if found is None:
             return None
-        return f"a{list(self.agents).index(id(found.site.node)) + 1}"
+        return f"a{list(self.agents).index(found.key) + 1}"
 
     def toolset_made_by(self, call: ast.Call, scope: Scope, line: int) -> tuple[_ToolsetSite, str | None] | None:
         """The function toolset a call constructs, with the name of its class when that is one of the project's."""
@@ -357,17 +517,19 @@ class AgentExtractor:
                 return found, callee.node.name
         return None
 
-    def _receiver(self, node: ast.expr, scope: Scope, line: int) -> _AgentSite | _ToolsetSite | None:
+    def _receivers(self, node: ast.expr, scope: Scope, line: int) -> list[_AgentSite | _ToolsetSite]:
+        """What a registration on ``node`` adds to: a toolset, an agent, or each agent a function makes."""
         if isinstance(node, ast.Name):
             # ``@self.tool`` in a method of a class derived from ``FunctionToolset``.
             owner = receiver_class(node.id, scope)
             if owner is not None and id(owner.node) in self.toolsets:
-                return self.toolsets[id(owner.node)]
+                return [self.toolsets[id(owner.node)]]
         target = self.resolver.resolve(node, scope, line)
         if isinstance(target, Expression) and isinstance(target.node, ast.Call):
-            key = id(target.node)
-            return self.agents.get(key) or self.toolsets.get(key)
-        return None
+            agents: list[_AgentSite | _ToolsetSite] = [*self._instances(target.node, self.resolver.through)]
+            toolset = self.toolsets.get(id(target.node))
+            return agents or ([toolset] if toolset is not None else [])
+        return []
 
     # ------------------------------------------------------- registrations
 
@@ -396,11 +558,23 @@ class AgentExtractor:
             return
         if not isinstance(method, ast.Attribute):
             return
-        receiver = self._receiver(method.value, scope, line)
-        if receiver is None:
+        receivers = self._receivers(method.value, scope, line)
+        if not receivers:
             if decorated is not None and not (call is not None and call.args):
                 self._on_a_parameter(method, call, scope, line, decorated)
             return
+        for receiver in receivers:
+            self._register_on(receiver, method, call, scope, line, decorated)
+
+    def _register_on(
+        self,
+        receiver: _AgentSite | _ToolsetSite,
+        method: ast.Attribute,
+        call: ast.Call | None,
+        scope: Scope,
+        line: int,
+        decorated: Definition | None,
+    ) -> None:
         keywords = {} if call is None else {item.arg: item.value for item in call.keywords if item.arg is not None}
         function = decorated
         if function is None and call is not None:
@@ -531,11 +705,11 @@ class AgentExtractor:
                 argument = self._argument_for(site.node, handed.function, handed.parameter)
                 if argument is None:
                     continue
-                receiver = self._receiver(argument, site.scope, site.node.lineno)
-                if receiver is not None:
+                receivers = self._receivers(argument, site.scope, site.node.lineno)
+                for receiver in receivers:
                     receiver.tools.append(handed.spec)
                     attached = True
-                elif isinstance(argument, ast.Name) and handed.depth < _MAX_HANDED_ON:
+                if not receivers and isinstance(argument, ast.Name) and handed.depth < _MAX_HANDED_ON:
                     # The caller was handed the agent itself: ``def register_all(agent): register_one(agent)``.
                     outer = self.resolver.lookup(argument.id, site.scope, site.node.lineno)
                     if outer is not None and outer.kind == "opaque" and outer.scope.kind == "function":
@@ -743,6 +917,16 @@ class AgentExtractor:
         """The entries of ``[a] if flag else [b]`` or ``given or [a]``: those of every alternative."""
         if isinstance(node, ast.BoolOp) and not isinstance(node.op, ast.Or):
             return None
+        if isinstance(node, ast.IfExp):
+            try:
+                holds = literal(self.resolver, node.test, scope, line)
+            except NotLiteral:
+                pass
+            else:  # a condition the source spells out picks its case
+                branch = node.body if holds else node.orelse
+                if isinstance(branch, ast.Constant) and branch.value is None:
+                    return []
+                return self.items(branch, scope, line, depth + 1)
         branches = [node.body, node.orelse] if isinstance(node, ast.IfExp) else node.values
         found: list[Expression] = []
         for branch in branches:
@@ -769,7 +953,7 @@ class AgentExtractor:
 class _AgentBuilder:
     """Turns one ``_AgentSite`` into an ``AgentBlueprint``."""
 
-    def __init__(self, extractor: AgentExtractor, agent: _AgentSite, ids: dict[int, str]) -> None:
+    def __init__(self, extractor: AgentExtractor, agent: _AgentSite, ids: dict[tuple[int, int], str]) -> None:
         self.extractor = extractor
         self.resolver = extractor.resolver
         self.agent = agent
@@ -930,13 +1114,15 @@ class _AgentBuilder:
     # --------------------------------------------------------------- build
 
     def build(self) -> AgentBlueprint:
-        blueprint_id = self.ids[id(self.call)]
+        blueprint_id = self.ids[self.agent.key]
         name = self._text_argument("name")
         toolsets, tools, delegates = self._toolsets()
+        via = self.agent.via
+        bound_to = (via.bound_to if via is not None else None) or self.agent.site.bound_to
         return AgentBlueprint(
             id=blueprint_id,
             name=name,
-            label=name or self.agent.site.bound_to or f"agent-{blueprint_id[1:]}",
+            label=name or bound_to or f"agent-{blueprint_id[1:]}",
             description=self._text_argument("description"),
             source="code",
             location=location(self.module, self.call),
@@ -1753,16 +1939,15 @@ class _AgentBuilder:
                 keyword.value for keyword in node.keywords if isinstance(keyword.value, ast.Name | ast.Attribute)
             )
             for candidate in candidates:
-                agent = self.extractor.agent_at(unwrap(candidate), body, node.lineno)
-                agents = [agent] if agent is not None else []
-                if agent is None and candidate is receiver:
+                agents = self.extractor.agents_at(unwrap(candidate), body, node.lineno, prefer=self.agent.via)
+                if not agents and candidate is receiver:
                     path = self._deps_path(candidate, spec)
                     if path is not None:
                         agents = self.extractor.agents_in_deps(self.agent, path)
                     else:
                         agents = self._chosen_from(candidate, body, node.lineno)
                 for agent in agents:
-                    agent_id = self.ids[id(agent.site.node)]
+                    agent_id = self.ids[agent.key]
                     if agent_id not in found:
                         found.append(agent_id)
         return found

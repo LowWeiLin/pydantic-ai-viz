@@ -185,7 +185,7 @@ exercises = "A coding agent of about 800 files. Its agent is assembled at run ti
 min_files = 804
 min_agents = 51
 min_tools = 21
-agents = ["_new_pydantic_agent", "temp_agent"]
+agents = ["probe_agent", "final_pydantic", "temp_agent"]
 tools = ["read_file", "create_file", "replace_in_file"]
 
 [[project]]

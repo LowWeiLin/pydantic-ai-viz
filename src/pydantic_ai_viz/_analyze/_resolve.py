@@ -19,10 +19,11 @@ from __future__ import annotations
 import ast
 import bisect
 import builtins
+import contextlib
 import os
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeAlias
@@ -303,8 +304,11 @@ class Resolver:
         """Whether a resolution was refused because the deadline had passed."""
         self.trail: list[Expression] = []
         """The names the last top-level ``resolve`` passed through, in order."""
+        self.through: list[ast.Call] = []
+        """The calls of the project's functions whose return value the last top-level ``resolve`` went into."""
         self._standing_for: dict[int, Expression] = {}
-        """``id(Binding)`` of a loop variable -> the item it stands for while ``each`` goes through the loop."""
+        """``id(Binding)`` -> its value for now: the item a loop variable stands for while ``each`` goes
+        through the loop, or the argument one call gives a parameter, inside ``standing_for``."""
         self._steps_left = MAX_STEPS
 
     # ------------------------------------------------------------- lookup
@@ -406,6 +410,18 @@ class Resolver:
         finally:
             self._standing_for.pop(id(loop), None)
 
+    @contextlib.contextmanager
+    def standing_for(self, values: dict[int, Expression]) -> Generator[None]:
+        """While the block runs, a binding (by ``id``) is the value given: a parameter, the argument of one call."""
+        saved = {key: self._standing_for[key] for key in values if key in self._standing_for}
+        self._standing_for.update(values)
+        try:
+            yield
+        finally:
+            for key in values:
+                self._standing_for.pop(key, None)
+            self._standing_for.update(saved)
+
     # ------------------------------------------------------------ resolve
 
     def resolve(self, node: ast.expr, scope: Scope, line: int | None = None, *, depth: int = 0) -> Resolved:
@@ -418,6 +434,7 @@ class Resolver:
                 self.timed_out = True
                 return None
             self._steps_left = MAX_STEPS
+            self.through = []
         current = Expression(node, scope, node.lineno if line is None else line)
         trail: list[Expression] = []
         try:
@@ -506,6 +523,9 @@ class Resolver:
         return library
 
     def _bound(self, binding: Binding, trail: frozenset[int] = frozenset()) -> Resolved:
+        standing = self._standing_for.get(id(binding))
+        if standing is not None:
+            return standing
         if binding.kind == "assign" and isinstance(binding.node, ast.expr):
             # The value is evaluated before the name is bound, so in ``x = wrap(x)`` the inner
             # ``x`` is the one from an earlier line.
@@ -515,7 +535,7 @@ class Resolver:
         ):
             return Definition(binding.node, binding.scope)
         if binding.kind == "loop":
-            return self._standing_for.get(id(binding))  # unknown, unless ``each`` is going through the items
+            return None  # unknown, unless ``each`` is going through the items
         if binding.kind == "import":
             # Two files that import a name from each other never lead to a value: stop where the trail closes.
             if id(binding) in trail or len(trail) >= MAX_HOPS:
@@ -725,6 +745,7 @@ class Resolver:
         if isinstance(callee, Definition) and not isinstance(callee.node, ast.ClassDef):
             returns = callee.body.returns
             if len(returns) == 1:
+                self.through.append(node)
                 return Expression(returns[0], callee.body, END_OF_MODULE)
         if isinstance(callee, External) and callee.name in _CASTS and len(node.args) == 2 and not node.keywords:
             # ``cast(KnownModelName, value)`` is ``value``: the cast only tells the type checker something.

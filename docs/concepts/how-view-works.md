@@ -59,6 +59,8 @@ The analyser knows two kinds of things, and keeps them apart.
 | Strings built from known parts | `"openai:" + NAME`, `f"{PROVIDER}:{NAME}"` |
 | Items of containers written in the source | `MODELS["fast"]`, `TIERS[1]` |
 | Arguments passed as `**kwargs` from a written-out dict | `Agent(MODEL, **COMMON)` with `COMMON = {"retries": 2}` |
+| Calls of a function that makes an agent, one agent per call, each with its own arguments | `researcher = make("researcher")` and `writer = make("writer")` with `def make(name): return Agent("openai:gpt-5.2", name=name)` |
+| Conditions that are themselves values | `[Guard()] if strict else []`, where `strict` is a value the source gives |
 | Loops over a written-out sequence | `for tool in [search, fetch]: agent.tool_plain(tool)` |
 | Inheritance | an agent made in a base class's `__init__` and given tools by a derived class |
 
@@ -80,7 +82,7 @@ the model is read as `anthropic:claude-opus-5`, with no warning.
 
 The evaluator stops where the value stops being written in your code:
 
-- **A function's parameters are unknown inside it.** `def make(name): return "openai:" + name` is not followed for a call `make("gpt-5.2")`; the model is the expression `make("gpt-5.2")`.
+- **A function's parameters are unknown inside it**, except in a function that makes an agent. There, each call of the function is an agent of its own, read with that call's arguments and the defaults it leaves out; calls that end in the same blueprint, such as tests that each call `make_agent()`, are shown as one agent. A function with a decorator is read once, since the decorator may hand out one agent for every call. Elsewhere, `def make(name): return "openai:" + name` is not followed for a call `make("gpt-5.2")`; the model is the expression `make("gpt-5.2")`.
 - **A name assigned in more than one place**, for example in both branches of an `if`, is not taken for its last value. Which value it holds is decided when the code runs, so a model held by such a name is shown as the name, and tools collected that way come with a warning that some of them depend on a condition.
 - **Anything from outside your code is never evaluated.** See the next section.
 

@@ -2,7 +2,8 @@
 
 A value is read only when the source spells it out: constants, containers of
 constants, string concatenation, f-strings whose every placeholder is itself
-such a value, the ``strip`` methods of ``str``, and a name that is assigned
+such a value, the ``strip`` methods of ``str``, ``a if condition else b`` whose
+condition is such a value, and a name that is assigned
 such a value once and whose value is not changed in place afterwards. A call of
 any function, of the standard library or not, is not evaluated. Everything else
 raises ``NotLiteral``; the caller then reports the source text instead of a value.
@@ -94,6 +95,8 @@ def _read(resolver: Resolver, expression: Expression, depth: int, budget: _Budge
         return -operand if isinstance(node.op, ast.USub) else operand
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return _concatenate(resolver, expression, depth, budget)
+    if isinstance(node, ast.IfExp):
+        return child(node.body if child(node.test) else node.orelse)  # a condition that is itself a value
     if isinstance(node, ast.Name | ast.Attribute) and resolver.changes(node, expression.scope, expression.line):
         raise NotLiteral  # appended to, updated or otherwise changed after it was assigned
     if isinstance(node, ast.Name):

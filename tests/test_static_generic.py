@@ -221,3 +221,132 @@ def test_another_librarys_classes_are_not_recognised_by_their_names(tmp_path: Pa
     other = agent(found, "other")
     assert other.settings.model_settings is None
     assert other.settings.expressions == {"model_settings": "VendorSettings(temperature=0.5)"}
+
+
+FACTORY = '''
+    import functools
+    from pydantic_ai import Agent
+
+
+    def make(name: str, prompt: str = "Be brief.", *, retries: int = 1) -> Agent:
+        agent = Agent("test", name=name, instructions=prompt, retries=retries)
+
+        @agent.tool_plain
+        def today() -> str:
+            """What day it is."""
+            return "Monday"
+
+        return agent
+
+
+    @functools.cache
+    def shared() -> Agent:
+        return Agent("test", name="shared")
+
+
+    researcher = make("researcher", "You research.", retries=3)
+    writer = make("writer")
+    options = {"prompt": "From a dict."}
+    spread = make("spread", **options)
+    once = shared()
+    again = shared()
+
+
+    @researcher.tool_plain
+    def search(q: str) -> str:
+        """Search the web."""
+        return q
+
+
+    @writer.tool_plain
+    async def ask_researcher(q: str) -> str:
+        """Ask the researcher."""
+        return (await researcher.run(q)).output
+
+
+    @once.tool_plain
+    def ping() -> str:
+        return "pong"
+    '''
+
+
+def test_a_function_called_in_several_places_makes_one_agent_per_call(tmp_path: Path) -> None:
+    found = analyze_source(tmp_path, FACTORY)
+    assert [blueprint.label for blueprint in found.agents] == ["researcher", "writer", "spread", "shared"]
+    researcher, writer, spread, shared = found.agents
+    # Each call's own arguments, and the parameters' defaults where a call leaves them out.
+    assert [(i.text, i.expression) for i in researcher.instructions] == [("You research.", None)]
+    assert [(i.text, i.expression) for i in writer.instructions] == [("Be brief.", None)]
+    assert (researcher.settings.tool_retries, writer.settings.tool_retries) == (3, 1)
+    assert [b.location.line for b in found.agents if b.location] == [7, 7, 7, 19]
+    # What the function itself registers is on every agent it makes; what is added to one is on that one.
+    assert [t.name for t in researcher.tools] == ["today", "search"]
+    assert [t.name for t in writer.tools] == ["today", "ask_researcher"]
+    assert [(d.tool_name, d.agent_id) for d in writer.delegates] == [("ask_researcher", researcher.id)]
+    assert researcher.delegates == []
+    assert (researcher.warnings, writer.warnings) == ([], [])
+    # ``**options`` may hold any argument: the default is not taken for it.
+    assert [(i.text, i.expression) for i in spread.instructions] == [(None, "prompt")]
+    # A decorated function may hand out the same agent every time, as this cache does: one agent.
+    assert [t.name for t in shared.tools] == ["ping"]
+
+
+def test_calls_of_a_function_that_the_source_does_not_tell_apart_are_one_agent(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+
+
+        class Guard:
+            pass
+
+
+        def make(model: str, reply: str = "", *, flaky: bool = False) -> Agent:
+            agent = Agent(model, retries=3 if flaky else 1, capabilities=[Guard()] if flaky else [])
+
+            @agent.tool_plain
+            def lookup(key: str) -> str:
+                return reply or key
+
+            return agent
+
+
+        def first_test():
+            agent = make("test", "a")
+            agent.run_sync("hi")
+
+
+        def second_test():
+            agent = make("test", "b")
+            agent.run_sync("hello")
+
+
+        def third_test():
+            flaky = make("test", flaky=True)
+            flaky.run_sync("hello")
+        """,
+    )
+    # The first two differ in an argument the agent does not depend on: one agent, named as the function names it.
+    assert [(b.id, b.label, b.settings.tool_retries, len(b.capabilities)) for b in found.agents] == [
+        ("a1", "agent", 1, 0),
+        ("a2", "flaky", 3, 1),
+    ]
+    assert [b.warnings for b in found.agents] == [[], []]
+
+
+def test_a_function_called_once_makes_one_agent_named_after_its_call(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+
+
+        def make(name: str) -> Agent:
+            return Agent("test", name=name)
+
+
+        only = make("only")
+        """,
+    )
+    assert [(b.label, b.name, b.warnings) for b in found.agents] == [("only", "only", [])]

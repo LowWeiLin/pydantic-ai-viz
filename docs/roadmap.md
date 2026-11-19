@@ -13,7 +13,7 @@ What has been considered and left for later. Nothing here is promised or schedul
 
 These patterns are not read by `view` today; see [How view works](concepts/how-view-works.md) and the [real-world examples](real-world.md) for how often they occur.
 
-- **Following arguments into a function.** A function's parameters are unknown inside it, so `make_model("gpt-5.2")` stays an expression even when `make_model` only joins strings.
+- **Following arguments into any function.** They are followed into a function that makes an agent, one agent per call. Elsewhere a function's parameters are unknown inside it, so `make_model("gpt-5.2")` stays an expression even when `make_model` only joins strings.
 - **Tools registered on an agent that is passed in as an argument.** They are counted in a notice and placed on no agent.
 - **Toolsets that a capability builds at run time** and returns from `get_toolset`.
 - **Agents not constructed in the source**: `Agent` subclasses, `Agent.from_spec(...)` and agents returned by library functions.

@@ -667,7 +667,7 @@ def test_delegation_edges_come_from_tool_bodies() -> None:
 def test_agents_in_factories_classes_and_containers_are_found() -> None:
     found = fixture("factories.py")
     assert [(b.label, b.name) for b in found.agents] == [
-        ("made", None),  # the variable inside the factory
+        ("from_factory", None),  # the variable the factory's one call is assigned to
         ("direct", "direct"),  # returned straight from a function
         ("made_async", "made_async"),
         ("shared", "shared"),  # a class attribute, built with pydantic_ai.Agent through a module alias
@@ -684,7 +684,7 @@ def test_agents_in_factories_classes_and_containers_are_found() -> None:
 
 def test_tools_follow_the_agent_through_a_factory_and_through_self() -> None:
     found = fixture("factories.py")
-    made = agent(found, "made")
+    made = agent(found, "from_factory")
     assert [(t.name, t.function) for t in made.tools] == [
         ("inside", "factories.build_agent.<locals>.inside"),
         ("outside", "factories.outside"),  # registered on `from_factory = build_agent()`
