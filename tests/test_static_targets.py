@@ -91,10 +91,18 @@ def test_directories_of_installed_and_generated_code_are_passed_over(tmp_path: P
     one_agent(root, "my-env/lib/x.py", "not_mine")
     write(root, "my-env/pyvenv.cfg", "home = /usr/bin\n")
     one_agent(root, "src/builder/x.py", "also_mine")  # only the exact names are skipped
+    write(root, "dist/readme.txt", "no Python here")
+    write(root, "docs/build/index.html", "<p>nor here</p>")
     found = analyze(root)
     assert found.files == ["app.py", "src/builder/x.py"]
     assert labels(found) == ["mine", "also_mine"]
-    assert found.notices == []
+    # A directory called build or dist may hold a package of the project's own: it is named, not dropped silently.
+    assert found.notices == [
+        "passed over the directory build, which holds .py files: a directory of that name usually holds generated "
+        "code; give it as a target to read it",
+        "passed over the directory dist, which holds .py files: a directory of that name usually holds generated "
+        "code; give it as a target to read it",
+    ]
 
 
 def test_a_directory_named_as_the_target_is_read_whatever_it_is_called(tmp_path: Path) -> None:

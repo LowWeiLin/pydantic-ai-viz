@@ -44,6 +44,13 @@ MARKERS = (
 SKIPPED_DIRECTORIES = frozenset({"venv", "node_modules", "__pycache__", "site-packages", "build", "dist"})
 """Directories that hold installed or generated code, not the project's own. Hidden ones are skipped too."""
 
+NAMED_IN_A_NOTICE = frozenset({"build", "dist"})
+"""Skipped directories whose name a project may also give a package of its own: when one holds
+Python files, a notice says it was passed over."""
+
+_MAX_ENTRIES_LOOKED_AT = 2_000
+"""How many entries of a skipped directory are looked at to tell whether it holds Python files."""
+
 MAX_DIRECTORY_DEPTH = 40
 """How far below a directory target files are looked for; deeper than this is a loop, not a project."""
 
@@ -331,6 +338,12 @@ def python_files(
                 continue
             if is_directory:
                 if skipped_directory(entry.name) or os.path.exists(os.path.join(entry.path, "pyvenv.cfg")):
+                    if entry.name in NAMED_IN_A_NOTICE and _holds_python(Path(entry.path)):
+                        where = Path(entry.path).relative_to(directory).as_posix()
+                        notices.append(
+                            f"passed over the directory {where}, which holds .py files: a directory of that name "
+                            "usually holds generated code; give it as a target to read it"
+                        )
                     continue
                 if depth + 1 > MAX_DIRECTORY_DEPTH:
                     where = Path(entry.path).relative_to(directory).as_posix()
@@ -346,6 +359,26 @@ def python_files(
                 found.append(Path(entry.path))
         pending.extend(reversed(below))
     return found, notices
+
+
+def _holds_python(directory: Path) -> bool:
+    """Whether a directory holds a ``.py`` file at any depth, looking at a bounded number of entries."""
+    pending = [directory]
+    looked_at = 0
+    while pending and looked_at < _MAX_ENTRIES_LOOKED_AT:
+        try:
+            with os.scandir(pending.pop()) as scan:
+                for entry in scan:
+                    looked_at += 1
+                    if is_link(entry):
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(Path(entry.path))
+                    elif entry.name.lower().endswith(".py"):
+                        return True
+        except OSError:
+            continue
+    return False
 
 
 def is_link(entry: os.DirEntry[str]) -> bool:

@@ -128,7 +128,7 @@ The source computes it instead of spelling it out: a model read from an environm
 - An agent is found where the source calls Pydantic AI's `Agent(...)`. An agent that comes out of a library function, or out of a class that subclasses `Agent`, is not visible in the source. Use `--import`, or pass the object to `pviz.serve(...)` or `pviz.export_html(...)` in Python.
 - `file.py:name` selects a name assigned at the **top level** of the file. Without `:name`, agents made inside functions and classes are drawn too.
 - A file read only because another one imports it adds no blueprints of its own. To see every agent of a project, give its directory.
-- In a directory, virtual environments, `node_modules`, `site-packages`, `build`, `dist` and hidden directories are passed over.
+- In a directory, virtual environments, `node_modules`, `site-packages`, `build`, `dist` and hidden directories are passed over. A `build` or `dist` that holds `.py` files is named in a note; give it as a target to read it.
 - The message "no agents or graphs found in the source" means exactly that. If a file was skipped, the line before it says why.
 
 With `--import`:

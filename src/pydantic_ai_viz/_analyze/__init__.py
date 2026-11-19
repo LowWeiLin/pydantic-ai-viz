@@ -106,7 +106,8 @@ def analyze(*targets: str | os.PathLike[str], limits: Limits | None = None) -> A
       graph assigned to `name` at the top level of that file.
     - **A directory**. Every `.py` file below it is read. Virtual environments,
       `node_modules`, `site-packages`, `__pycache__`, `build`, `dist` and hidden
-      directories are passed over.
+      directories are passed over; a `build` or `dist` that holds `.py` files is
+      named in a notice.
     - **A module name**, `package.module` or `package.module:name`. The file is
       found on disk, below the working directory, its `src` directory or an entry
       of `sys.path`; nothing is imported to find it. A package is read like a directory.
