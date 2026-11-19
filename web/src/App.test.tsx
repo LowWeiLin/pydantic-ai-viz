@@ -904,17 +904,24 @@ describe("a blueprint-only session (pydantic-ai-viz view)", () => {
       "newsroom/checks.py",
       "newsroom/pipeline.py",
     ]);
+    // In file order, each with the number of its warnings: marked as such, never a bare number.
+    const names = ["editor", "reporter", "stringer", "fact_checker", "publishing"];
     expect(
       within(list)
         .getAllByRole("link")
-        .map((link) => link.textContent),
-    ).toEqual([
-      "editorWarnings: 2",
-      "reporterWarnings: 3",
+        .map((link) => link.querySelector("[title]")?.textContent),
+    ).toEqual(names);
+    for (const name of [
+      "editor, 2 warnings",
+      "reporter, 3 warnings",
       "stringer",
-      "fact_checkerWarnings: 1",
+      "fact_checker, 1 warning",
       "publishing",
-    ]);
+    ]) {
+      expect(within(list).getByRole("link", { name })).toBeInTheDocument();
+    }
+    expect(within(list).getByTitle("3 warnings")).toHaveTextContent(/^3$/);
+    expect(within(list).getByTitle("3 warnings").querySelector("svg")).not.toBeNull();
     // Five blueprints can be read at a glance: no filter.
     expect(within(list).queryByRole("searchbox")).toBeNull();
   });

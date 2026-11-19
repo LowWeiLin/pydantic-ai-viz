@@ -10,11 +10,11 @@ import {
 } from "../data/selectors";
 import { useViewer } from "../data/store";
 import { usePlaybackTime, useRunBounds } from "../data/usePlayback";
-import { Badge, StatusDot } from "../ui/Badge";
+import { StatusDot } from "../ui/Badge";
 import { Skeleton } from "../ui/EmptyState";
 import { Icon } from "../ui/Icon";
 import { cx, kindMeta, toneClass } from "../ui/tone";
-import { formatClock, formatCount, formatDuration } from "./format";
+import { formatClock, formatCount, formatDuration, plural } from "./format";
 import { formatRoute, type Route } from "./router";
 import { type AboutBlueprints, type ShellStatus, useShellStatus } from "./status";
 
@@ -74,10 +74,19 @@ function BlueprintLink({ entry, route }: { entry: BlueprintEntry; route: Route }
           {entry.label}
         </span>
         {entry.warnings > 0 && (
-          <Badge>
-            <span className="sr-only">Warnings: </span>
-            {entry.warnings}
-          </Badge>
+          // Which blueprints the analysis could not read in full, at a glance down a long list.
+          // The warnings themselves are in the blueprint's panel.
+          <>
+            <span
+              aria-hidden="true"
+              title={plural(entry.warnings, "warning")}
+              className="flex shrink-0 items-center gap-0.5 text-faint text-meta tabular-nums"
+            >
+              <Icon name="warning" size={12} />
+              {entry.warnings}
+            </span>
+            <span className="sr-only">, {plural(entry.warnings, "warning")}</span>
+          </>
         )}
       </a>
     </li>
