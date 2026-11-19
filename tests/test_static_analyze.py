@@ -15,8 +15,8 @@ from static_support import FIXTURES, agent, analyze_source, fixture, properties,
 
 import pydantic_ai_viz
 from pydantic_ai_viz import Analysis, Limits, analyze
-from pydantic_ai_viz._analyze import TargetError
-from pydantic_ai_viz._analyze._locate import split_target
+from pydantic_ai_viz._analyze import TargetError, _Names
+from pydantic_ai_viz._analyze._locate import Place, split_target
 from pydantic_ai_viz._analyze._resolve import Project, Resolver
 from pydantic_ai_viz._analyze._source import Module, parse_module
 from pydantic_ai_viz._models import SourceLocation
@@ -74,6 +74,28 @@ def test_several_files_are_analysed_together_and_named_from_their_common_directo
         ("a3", "bystander", "agents/team.py"),
         ("a4", "solo", "other.py"),
     ]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="drives, UNC and extended-length paths are Windows paths")
+def test_targets_that_share_no_directory_are_named_by_their_own_directories_never_absolutely() -> None:
+    def at(root: str, boundary: str | None) -> Place:
+        return Place(root, Path(root), None, Path(root), None if boundary is None else Path(boundary), "t")
+
+    names = _Names([at(r"C:\work\app", r"C:\work"), at(r"D:\other\tool", None)])
+    assert names.root is None
+    assert names(Path(r"C:\work\app\agents.py")) == "work/app/agents.py"
+    assert names(Path(r"C:\work\shared\models.py")) == "work/shared/models.py"  # imported, above the target
+    assert names(Path(r"D:\other\tool\x.py")) == "tool/x.py"
+    assert names(Path(r"E:\nowhere\y.py")) == "y.py"
+    # The extended-length form of a path is the same directory, and so is not a second drive.
+    long = _Names([at("\\\\?\\C:\\work\\app", None), at(r"C:\work\lib", None)])
+    assert long.root == Path(r"C:\work")
+    assert long(Path("\\\\?\\C:\\work\\app\\a.py")) == "app/a.py"
+    unc = _Names([at("\\\\?\\UNC\\host\\share\\app", None), at(r"\\host\share\lib", None)])
+    assert unc(Path(r"\\host\share\lib\b.py")) == "lib/b.py"
+    # Two directories of the same name are told apart.
+    same = _Names([at(r"C:\a\app", None), at(r"D:\b\app", None)])
+    assert (same(Path(r"C:\a\app\x.py")), same(Path(r"D:\b\app\x.py"))) == ("app/x.py", "app (2)/x.py")
 
 
 def test_files_given_together_are_linked_through_their_imports(tmp_path: Path) -> None:

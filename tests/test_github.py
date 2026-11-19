@@ -488,6 +488,33 @@ def test_imports_are_followed_inside_the_fetched_repository_only(hub: Hub, cache
     assert all(not name.startswith("..") for name in found.files)
 
 
+def test_a_repository_and_a_local_target_together_are_named_without_absolute_paths(
+    hub: Hub, cache: Path, tmp_path: Path
+) -> None:
+    local = tmp_path / "work" / "medium" / "good.py"
+    local.parent.mkdir(parents=True)
+    local.write_text("from pydantic_ai import Agent\nlocal = Agent('test', name='local')\n", encoding="utf-8")
+    found = analyze("gh:acme/shop@main/src", local)
+    repository = f"acme/shop@{hub.second[:7]}"
+    assert found.files == [
+        f"{repository}/src/shop/__init__.py",
+        f"{repository}/src/shop/agents.py",
+        f"{repository}/src/shop/extra.py",
+        f"{repository}/src/shop/models.py",
+        "medium/good.py",
+    ]
+    assert [(b.name, b.location) for b in found.agents] == [
+        ("helper", SourceLocation(file=f"{repository}/src/shop/agents.py", line=10)),
+        ("lead", SourceLocation(file=f"{repository}/src/shop/agents.py", line=11)),
+        ("extra", SourceLocation(file=f"{repository}/src/shop/extra.py", line=3)),
+        ("local", SourceLocation(file="medium/good.py", line=2)),
+    ]
+    assert found.agents[0].output.location == SourceLocation(file=f"{repository}/src/shop/models.py", line=4)
+    shown = "\n".join([*found.files, *found.notices, *(b.model_dump_json() for b in found.blueprints)])
+    for text in (tmp_path.as_posix(), cache.as_posix(), Path.home().name):
+        assert text not in shown.replace("\\", "/")
+
+
 @pytest.mark.parametrize(
     ("target", "message"),
     [

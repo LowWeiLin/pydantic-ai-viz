@@ -79,6 +79,8 @@ class Place:
     """The directory inside which a file may be read because another one imports it; ``None`` for nowhere."""
     title: str
     notices: tuple[str, ...] = ()
+    shown_as: str | None = None
+    """What its files are named under next to other targets' files; for a fetched repository, its slug and commit."""
 
 
 def split_target(spec: str) -> tuple[str, str | None]:
@@ -190,6 +192,7 @@ def _remote(spec: str, reference: _github.Reference, select: str | None, fetch_s
         raise TargetError(f"{spec}: {reference.slug} has no {inside!r} at commit {checkout.sha[:12]}")
     if path.is_file() and not path.name.lower().endswith(".py"):
         raise TargetError(f"{spec}: {inside} is not a .py file; only Python source can be read")
+    title = f"{reference.slug}@{checkout.sha[:7]}"
     return Place(
         spec,
         path,
@@ -197,8 +200,9 @@ def _remote(spec: str, reference: _github.Reference, select: str | None, fetch_s
         # Named from the top of the repository, so a file reads as it does in a GitHub link.
         root=checkout.path,
         boundary=project_root(path if path.is_dir() else path.parent, within=checkout.path),
-        title=f"{reference.slug}@{checkout.sha[:7]}",
+        title=title,
         notices=(f"read {reference.slug} from GitHub at commit {checkout.sha}; none of its code was run",),
+        shown_as=title,
     )
 
 

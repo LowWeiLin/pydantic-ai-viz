@@ -63,7 +63,10 @@ class Analysis:
             repository was read at.
         files: The files that were read, relative to their common directory (for a
             GitHub repository, to the top of the repository): the targets' own
-            files first, then the files read because those import them.
+            files first, then the files read because those import them. Targets
+            that share no directory, such as a GitHub repository and a local file,
+            have their files named under a label each: `owner/repo@abc1234/...`,
+            or the name of the target's project directory. A path is never absolute.
         title: A short name for what was analysed: the file, directory or module,
             or `owner/repo@commit`. `None` when there were several targets.
     """
@@ -167,13 +170,13 @@ def _read(places: list[Place], limits: Limits) -> Analysis:
         sources.extend(listed)
         notices.extend(said)
 
-    root = _common_root([found.root for found in places])
-    project = _project(places, root)
+    names = _Names(places)
+    project = _project(places, names.root)
     loaded: dict[Path, Module] = {}
     for source in sources:
         if source.path in loaded:
             continue
-        rel = _relative(source.path, root)
+        rel = names(source.path)
         if len(project.modules) >= limits.max_files or time.monotonic() >= deadline:
             notices.append(f"stopped reading files at the limit; {rel} and what follows were not analysed")
             break
@@ -183,7 +186,7 @@ def _read(places: list[Place], limits: Limits) -> Analysis:
             continue
         loaded[source.path] = result
         project.add(result)
-    _follow_imports(project, root, limits, deadline, notices)
+    _follow_imports(project, names, limits, deadline, notices)
 
     files = [module.rel for module in project.modules]
     title = places[0].title if len(places) == 1 else None
@@ -221,17 +224,60 @@ def _common_root(roots: list[Path]) -> Path | None:
         return None
 
 
-def _relative(path: Path, root: Path | None) -> str:
-    """``path`` as shown to the user: relative to ``root``, with forward slashes."""
-    if root is None:
-        return path.as_posix()
-    text, prefix = str(path), os.path.join(str(root), "")
-    if text.startswith(prefix):
-        return text[len(prefix) :].replace(os.sep, "/")
-    try:
-        return os.path.relpath(text, str(root)).replace(os.sep, "/")  # read through an import, above the targets
-    except ValueError:
-        return path.as_posix()
+def _plain(path: Path) -> Path:
+    """``path`` without the ``\\\\?\\`` prefix that lets Windows open long paths, which is no part of its name."""
+    text = str(path)
+    if text.startswith("\\\\?\\UNC\\"):
+        return Path("\\\\" + text[len("\\\\?\\UNC\\") :])
+    if text.startswith("\\\\?\\"):
+        return Path(text[len("\\\\?\\") :])
+    return path
+
+
+class _Names:
+    """How the files read are named to the user: by relative paths, never by absolute ones.
+
+    The files of one target, or of local targets that share a directory, are named
+    relative to that directory. When a fetched repository is among several targets,
+    or the targets share no directory (two drives), the files of each are named
+    relative to their own target's project, under a short label: the repository
+    and its commit, or the name of that directory.
+    """
+
+    def __init__(self, places: list[Place]) -> None:
+        roots = [_plain(found.root) for found in places]
+        separate = len(places) > 1 and any(found.shown_as is not None for found in places)
+        self.root = None if separate else _common_root(roots)
+        self.anchors: list[tuple[Path, str]] = []
+        if self.root is not None:
+            return
+        labels: set[str] = set()
+        for found, root in zip(places, roots, strict=True):
+            boundary = None if found.boundary is None else _plain(found.boundary)
+            anchor = boundary if boundary is not None and (boundary == root or boundary in root.parents) else root
+            label = found.shown_as or anchor.name or found.title
+            for number in range(2, len(places) + 2):
+                if label not in labels:
+                    break
+                label = f"{found.shown_as or anchor.name or found.title} ({number})"
+            labels.add(label)
+            self.anchors.append((anchor, label))
+        # A file below two anchors is named from the nearer one.
+        self.anchors.sort(key=lambda item: len(item[0].parts), reverse=True)
+
+    def __call__(self, path: Path) -> str:
+        path = _plain(path)
+        if self.root is not None:
+            text, prefix = str(path), os.path.join(str(self.root), "")
+            if text.startswith(prefix):
+                return text[len(prefix) :].replace(os.sep, "/")
+            with contextlib.suppress(ValueError):
+                return os.path.relpath(text, str(self.root)).replace(os.sep, "/")  # imported, above the targets
+            return path.name
+        for anchor, label in self.anchors:
+            if anchor in path.parents:
+                return f"{label}/{path.relative_to(anchor).as_posix()}"
+        return path.name
 
 
 def _project(places: list[Place], root: Path | None) -> Project:
@@ -244,13 +290,13 @@ def _project(places: list[Place], root: Path | None) -> Project:
     return Project(root=root or places[0].root, bases=list(dict.fromkeys(bases)), boundaries=boundaries)
 
 
-def _follow_imports(project: Project, root: Path | None, limits: Limits, deadline: float, notices: list[str]) -> None:
+def _follow_imports(project: Project, names: _Names, limits: Limits, deadline: float, notices: list[str]) -> None:
     """Read the project files that the files read so far import, and the ones those import, and so on."""
     stopped = False
 
     def opener(path: Path) -> Module | None:
         nonlocal stopped
-        rel = _relative(path, root)
+        rel = names(path)
         if len(project.modules) >= limits.max_files or time.monotonic() >= deadline:
             if not stopped:
                 notices.append(f"stopped following imports at the limit; {rel} and other imported files were not read")

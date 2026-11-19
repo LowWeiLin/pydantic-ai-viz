@@ -147,7 +147,7 @@ class Analysis:
 | `agents` | One blueprint per `Agent(...)` in the source, with ids `a1`, `a2`, ... in the order they appear. `delegates` refer to these ids. |
 | `graphs` | One blueprint per `GraphBuilder(...)` or `Graph(nodes=[...])`, with ids `g1`, `g2`, ... |
 | `notices` | Messages about the analysis as a whole: a file that was skipped because it is not valid Python, the commit a GitHub repository was read at, or how many tools were found that belong to no agent the source shows. |
-| `files` | The files that were read, relative to their common directory (for a GitHub repository, to the top of the repository): the targets' own files first, then the files read because those import them. |
+| `files` | The files that were read, relative to their common directory (for a GitHub repository, to the top of the repository): the targets' own files first, then the files read because those import them. Targets that share no directory, such as a GitHub repository and a local file, have their files named under a label each: `owner/repo@abc1234/...`, or the name of the target's project directory. |
 | `title` | A short name for what was analysed: the file, directory or module, or `owner/repo@commit`. `None` when there were several targets. |
 | `blueprints` | The agents, then the graphs. |
 

@@ -24,7 +24,7 @@ There is no telemetry, no account and no cloud service. Spans go to a private Op
 
 - **Prompts written in the source appear in full**: instruction strings, docstrings that become tool descriptions, and default values of tool parameters.
 - **Computed values appear as the code that computes them**, for example `os.getenv("MODEL", "openai:gpt-5.2")`. The value of an environment variable is never read, so a secret held in one is not shown; a secret written as a literal in the code is, as it would be in any copy of the code.
-- **File paths are relative** to the directory that was read, so a blueprint export does not carry the layout of your machine.
+- **File paths are relative** to the directory that was read, so a blueprint export does not carry the layout of your machine. When targets share no directory (a GitHub repository next to a local file, or two drives), each file is named from its own target's project under a short label, such as `owner/repo@abc1234/src/app.py`; an absolute path is never shown.
 
 A blueprint-only export (`view ... --export`) holds no run data, but read it before you share it if your prompts are confidential.
 
