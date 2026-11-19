@@ -670,3 +670,33 @@ def test_a_docstring_format_the_source_does_not_spell_out_is_named_in_a_warning(
         "the docstring format of the tool `fetch` is set by `STYLE`, so it is only known when the code runs; "
         "its descriptions are read as if it were inferred from the docstring"
     ]
+
+
+def test_a_deps_type_held_by_a_parameter_is_not_taken_for_a_type_name(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from dataclasses import dataclass
+        from pydantic_ai import Agent
+
+
+        @dataclass
+        class Deps:
+            user: str
+
+
+        class Base:
+            def __init__(self, deps_type=Deps):
+                self.agent = Agent("test", name="based", deps_type=deps_type)
+
+
+        written = Agent("test", name="written", deps_type=Deps)
+        generic = Agent("test", name="generic", deps_type=dict[str, Deps])
+        """,
+    )
+    based = agent(found, "based")
+    assert based.deps_type == "deps_type"
+    assert based.warnings == ["the deps type is set by `deps_type`, so it is only known when the code runs"]
+    assert agent(found, "written").deps_type == "module.Deps"
+    assert agent(found, "written").warnings == []
+    assert (agent(found, "generic").deps_type, agent(found, "generic").warnings) == ("dict[str, Deps]", [])

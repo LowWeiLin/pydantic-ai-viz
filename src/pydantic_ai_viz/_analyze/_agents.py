@@ -1316,7 +1316,10 @@ class _AgentBuilder:
             return target.qualified_name
         if isinstance(node, ast.Constant) and node.value is None:
             return None
-        return self.text(node)
+        text = self.text(node)
+        if not isinstance(node, ast.Subscript | ast.BinOp):  # ``dict[str, int]``, ``Deps | None``: a type as written
+            self.warn(f"the deps type is set by `{brief(text)}`, so it is only known when the code runs")
+        return text
 
     # -------------------------------------------------------- instructions
 
