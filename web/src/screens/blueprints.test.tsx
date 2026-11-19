@@ -196,17 +196,24 @@ describe("Copy Mermaid", () => {
 });
 
 describe("SourceRef", () => {
-  test("a long path gives way from its folder; the file and line are cut last", () => {
+  test("a long path gives way from its folder, then its name; the line is never cut", () => {
     const location = { file: "pydantic_ai_examples/medical_agent_delegation.py", line: 161 };
     const { container } = render(<SourceRef location={location} />);
     const code = screen.getByTitle("pydantic_ai_examples/medical_agent_delegation.py:161");
-    const [folder, tail] = [...code.children] as HTMLElement[];
-    expect(folder).toHaveTextContent(/^pydantic_ai_examples\/$/);
-    expect(folder).toHaveClass("min-w-0", "truncate");
-    // The tail does not shrink while the folder still can; it is cut only when it alone is
-    // wider than the panel.
-    expect(tail).toHaveTextContent(/^medical_agent_delegation\.py:161$/);
-    expect(tail).toHaveClass("shrink-0", "max-w-full", "truncate");
+    const parts = [...code.querySelectorAll(":scope > span > span")] as HTMLElement[];
+    expect(parts.map((part) => part.textContent)).toEqual([
+      "pydantic_ai_examples/",
+      "medical_agent_delegation.py",
+      ":161",
+    ]);
+    const [folder, name, line] = parts;
+    // The folder's shrink factor dwarfs the name's, so the name keeps its width until the
+    // folder has none left; the line does not shrink at all.
+    expect(folder).toHaveClass("min-w-0", "shrink-[1000]", "truncate");
+    expect(name).toHaveClass("min-w-0", "truncate");
+    expect(name).not.toHaveClass("shrink-[1000]");
+    expect(line).toHaveClass("shrink-0");
+    expect(code).toHaveTextContent(/^pydantic_ai_examples\/medical_agent_delegation\.py:161$/);
     expect(container).toHaveTextContent("Defined at");
     expect(
       screen.getByRole("button", {
@@ -215,11 +222,12 @@ describe("SourceRef", () => {
     ).toBeInTheDocument();
   });
 
-  test("a file at the top of the analysed tree is one part", () => {
+  test("a file at the top of the analysed tree has no folder part", () => {
     render(<SourceRef location={{ file: "01_tools.py", line: 22 }} prefix="" />);
     const code = screen.getByTitle("01_tools.py:22");
-    expect(code.children).toHaveLength(1);
-    expect(code).toHaveTextContent(/^01_tools\.py:22$/);
+    expect(
+      [...code.querySelectorAll(":scope > span > span")].map((part) => part.textContent),
+    ).toEqual(["01_tools.py", ":22"]);
     expect(screen.queryByText("Defined at")).toBeNull();
   });
 });

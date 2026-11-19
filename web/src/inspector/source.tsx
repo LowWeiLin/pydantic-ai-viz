@@ -7,6 +7,7 @@ import { Chip } from "../ui/Badge";
 import { CopyButton } from "../ui/CopyButton";
 import { Icon, type IconName } from "../ui/Icon";
 import { Popover } from "../ui/overlays";
+import { PathText } from "../ui/PathText";
 import { cx } from "../ui/tone";
 import type { Provenance, SourceLocation } from "../wire";
 
@@ -84,8 +85,8 @@ export const formatLocation = (location: SourceLocation): string =>
 
 /**
  * Where something is defined in the analysed source, with a button that copies it. A long path
- * gives way from its folder: the file name and the line are what an editor needs, so they are
- * the last to be cut. The whole location is the title and what is copied.
+ * gives way from its folder, then from the end of the file name; the line is never cut. The
+ * whole location is the title and what is copied.
  */
 export function SourceRef({
   location,
@@ -97,13 +98,11 @@ export function SourceRef({
 }) {
   if (!location) return null;
   const text = formatLocation(location);
-  const cut = location.file.lastIndexOf("/") + 1;
   return (
     <span className="inline-flex min-w-0 max-w-full items-center gap-1 text-faint text-meta">
       {prefix !== "" && <span className="shrink-0">{prefix}</span>}
       <code className="flex min-w-0 text-[11px] text-muted" title={text}>
-        {cut > 0 && <span className="min-w-0 truncate">{location.file.slice(0, cut)}</span>}
-        <span className="max-w-full shrink-0 truncate">{text.slice(cut)}</span>
+        <PathText path={location.file} suffix={`:${location.line}`} />
       </code>
       <CopyButton text={text} label={`Copy ${text}`} compact className="h-5 shrink-0 px-1" />
     </span>

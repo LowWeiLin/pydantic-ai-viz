@@ -13,6 +13,7 @@ import { usePlaybackTime, useRunBounds } from "../data/usePlayback";
 import { StatusDot } from "../ui/Badge";
 import { Skeleton } from "../ui/EmptyState";
 import { Icon } from "../ui/Icon";
+import { PathText } from "../ui/PathText";
 import { cx, kindMeta, toneClass } from "../ui/tone";
 import { formatClock, formatCount, formatDuration, plural } from "./format";
 import { formatRoute, type Route } from "./router";
@@ -93,9 +94,8 @@ function BlueprintLink({ entry, route }: { entry: BlueprintEntry; route: Route }
   );
 }
 
-/** A file path as a group heading: the folder gives way first, the file name always shows. */
+/** A file path as a group heading: the folder gives way first, then the end of the name. */
 function FileHeading({ file }: { file: string | null }) {
-  const cut = file === null ? 0 : file.lastIndexOf("/") + 1;
   return (
     <h3
       title={file ?? undefined}
@@ -105,10 +105,11 @@ function FileHeading({ file }: { file: string | null }) {
       {file === null ? (
         <span className="min-w-0 flex-1 truncate text-muted">Not read from source</span>
       ) : (
-        <span className="flex min-w-0 flex-1 font-mono">
-          <span className="min-w-0 truncate text-faint">{file.slice(0, cut)}</span>
-          <span className="shrink-0 text-muted">{file.slice(cut)}</span>
-        </span>
+        <PathText
+          path={file}
+          className="flex-1 font-mono text-muted"
+          folderClassName="text-faint"
+        />
       )}
     </h3>
   );

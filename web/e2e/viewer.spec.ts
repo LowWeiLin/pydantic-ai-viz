@@ -1063,47 +1063,71 @@ test.describe("blueprint-only view", () => {
     await expect(list.getByRole("link")).toHaveCount(36);
   });
 
-  test("a deep source path keeps its file and line in the panel", async ({ page }, testInfo) => {
-    // A scan of a real repository gives paths like this one; the fixture's are short.
-    const deep = readFileSync(fixturePath("blueprint/newsroom"), "utf8").replaceAll(
-      '"file":"newsroom/',
-      '"file":"examples/pydantic_ai_examples/services/newsroom/',
-    );
-    const file = testInfo.outputPath("deep-paths.html");
+  test("a deep source path keeps its file and line in view", async ({ page }, testInfo) => {
+    // A scan of a real repository gives paths like these; the fixture's are short.
+    const deep = readFileSync(fixturePath("blueprint/newsroom"), "utf8")
+      .replaceAll(
+        '"file":"newsroom/reporters.py"',
+        '"file":"newsroom/reporters_and_the_overnight_wire_desk.py"',
+      )
+      .replaceAll('"file":"newsroom/', '"file":"examples/pydantic_ai_examples/services/newsroom/');
+    const events = deep
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
     await page.setViewportSize({ width: 1024, height: 720 });
     await page.goto(
-      `${writeEmbeddedExport(
-        deep
-          .split("\n")
-          .filter(Boolean)
-          .map((line) => JSON.parse(line)),
-        file,
-      )}#/agents/a2`,
+      `${writeEmbeddedExport(events, testInfo.outputPath("deep-paths.html"))}#/agents/a2`,
     );
     const inspector = page.getByRole("complementary", { name: "Blueprint details" });
     const panel = inspector.getByRole("region", { name: "Agent blueprint" });
-    await expect(inspector.locator("code[title]:has(> span)").first()).toBeVisible();
+    const locations = inspector.locator("code[title]:has(> span)");
+    await expect(locations.first()).toBeVisible();
     // Nothing in the panel is pushed past its right edge...
     expect(await panel.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
-    // ...and every location shows its file and line whole: only the folder is cut.
-    const tails = await inspector.locator("code[title]:has(> span)").evaluateAll((codes) =>
-      codes.map((code) => {
-        const tail = code.lastElementChild as HTMLElement;
-        return {
-          title: code.getAttribute("title"),
-          tail: tail.textContent,
-          whole: tail.scrollWidth <= tail.clientWidth,
-          inside:
-            tail.getBoundingClientRect().right <=
-            (code.closest("aside")?.getBoundingClientRect().right ?? 0),
-        };
-      }),
+    // ...the line is never cut, and the file name keeps its room while the folder has any.
+    const shown = await locations.evaluateAll((codes) =>
+      codes.map((code) => ({
+        title: code.getAttribute("title"),
+        parts: [...code.querySelectorAll(":scope > span > span")].map((part) => {
+          const box = part.getBoundingClientRect();
+          return {
+            text: part.textContent,
+            width: box.width,
+            cut: part.scrollWidth - part.clientWidth,
+            inside: box.right <= (code.closest("aside")?.getBoundingClientRect().right ?? 0),
+          };
+        }),
+      })),
     );
-    expect(tails.length).toBeGreaterThan(2);
-    for (const tail of tails) {
-      expect(tail.title).toContain(`/${tail.tail}`);
-      expect(tail).toMatchObject({ whole: true, inside: true });
+    expect(shown.length).toBeGreaterThan(2);
+    for (const { title, parts } of shown) {
+      const [folder, name, line] = parts;
+      expect(title).toBe(parts.map((part) => part.text).join(""));
+      expect(line).toMatchObject({ cut: 0, inside: true });
+      expect(name?.width).toBeGreaterThan(48);
+      // The name gives way only once less than a character of the folder is left.
+      if ((name?.cut ?? 0) > 1) expect(folder?.width).toBeLessThan(7);
     }
+    // In the header the file name is long enough to be cut itself; the line still shows.
+    const header = shown.find(({ title }) =>
+      title?.endsWith("reporters_and_the_overnight_wire_desk.py:31"),
+    );
+    expect(header?.parts[1]?.cut).toBeGreaterThan(1);
+    expect(header?.parts[2]).toMatchObject({ text: ":31", cut: 0, inside: true });
+
+    // The sidebar names the same file within its column, cut with an ellipsis, not clipped.
+    const heading = page
+      .getByRole("navigation", { name: /^Blueprints/ })
+      .getByRole("heading", { level: 3 })
+      .filter({ hasText: "overnight" });
+    expect(await heading.evaluate((h) => h.scrollWidth - h.clientWidth)).toBe(0);
+    expect(
+      await heading.evaluate((h) => {
+        const name = h.querySelector(":scope > span > span:last-child");
+        return name && getComputedStyle(name).textOverflow;
+      }),
+    ).toBe("ellipsis");
   });
 
   test("a file can be dropped on a blueprint-only view, and replaces it", async ({ page }) => {
