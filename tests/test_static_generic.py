@@ -350,3 +350,76 @@ def test_a_function_called_once_makes_one_agent_named_after_its_call(tmp_path: P
         """,
     )
     assert [(b.label, b.name, b.warnings) for b in found.agents] == [("only", "only", [])]
+
+
+def test_a_name_that_is_the_agent_class_in_some_cases_only_still_makes_agents_and_says_so(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        try:
+            from pydantic_ai import Agent
+        except ImportError:
+            Agent = None
+
+        if USE_OTHER:
+            from vendor import Agent as Other
+        else:
+            from pydantic_ai import Agent as Other
+
+        bot = Agent("test", name="bot")
+        other = Other("test", name="other")
+
+
+        @bot.tool_plain
+        def ping() -> str:
+            return "pong"
+        """,
+    )
+    assert [(b.label, [t.name for t in b.tools]) for b in found.agents] == [("bot", ["ping"]), ("other", [])]
+    assert agent(found, "bot").warnings == [
+        "`Agent` is Pydantic AI's `Agent` in some cases and not in others (it is given a value at lines 3 and 5); "
+        "which one it is is decided when the code runs"
+    ]
+    assert agent(found, "other").warnings == [
+        "`Other` is Pydantic AI's `Agent` in some cases and not in others (it is given a value at lines 8 and 10); "
+        "which one it is is decided when the code runs"
+    ]
+
+
+def test_a_registration_method_held_in_a_name_registers_on_its_agent(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+
+        boss = Agent("test", name="boss")
+        register = boss.tool_plain
+        instructions = boss.instructions
+
+
+        @register
+        def lookup(key: str) -> str:
+            return key
+
+
+        @register(name="find")
+        def search(query: str) -> str:
+            return query
+
+
+        @instructions
+        def today() -> str:
+            return "Today is Monday."
+
+
+        def fetch(url: str) -> str:
+            return url
+
+
+        register(fetch)
+        """,
+    )
+    boss = agent(found, "boss")
+    assert [t.name for t in boss.tools] == ["lookup", "find", "fetch"]
+    assert [(i.kind, i.function) for i in boss.instructions] == [("instructions", "module.today")]
+    assert boss.warnings == []

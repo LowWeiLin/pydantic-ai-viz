@@ -93,6 +93,8 @@ _MAX_WRAPPERS = 4
 _MAX_EXPANSION_DEPTH = 6
 _MAX_DEPS_PATH = 3
 """How long ``ctx.deps.a.b`` may be, ``deps`` included, for the agent it holds to be looked for."""
+_CONSTRUCTED = ("Agent", "FunctionToolset")
+"""The classes of Pydantic AI whose constructions the analysis starts from."""
 _MAX_INSTANCES = 16
 """Up to how many calls of a function that makes an agent are each shown as an agent of their own."""
 
@@ -237,15 +239,17 @@ class AgentExtractor:
 
     def find(self) -> None:
         """Locate the agents and toolsets, then attach what decorators and calls register on them."""
-        constructions: list[CallSite] = []
+        constructions: list[tuple[CallSite, str | None]] = []
         for module in self.project.modules:
             for site in sorted(module.calls, key=lambda item: (item.node.lineno, item.node.col_offset)):
                 callee = self.resolver.callee(site.node, site.scope)
-                if isinstance(callee, External):
-                    if callee.is_library("Agent"):
-                        constructions.append(site)
-                    elif callee.is_library("FunctionToolset"):
-                        self.toolsets[id(site.node)] = _ToolsetSite(site, location(module, site.node))
+                made, note = self._constructs(site, callee)
+                if made == "Agent":
+                    constructions.append((site, note))
+                elif made == "FunctionToolset":
+                    toolset = _ToolsetSite(site, location(module, site.node))
+                    toolset.notes.extend([note] if note else [])
+                    self.toolsets[id(site.node)] = toolset
                 elif isinstance(callee, Definition) and not isinstance(callee.node, ast.ClassDef):
                     self.calls_of.setdefault(id(callee.node), []).append(site)
             for body in module.class_scopes.values():
@@ -258,13 +262,40 @@ class AgentExtractor:
                     parent = self.resolver.resolve(written, body.parent, defined.lineno)
                     if isinstance(parent, External) and parent.is_library("FunctionToolset"):
                         self.toolsets[id(defined)] = _ToolsetSite(None, location(module, defined))
-        for site in constructions:
+        for site, note in constructions:
             for agent in self._made_by(site):
+                agent.notes.extend([note] if note else [])
                 self.agents[agent.key] = agent
                 self.instances.setdefault(id(site.node), []).append(agent)
         for module in self.project.modules:
             self._registrations(module)
         self._attach_handed_in()
+
+    def _constructs(self, site: CallSite, callee: Resolved) -> tuple[str | None, str | None]:
+        """Which of ``Agent`` and ``FunctionToolset`` a call makes, if either; and a warning if the run decides it.
+
+        ``try: from pydantic_ai import Agent`` with ``except ImportError: Agent = None``: the
+        name is Pydantic AI's class in one case and not in another. The call is read as the
+        class, said to be so in some cases only, whichever value stands closer above it.
+        """
+        made = callee.last if isinstance(callee, External) and callee.is_library(*_CONSTRUCTED) else None
+        function = site.node.func.value if isinstance(site.node.func, ast.Subscript) else site.node.func
+        if not isinstance(function, ast.Name):
+            return made, None
+        alternatives = self.resolver.alternatives(function.id, site.scope, site.node.lineno)
+        kinds = [
+            value.last if isinstance(value, External) and value.is_library(*_CONSTRUCTED) else None
+            for _, value in alternatives
+        ]
+        found = next((kind for kind in kinds if kind is not None), None)
+        if found is None or all(kind == found for kind in kinds):
+            return made, None
+        lines = [str(binding.line) for binding, _ in alternatives]
+        listed = ", ".join(lines[:-1]) + f" and {lines[-1]}"
+        return found, (
+            f"`{function.id}` is Pydantic AI's `{found}` in some cases and not in others (it is given a value at "
+            f"lines {listed}); which one it is is decided when the code runs"
+        )
 
     def _made_by(self, site: CallSite) -> list[_AgentSite]:
         """The agents an ``Agent(...)`` makes: one per call of the function it stands in, or one.
@@ -556,12 +587,19 @@ class AgentExtractor:
         method = call.func if call is not None else expression
         if decorated is None and call is None:
             return
+        held_in, held_at = scope, line  # where the receiver is evaluated: here, unless the method is held in a name
+        if isinstance(method, ast.Name):
+            # ``register = agent.tool_plain`` and then ``@register``: the method the name holds.
+            target = self.resolver.resolve(method, scope, line)
+            if self.resolver.reassigned() or not isinstance(target, Expression):
+                return
+            method, held_in, held_at = target.node, target.scope, target.line
         if not isinstance(method, ast.Attribute):
             return
-        receivers = self._receivers(method.value, scope, line)
+        receivers = self._receivers(method.value, held_in, held_at)
         if not receivers:
             if decorated is not None and not (call is not None and call.args):
-                self._on_a_parameter(method, call, scope, line, decorated)
+                self._on_a_parameter(method, call, held_in, held_at, decorated)
             return
         for receiver in receivers:
             self._register_on(receiver, method, call, scope, line, decorated)

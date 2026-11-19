@@ -70,6 +70,8 @@ class Binding:
     """``import``: the name taken from that module by ``from module import attr``."""
     level: int = 0
     """``import``: number of leading dots of a relative import."""
+    conditional: bool = False
+    """Whether the statement stands inside an ``if``, a loop, a ``try`` or a ``match`` of its function."""
 
 
 @dataclass(slots=True, eq=False)
@@ -304,6 +306,10 @@ class _Indexer:
         self._maybe = 0
         """How many conditional statements enclose the statement being visited, within its function."""
 
+    def _bind(self, scope: Scope, binding: Binding) -> None:
+        binding.conditional = self._maybe > 0
+        scope.bind(binding)
+
     def settle(self) -> None:
         """File every in-place change under the scope that binds the name it changes.
 
@@ -371,7 +377,7 @@ class _Indexer:
                 # ``import a.b`` binds ``a``; ``import a.b as c`` binds ``c`` to ``a.b``.
                 bound = alias.asname or alias.name.partition(".")[0]
                 target = alias.name if alias.asname else bound
-                scope.bind(Binding(bound, "import", line, scope, module=target))
+                self._bind(scope, Binding(bound, "import", line, scope, module=target))
         elif isinstance(node, ast.ImportFrom):
             self.module.imports.append((node.module or "", node.level))
             for alias in node.names:
@@ -380,7 +386,8 @@ class _Indexer:
                 if alias.name == "*":
                     self.module.star_imports.append((node.module or "", node.level))
                     continue
-                scope.bind(
+                self._bind(
+                    scope,
                     Binding(
                         alias.asname or alias.name,
                         "import",
@@ -389,7 +396,7 @@ class _Indexer:
                         module=node.module or "",
                         attr=alias.name,
                         level=node.level,
-                    )
+                    ),
                 )
         elif isinstance(node, ast.Assign):
             for target in node.targets:
@@ -406,7 +413,7 @@ class _Indexer:
             alias_name: object = getattr(node, "name", None)
             alias_value: object = getattr(node, "value", None)
             if isinstance(alias_name, ast.Name) and isinstance(alias_value, ast.expr):
-                scope.bind(Binding(alias_name.id, "assign", line, scope, node=alias_value))
+                self._bind(scope, Binding(alias_name.id, "assign", line, scope, node=alias_value))
         elif isinstance(node, ast.Return):
             if node.value is not None:
                 if scope.kind == "function":
@@ -433,7 +440,7 @@ class _Indexer:
                     self._mutation(target.value, "[]", None, scope, line)
         if isinstance(node, ast.For) and isinstance(node.target, ast.Name):
             # ``for tool in (a, b, c):`` the name stands for each item in turn, which a reader can follow.
-            scope.bind(Binding(node.target.id, "loop", line, scope, node=node.iter))
+            self._bind(scope, Binding(node.target.id, "loop", line, scope, node=node.iter))
         elif isinstance(node, ast.For | ast.AsyncFor | ast.AugAssign):
             self._opaque(node.target, scope, line)
         elif isinstance(node, ast.With | ast.AsyncWith):
@@ -451,19 +458,19 @@ class _Indexer:
                 self.statement(child, scope)
             elif isinstance(child, ast.ExceptHandler):
                 if child.name:
-                    scope.bind(Binding(child.name, "opaque", child.lineno, scope))
+                    self._bind(scope, Binding(child.name, "opaque", child.lineno, scope))
                 self._children(child, scope)
             elif isinstance(child, ast.match_case):
                 for pattern_node in ast.walk(child.pattern):
                     captured: str | None = getattr(pattern_node, "name", None) or getattr(pattern_node, "rest", None)
                     if isinstance(captured, str):
-                        scope.bind(Binding(captured, "opaque", getattr(pattern_node, "lineno", 1), scope))
+                        self._bind(scope, Binding(captured, "opaque", getattr(pattern_node, "lineno", 1), scope))
                 self._children(child, scope)
             else:
                 self._expression(child, scope)
 
     def _function(self, node: FunctionNode, scope: Scope) -> None:
-        scope.bind(Binding(node.name, "def", node.lineno, scope, node=node))
+        self._bind(scope, Binding(node.name, "def", node.lineno, scope, node=node))
         prefix = f"{scope.qualname}.<locals>." if scope.kind == "function" else f"{scope.qualname}."
         body = Scope(
             kind="function",
@@ -494,7 +501,7 @@ class _Indexer:
         self._maybe = outer
 
     def _class(self, node: ast.ClassDef, scope: Scope) -> None:
-        scope.bind(Binding(node.name, "class", node.lineno, scope, node=node))
+        self._bind(scope, Binding(node.name, "class", node.lineno, scope, node=node))
         prefix = f"{scope.qualname}.<locals>." if scope.kind == "function" else f"{scope.qualname}."
         body = Scope(
             kind="class",
@@ -510,7 +517,7 @@ class _Indexer:
 
     def _assign(self, target: ast.expr, value: ast.expr, scope: Scope, line: int) -> None:
         if isinstance(target, ast.Name):
-            scope.bind(Binding(target.id, "assign", line, scope, node=value))
+            self._bind(scope, Binding(target.id, "assign", line, scope, node=value))
         elif isinstance(target, ast.Attribute):
             owner = scope.enclosing_class()
             if owner is not None and isinstance(target.value, ast.Name) and target.value.id == scope.receiver:
@@ -544,7 +551,7 @@ class _Indexer:
         """Bind every name in an assignment target to "cannot be known without running the code"."""
         for node in ast.walk(target):
             if isinstance(node, ast.Name):
-                scope.bind(Binding(node.id, "opaque", line, scope))
+                self._bind(scope, Binding(node.id, "opaque", line, scope))
 
     def _expression(self, root: ast.AST, scope: Scope, *, bound_to: str | None = None, statement: bool = False) -> None:
         """Record the calls and walrus bindings anywhere inside one expression."""
@@ -568,7 +575,7 @@ class _Indexer:
                     CallSite(node, scope, bound_to if is_top else None, statement=statement and is_top)
                 )
             elif isinstance(node, ast.NamedExpr):
-                scope.bind(Binding(node.target.id, "opaque", node.lineno, scope))
+                self._bind(scope, Binding(node.target.id, "opaque", node.lineno, scope))
 
 
 def _is_static_method(node: FunctionNode) -> bool:

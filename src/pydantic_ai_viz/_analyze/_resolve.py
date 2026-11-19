@@ -332,6 +332,31 @@ class Resolver:
             current = current.parent
         return None
 
+    def alternatives(self, name: str, scope: Scope, line: int) -> list[tuple[Binding, Resolved]]:
+        """The places that may have given ``name`` the value it has at a use, with what each makes it.
+
+        That is the binding closest above the use and, while that one stands under a condition
+        (an ``if``, a ``try``) and so may not have run, the one above it, and so on. Empty when
+        that is one binding, which is then simply what the name is.
+        """
+        binding = self.lookup(name, scope, line)
+        if binding is None:
+            return []
+        bindings = binding.scope.bindings.get(name, [])
+        position = next((index for index, each in enumerate(bindings) if each is binding), 0)
+        start = position
+        while start > 0 and bindings[start].conditional and position - start < _MAX_LOOP_ITEMS:
+            start -= 1
+        if start == position:
+            return []
+        found: list[tuple[Binding, Resolved]] = []
+        for each in bindings[start : position + 1]:
+            value = self._bound(each)
+            if isinstance(value, Expression):
+                value = self.resolve(value.node, value.scope, value.line)
+            found.append((each, value))
+        return found
+
     def origin(self, name: str, scope: Scope, line: int) -> Binding | None:
         """The binding that gives ``name`` its value, followed through imports between the analysed files."""
         binding = self.lookup(name, scope, line)

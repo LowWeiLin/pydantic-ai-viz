@@ -83,7 +83,7 @@ the model is read as `anthropic:claude-opus-5`, with no warning.
 The evaluator stops where the value stops being written in your code:
 
 - **A function's parameters are unknown inside it**, except in a function that makes an agent. There, each call of the function is an agent of its own, read with that call's arguments and the defaults it leaves out; calls that end in the same blueprint, such as tests that each call `make_agent()`, are shown as one agent. A function with a decorator is read once, since the decorator may hand out one agent for every call. Elsewhere, `def make(name): return "openai:" + name` is not followed for a call `make("gpt-5.2")`; the model is the expression `make("gpt-5.2")`.
-- **A name assigned in more than one place**, for example in both branches of an `if`, is not taken for its last value. Which value it holds is decided when the code runs, so a model held by such a name is shown as the name, and tools collected that way come with a warning that some of them depend on a condition.
+- **A name assigned in more than one place**, for example in both branches of an `if`, is not taken for its last value. Which value it holds is decided when the code runs, so a model held by such a name is shown as the name, and tools collected that way come with a warning that some of them depend on a condition. A name that is Pydantic AI's `Agent` in one case only, as after `try: from pydantic_ai import Agent` and `except ImportError: Agent = None`, still makes agents, each with a warning that this is decided when the code runs.
 - **Anything from outside your code is never evaluated.** See the next section.
 
 ## What shows as decided at run time, and why
