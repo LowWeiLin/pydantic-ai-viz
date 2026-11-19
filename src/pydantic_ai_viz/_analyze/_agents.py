@@ -1129,6 +1129,14 @@ class _AgentBuilder:
                     inner = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
                     if inner is None:
                         inner = next((item.value for item in call.keywords if item.arg == "wrapped"), None)
+                elif self.extractor.toolsets.get(id(call)) is None:
+                    # Any other class called ``...Toolset`` that is handed a toolset wraps that toolset:
+                    # ``CodeExecutionToolset(toolset=tools)``, or a project's own subclass of a wrapper.
+                    name = self._toolset_class(callee)
+                    handed = self._handed_toolset(call, current) if name is not None else None
+                    if name is not None and handed is not None:
+                        wrappers.append(name)
+                        inner = handed
             if inner is None:
                 break
             current = self.resolver.resolve(inner, current.scope, current.line)
@@ -1181,6 +1189,40 @@ class _AgentBuilder:
         result.expression = text
         self.warn(f"a toolset is built by `{brief(text)}`; its tools are only known when the code runs")
         return [result]
+
+    def _toolset_class(self, callee: Resolved) -> str | None:
+        """The name of a class that is a toolset by its name, or by a base class from Pydantic AI."""
+        if isinstance(callee, External):
+            return callee.last if callee.last.endswith("Toolset") else None
+        if not isinstance(callee, Definition) or not isinstance(callee.node, ast.ClassDef):
+            return None
+        if callee.node.name.endswith("Toolset"):
+            return callee.node.name
+        for base in callee.node.bases[:_MAX_WRAPPERS]:
+            written = base.value if isinstance(base, ast.Subscript) else base
+            parent = self.resolver.resolve(written, callee.scope, callee.node.lineno)
+            if isinstance(parent, External) and parent.is_library_class() and parent.last.endswith("Toolset"):
+                return callee.node.name
+        return None
+
+    def _handed_toolset(self, call: ast.Call, context: Expression) -> ast.expr | None:
+        """The argument of a call that is a ``FunctionToolset`` made in the analysed source, if one is."""
+        candidates: list[ast.expr] = [item.value for item in call.keywords if item.arg in ("wrapped", "toolset")]
+        if call.args and not isinstance(call.args[0], ast.Starred):
+            candidates.append(call.args[0])
+        for candidate in candidates:
+            # Looked through its own wrappers too: ``Outer(toolset=inner.prefixed("x"))``.
+            target = self.resolver.resolve(candidate, context.scope, context.line)
+            for _ in range(_MAX_WRAPPERS):
+                if not isinstance(target, Expression) or not isinstance(target.node, ast.Call):
+                    break
+                if id(target.node) in self.extractor.toolsets:
+                    return candidate
+                function = target.node.func
+                if not (isinstance(function, ast.Attribute) and function.attr in _WRAPPER_METHODS):
+                    break
+                target = self.resolver.resolve(function.value, target.scope, target.line)
+        return None
 
     def _prefix(self, call: ast.Call, context: Expression, positional: int = 0) -> str:
         """The literal prefix of a ``prefixed(...)`` wrapper, or ``""`` when it is computed."""

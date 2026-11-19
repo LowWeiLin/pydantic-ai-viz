@@ -439,3 +439,55 @@ def test_a_tool_whose_function_cannot_be_traced_is_said_to_be_there(tmp_path: Pa
         f"a tool is added by `unknown_toolset.add_tool(make_tool())`; {unread}",
         "a tool is built by `make_tool()`; it cannot be described without running the code",
     ]
+
+
+# ------------------------------------------------- toolsets that wrap toolsets
+
+
+def test_a_toolset_class_that_is_handed_a_toolset_is_a_wrapper_around_it(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
+        from pydantic_ai.toolsets.code_execution import CodeExecutionToolset
+        from somewhere import TheirToolset
+
+        tools = FunctionToolset()
+
+
+        @tools.tool_plain
+        def add(a: int, b: int) -> int:
+            return a + b
+
+
+        class Logged(WrapperToolset):
+            pass
+
+
+        class Registry:
+            def __init__(self, toolset): ...
+
+
+        by_keyword = Agent("test", toolsets=[CodeExecutionToolset(toolset=tools)])
+        own_class = Agent("test", toolsets=[Logged(tools.prefixed("math"))])
+        elsewhere = Agent("test", toolsets=[TheirToolset(wrapped=tools, limit=3)])
+        not_a_toolset = Agent("test", toolsets=[Registry(toolset=tools)])
+        nothing_known_inside = Agent("test", toolsets=[CodeExecutionToolset(toolset=make_tools())])
+        """,
+    )
+
+    def toolsets(label: str) -> list[tuple[str, str, list[str], bool]]:
+        return [(t.label, t.kind, t.wrappers, t.opaque) for t in agent(found, label).toolsets]
+
+    assert toolsets("by_keyword") == [("FunctionToolset", "function", ["CodeExecutionToolset"], False)]
+    assert [t.name for t in agent(found, "by_keyword").tools] == ["add"]
+    assert toolsets("own_class") == [("FunctionToolset", "function", ["Logged", "PrefixedToolset"], False)]
+    assert [t.name for t in agent(found, "own_class").tools] == ["math_add"]
+    assert toolsets("elsewhere") == [("FunctionToolset", "function", ["TheirToolset"], False)]
+    for label in ("by_keyword", "own_class", "elsewhere"):
+        assert agent(found, label).warnings == []
+    # A class that is no toolset, and a toolset whose inside is computed, stay what they are: opaque.
+    assert toolsets("not_a_toolset") == [("Registry", "other", [], True)]
+    assert toolsets("nothing_known_inside") == [("CodeExecutionToolset", "other", [], True)]
+    assert agent(found, "not_a_toolset").tools == agent(found, "nothing_known_inside").tools == []
