@@ -472,3 +472,66 @@ def test_an_agent_passed_to_a_call_is_delegated_to_only_where_the_call_runs_it(t
         ("through_a_helper", "a2"),
         ("through_two", "a2"),
     ]
+
+
+def test_a_decorator_applied_before_the_tool_is_registered_is_named_in_a_warning(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        import functools
+        from pydantic_ai import Agent
+        from somewhere import cached
+
+        boss = Agent("test", name="boss")
+        other = Agent("test", name="other")
+
+
+        def logged(function):
+            @functools.wraps(function)
+            def wrapper(*args, **kwargs):
+                return function(*args, **kwargs)
+
+            return wrapper
+
+
+        def as_text(function):
+            def wrapper(value):
+                return str(function(value))
+
+            return wrapper
+
+
+        @boss.tool_plain
+        @cached
+        def lookup(key: str) -> str:
+            return key
+
+
+        @boss.tool_plain
+        @as_text
+        def double(value: int) -> int:
+            return value * 2
+
+
+        @boss.tool_plain
+        @logged
+        def kept(value: int) -> int:
+            return value
+
+
+        @boss.tool_plain
+        @other.tool_plain
+        def shared(value: int) -> int:
+            return value
+        """,
+    )
+    assert agent(found, "boss").warnings == [
+        "the tool `lookup` is registered after `@cached` is applied to it; its parameters are read from the "
+        "`def`, which `@cached` may change",
+        "the tool `double` is registered after `@as_text` is applied to it; its parameters are read from the "
+        "`def`, which `@as_text` may change",
+        # Not read from the decorator's code either way: this one happens to keep the signature.
+        "the tool `kept` is registered after `@logged` is applied to it; its parameters are read from the "
+        "`def`, which `@logged` may change",
+    ]
+    assert agent(found, "other").warnings == []

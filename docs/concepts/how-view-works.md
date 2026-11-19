@@ -109,6 +109,7 @@ Other things that stay open:
 - **Pydantic AI's defaults.** A setting the source does not mention stays empty. The analyser does not fill in what the installed Pydantic AI would use, because the code may be written for another version.
 - **Tools of MCP servers and dynamic toolsets.** They exist only once the server or the code is running. The toolset is one placeholder node, and its tools appear once a run uses them.
 - **Types from installed packages.** An output type defined in another package has no schema; its name is shown.
+- **A tool wrapped by another decorator first.** Under `@agent.tool_plain`, a decorator such as `@cached` hands Pydantic AI whatever it returns. The parameters are read from the `def`, with a warning that names the decorator.
 - **A model configuration that is computed.** A pydantic model's `model_config` (or class keywords such as `extra="forbid"`) is applied to its schema when it is written out: `title`, `extra`, `use_attribute_docstrings` and `json_schema_extra`. A configuration built by a call, or one that sets something like `alias_generator`, is named in a warning, since the schema it gives is only known when the code runs.
 - **Graph edges added in a loop or by a helper function.** The steps are listed, the edges that are written out are drawn, and a warning names the call that could not be followed.
 - **Agents that the source does not construct**: an agent returned by a library function, an `Agent` subclass, `Agent.from_spec(...)`. They are not found. Use [`--import`](#when-to-use-import) for these.

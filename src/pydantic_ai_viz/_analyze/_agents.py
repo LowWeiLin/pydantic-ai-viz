@@ -630,7 +630,7 @@ class AgentExtractor:
                 self._on_a_parameter(method, call, held_in, held_at, decorated)
             return
         for receiver in receivers:
-            self._register_on(receiver, method, call, scope, line, decorated)
+            self._register_on(receiver, method, call, scope, line, decorated, expression)
 
     def _register_on(
         self,
@@ -640,7 +640,9 @@ class AgentExtractor:
         scope: Scope,
         line: int,
         decorated: Definition | None,
+        written: ast.expr,
     ) -> None:
+        """Register on one agent or toolset; ``written`` is the decorator or the call as the source has it."""
         keywords = {} if call is None else {item.arg: item.value for item in call.keywords if item.arg is not None}
         function = decorated
         if function is None and call is not None:
@@ -676,6 +678,8 @@ class AgentExtractor:
             self._overrides(spec, keywords, scope, line)
             receiver.tools.append(spec)
             self._note_subclass(receiver, scope, f"the tool `{spec.name}`")
+            if decorated is not None:
+                self._note_applied_first(receiver, spec.name, decorated, written)
         elif isinstance(receiver, _AgentSite):
             if name == "instructions" or name == "system_prompt":
                 what = "instructions" if name == "instructions" else "system prompt"
@@ -691,6 +695,31 @@ class AgentExtractor:
                 (receiver.instructions if name == "instructions" else receiver.system_prompts).append(prompt)
             elif name == "toolset":
                 receiver.toolset_functions.append(function)
+
+    def _note_applied_first(
+        self, receiver: _AgentSite | _ToolsetSite, name: str, decorated: Definition, registration: ast.expr
+    ) -> None:
+        """Say so when a decorator below the registration has already replaced the function it registers.
+
+        Its parameters are then those of what that decorator returns, which the ``def`` may not
+        show; whether they are is not read from the decorator's code. A decorator that is itself a
+        registration returns the function as it was.
+        """
+        node = decorated.node
+        assert not isinstance(node, ast.ClassDef)
+        below = next((index for index, item in enumerate(node.decorator_list) if item is registration), None)
+        if below is None:
+            return
+        for decorator in node.decorator_list[below + 1 :]:
+            method = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if isinstance(method, ast.Attribute) and self._receivers(method.value, decorated.scope, node.lineno):
+                continue
+            text = decorated.module.text(decorator)
+            _compat.add_warning(
+                receiver.notes,
+                f"the tool `{name}` is registered after `@{text}` is applied to it; its parameters are read "
+                f"from the `def`, which `@{text}` may change",
+            )
 
     @staticmethod
     def _note_subclass(receiver: _AgentSite | _ToolsetSite, scope: Scope, what: str) -> None:
