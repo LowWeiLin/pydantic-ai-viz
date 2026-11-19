@@ -20,6 +20,33 @@
   --md-typeset-a-color: #a99cf9;
 }
 
+/* The hosted demo button on the home page: filled, in a colour of its own, so it stands out. */
+.md-typeset .md-button--demo {
+  background-color: #0e8a66;
+  border-color: #0e8a66;
+  color: #ffffff;
+}
+
+.md-typeset .md-button--demo:focus,
+.md-typeset .md-button--demo:hover {
+  background-color: #0b6f52;
+  border-color: #0b6f52;
+  color: #ffffff;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .md-button--demo {
+  background-color: #34d399;
+  border-color: #34d399;
+  color: #0b1f17;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .md-button--demo:focus,
+[data-md-color-scheme="slate"] .md-typeset .md-button--demo:hover {
+  background-color: #6ee7b7;
+  border-color: #6ee7b7;
+  color: #0b1f17;
+}
+
 /* Screenshots: a hairline border so light images do not bleed into the page. */
 .md-typeset img.screenshot,
 .md-typeset figure.screenshot img {
