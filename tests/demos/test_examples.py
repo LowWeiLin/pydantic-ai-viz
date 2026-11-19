@@ -29,7 +29,7 @@ def test_example_is_short_and_guarded(name: str) -> None:
     assert len(source.splitlines()) < 30
     tree = ast.parse(source)
     assert ast.get_docstring(tree)
-    # Everything with side effects sits under `if __name__ == "__main__":`, so `view FILE` is safe.
+    # Everything with side effects sits under `if __name__ == "__main__":`, so `view --import FILE` runs none of it.
     last = tree.body[-1]
     assert isinstance(last, ast.If)
     assert ast.unparse(last.test) == "__name__ == '__main__'"
@@ -49,7 +49,7 @@ def test_only_the_logfire_example_needs_an_extra_package() -> None:
 
 @pytest.mark.parametrize("name", OFFLINE)
 async def test_example_target_runs_offline(name: str) -> None:
-    """Import each example the way `pydantic-ai-viz view FILE` does and exercise what it defines."""
+    """Import each example the way `pydantic-ai-viz view --import FILE` does and exercise what it defines."""
     namespace = runpy.run_path(str(EXAMPLES / name), run_name="__pydantic_ai_viz__")
     agents = [value for value in namespace.values() if isinstance(value, Agent)]
     graphs = [value for value in namespace.values() if isinstance(value, Graph)]

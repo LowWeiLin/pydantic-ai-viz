@@ -12,7 +12,7 @@ research - A planner fans out to three parallel searchers, then a writer drafts 
 pipeline - A step graph writes, reviews and publishes a post, looping back once for a rewrite.
 ```
 
-You can also watch all three in the [hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/), which replays recordings of these same scenarios in your browser.
+You can also watch all three in the [hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/), which replays recordings of these same scenarios in your browser. The hosted demo also shows [the demos' source code as `view` reads it](https://lowweilin.github.io/pydantic-ai-viz/demo/?src=recordings/source.pviz.jsonl): seven agents and a graph in three files, drawn without running any of them.
 
 ## support { #support }
 

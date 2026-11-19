@@ -25,8 +25,10 @@ uv run python examples/quickstart.py
   contain the prompts and tool results of the run, so treat them like logs.
 - `with_logfire.py` needs an extra package: `uv run --with logfire python examples/with_logfire.py`.
   Without a Logfire token nothing is sent anywhere.
-- Every script guards its run with `if __name__ == "__main__":`, so you can also look at the
-  agent or graph without running it: `uv run pydantic-ai-viz view examples/quickstart.py`.
+- To look at the agents and graphs of all of them without running any:
+  `uv run pydantic-ai-viz view examples`. `view` reads the source and runs none of it. Every
+  script also guards its run with `if __name__ == "__main__":`, so `view --import` on one of
+  them only defines its agent or graph.
 - Token streaming (`stream=True`) is left off here because `TestModel` output is not interesting
   to watch token by token. The bundled demos show it: `uv run pydantic-ai-viz demo`.
 
