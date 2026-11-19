@@ -197,6 +197,7 @@ def _read(places: list[Place], limits: Limits) -> Analysis:
         graphs.find()
         agent_blueprints = agents.blueprints()
         graph_blueprints = graphs.blueprints()
+        notices.extend(agents.notices())
     except RecursionError:
         # The parser accepted the files, yet something in them nests deeper than this analysis can follow.
         notices.append("the analysis was abandoned: the source is nested too deeply")

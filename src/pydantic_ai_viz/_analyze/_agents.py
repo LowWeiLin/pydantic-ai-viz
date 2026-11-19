@@ -84,6 +84,9 @@ _TOOL_FACTORIES: dict[str, str] = {
 """Functions in ``pydantic_ai.common_tools`` that return a ready-made ``Tool`` -> the name that tool has."""
 _ENVIRONMENT_READERS = frozenset({"os.getenv", "os.environ.get"})
 _MAX_LIST_ITEMS = 500
+_MAX_HANDED_ON = 4
+"""Through how many functions an agent is followed that each hands it on to the next as an argument."""
+_TOOL_RECEIVERS = ("Agent", "FunctionToolset", "AbstractToolset")
 _MAX_WRAPPERS = 4
 _MAX_EXPANSION_DEPTH = 6
 
@@ -122,6 +125,17 @@ class _ToolsetSite:
     tools: list[_ToolSpec] = field(default_factory=list[_ToolSpec])
     notes: list[str] = field(default_factory=list[str])
     """Warnings about registrations that could not be read, for every agent that uses the toolset."""
+
+
+@dataclass(slots=True, eq=False)
+class _HandedIn:
+    """A tool registered on a parameter: ``def register(agent): @agent.tool ...``."""
+
+    function: Scope
+    """The body of the function whose parameter the tool is registered on."""
+    parameter: str
+    spec: _ToolSpec
+    depth: int = 0
 
 
 @dataclass(slots=True, eq=False)
@@ -171,6 +185,12 @@ class AgentExtractor:
         """Set by ``items`` when an entry it returned depends on a condition."""
         self.added_unread: list[str] = []
         """Filled by ``items``: statements that add entries to a list it returned which it could not read."""
+        self.calls_of: dict[int, list[CallSite]] = {}
+        """``id`` of a function definition -> the calls of that function."""
+        self.handed_in: list[_HandedIn] = []
+        """Tools registered on a parameter, until the calls that pass an agent for it are looked at."""
+        self.unattached: list[_ToolSpec] = []
+        """Tools registered on a parameter for which no call passes an agent that the source shows."""
 
     # -------------------------------------------------------------- driver
 
@@ -184,6 +204,8 @@ class AgentExtractor:
                         self.agents[id(site.node)] = _AgentSite(site)
                     elif callee.is_library("FunctionToolset"):
                         self.toolsets[id(site.node)] = _ToolsetSite(site)
+                elif isinstance(callee, Definition) and not isinstance(callee.node, ast.ClassDef):
+                    self.calls_of.setdefault(id(callee.node), []).append(site)
             for body in module.class_scopes.values():
                 # ``class SkillsToolset(FunctionToolset)``: its methods register tools with ``@self.tool``.
                 defined = body.node
@@ -196,6 +218,24 @@ class AgentExtractor:
                         self.toolsets[id(defined)] = _ToolsetSite(None)
         for module in self.project.modules:
             self._registrations(module)
+        self._attach_handed_in()
+
+    def notices(self) -> list[str]:
+        """What was found that belongs to no agent the source shows."""
+        if not self.unattached:
+            return []
+        first = self.unattached[0]
+        where = f"`{first.name}` at {first.where.file}:{first.where.line}"
+        handed = "registered on an agent or toolset that a function is handed as an argument"
+        if len(self.unattached) == 1:
+            return [
+                f"1 tool is {handed} ({where}); which agent gets it is decided when the code runs, "
+                "so it is shown on none"
+            ]
+        return [
+            f"{len(self.unattached)} tools are {handed} (for example {where}); which agent gets them is decided "
+            "when the code runs, so they are shown on none"
+        ]
 
     def blueprints(self) -> list[AgentBlueprint]:
         ids = {key: f"a{index}" for index, key in enumerate(self.agents, start=1)}
@@ -282,6 +322,8 @@ class AgentExtractor:
             return
         receiver = self._receiver(method.value, scope, line)
         if receiver is None:
+            if decorated is not None and not (call is not None and call.args):
+                self._on_a_parameter(method, call, scope, line, decorated)
             return
         keywords = {} if call is None else {item.arg: item.value for item in call.keywords if item.arg is not None}
         function = decorated
@@ -330,6 +372,103 @@ class AgentExtractor:
                 (receiver.instructions if name == "instructions" else receiver.system_prompts).append(prompt)
             elif name == "toolset":
                 receiver.toolset_functions.append(function)
+
+    def _on_a_parameter(
+        self, method: ast.Attribute, call: ast.Call | None, scope: Scope, line: int, function: Definition
+    ) -> None:
+        """Note ``@agent.tool`` where ``agent`` is a parameter: whose tool it is depends on who calls."""
+        if method.attr not in ("tool", "tool_plain") or not isinstance(method.value, ast.Name):
+            return
+        if isinstance(function.node, ast.ClassDef):
+            return
+        binding = self.resolver.lookup(method.value.id, scope, line)
+        if binding is None or binding.kind != "opaque" or binding.scope.kind != "function":
+            return
+        owner = binding.scope.node
+        if not isinstance(owner, ast.FunctionDef | ast.AsyncFunctionDef) or binding.line != owner.lineno:
+            return
+        parameter = next(
+            (
+                item
+                for item in (*owner.args.posonlyargs, *owner.args.args, *owner.args.kwonlyargs)
+                if item.arg == binding.name
+            ),
+            None,
+        )
+        if parameter is None:
+            return
+        # Other libraries have a ``.tool`` decorator too. This is Pydantic AI's when the parameter is
+        # annotated as an agent or a toolset, when the function takes a ``RunContext``, or when the
+        # decorator is ``tool_plain``, which only Pydantic AI has.
+        takes_ctx = method.attr == "tool"
+        if takes_ctx and not self._takes_ctx(function) and not self._is_tool_receiver(parameter, binding.scope):
+            return
+        spec = _ToolSpec(function.node.name, function, location(function.module, function.node), takes_ctx=takes_ctx)
+        keywords = {} if call is None else {item.arg: item.value for item in call.keywords if item.arg is not None}
+        self._overrides(spec, keywords, scope, line)
+        self.handed_in.append(_HandedIn(binding.scope, binding.name, spec))
+
+    def _is_tool_receiver(self, parameter: ast.arg, body: Scope) -> bool:
+        """Whether a parameter is annotated as an ``Agent`` or a toolset of Pydantic AI."""
+        annotation = parameter.annotation
+        if annotation is None:
+            return False
+        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+            return annotation.value.replace(" ", "").split("[")[0].rpartition(".")[2] in _TOOL_RECEIVERS
+        if isinstance(annotation, ast.Subscript):
+            annotation = annotation.value
+        target = self.resolver.resolve(annotation, body.parent or body, annotation.lineno)
+        return isinstance(target, External) and target.is_library(*_TOOL_RECEIVERS)
+
+    def _attach_handed_in(self) -> None:
+        """Give each tool registered on a parameter to the agents that calls of the function pass for it."""
+        pending = list(self.handed_in)
+        for index, handed in enumerate(pending):
+            if index > _MAX_LIST_ITEMS * _MAX_HANDED_ON:
+                break
+            owner = handed.function.node
+            assert isinstance(owner, ast.FunctionDef | ast.AsyncFunctionDef)
+            attached = False
+            for site in self.calls_of.get(id(owner), ()):
+                argument = self._argument_for(site.node, handed.function, handed.parameter)
+                if argument is None:
+                    continue
+                receiver = self._receiver(argument, site.scope, site.node.lineno)
+                if receiver is not None:
+                    receiver.tools.append(handed.spec)
+                    attached = True
+                elif isinstance(argument, ast.Name) and handed.depth < _MAX_HANDED_ON:
+                    # The caller was handed the agent itself: ``def register_all(agent): register_one(agent)``.
+                    outer = self.resolver.lookup(argument.id, site.scope, site.node.lineno)
+                    if outer is not None and outer.kind == "opaque" and outer.scope.kind == "function":
+                        passed_on = _HandedIn(outer.scope, outer.name, handed.spec, handed.depth + 1)
+                        if self.calls_of.get(id(outer.scope.node)):
+                            pending.append(passed_on)
+                            attached = True  # decided by the calls of the outer function
+            if not attached and handed.spec not in self.unattached:
+                self.unattached.append(handed.spec)
+        # A tool that one caller placed and another could not is placed: it is shown.
+        placed = {id(spec) for site in (*self.agents.values(), *self.toolsets.values()) for spec in site.tools}
+        self.unattached = [spec for spec in self.unattached if id(spec) not in placed]
+
+    def _argument_for(self, call: ast.Call, function: Scope, parameter: str) -> ast.expr | None:
+        """The argument a call passes for a parameter of the function it calls."""
+        for keyword in call.keywords:
+            if keyword.arg == parameter:
+                return keyword.value
+        node = function.node
+        assert isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        positional = [item.arg for item in (*node.args.posonlyargs, *node.args.args)]
+        if parameter not in positional:
+            return None
+        index = positional.index(parameter) - (1 if function.receiver is not None else 0)
+        if (
+            index < 0
+            or index >= len(call.args)
+            or any(isinstance(item, ast.Starred) for item in call.args[: index + 1])
+        ):
+            return None
+        return call.args[index]
 
     @staticmethod
     def _unread(receiver: _AgentSite | _ToolsetSite, call: ast.Call, scope: Scope) -> None:

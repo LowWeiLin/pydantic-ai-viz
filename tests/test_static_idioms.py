@@ -597,3 +597,112 @@ def test_a_toolset_or_capability_held_in_a_variable_is_named_by_what_it_was_assi
         "code runs",
         "a capability is built by `make_workspace() if shared else None`; its type is only known when the code runs",
     ]
+
+
+# ------------------------------------- tools registered by a function that is handed the agent
+
+
+HANDED = """
+from mcp.server.fastmcp import FastMCP
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.toolsets import FunctionToolset
+
+
+def register_files(agent):
+    @agent.tool
+    def list_files(ctx: RunContext, directory: str = ".") -> list[str]:
+        \"\"\"List files.\"\"\"
+        return []
+
+    @agent.tool_plain(retries=2)
+    def read_file(path: str) -> str:
+        return path
+
+
+def register_search(agent: Agent, flavour: str = "web"):
+    @agent.tool
+    def search(ctx, query: str) -> str:
+        return query
+
+
+def register_everything(target):
+    register_files(target)
+    register_search(agent=target)
+
+
+def fill(toolset: FunctionToolset):
+    @toolset.tool_plain
+    def in_toolset(x: int) -> int:
+        return x
+
+
+def register_on_server(server):
+    @server.tool
+    def not_a_pydantic_ai_tool(x: int) -> int:
+        return x
+
+
+coder = Agent("test", name="coder")
+register_everything(coder)
+reader = Agent("test", name="reader")
+register_files(reader)
+tools = FunctionToolset()
+fill(tools)
+with_toolset = Agent("test", name="with_toolset", toolsets=[tools])
+register_on_server(FastMCP("files"))
+"""
+
+
+def test_a_tool_registered_by_a_function_goes_to_the_agent_the_function_is_called_with(tmp_path: Path) -> None:
+    found = analyze_source(tmp_path, HANDED)
+
+    def tools(label: str) -> list[tuple[str, bool | None, int | None]]:
+        return [(item.name, item.takes_ctx, item.max_retries) for item in agent(found, label).tools]
+
+    # Through one function that hands the agent on to two others, by position and by keyword.
+    assert tools("coder") == [("list_files", True, None), ("read_file", False, 2), ("search", True, None)]
+    assert tools("reader") == [("list_files", True, None), ("read_file", False, 2)]
+    assert tools("with_toolset") == [("in_toolset", False, None)]
+    listed = tool(agent(found, "coder"), "list_files")
+    assert (listed.description, listed.function) == ("List files.", "module.register_files.<locals>.list_files")
+    assert list(properties(listed.parameters_schema)) == ["directory"]
+    assert [blueprint.warnings for blueprint in found.agents] == [[], [], []]
+    # ``@server.tool`` on something that is no agent of Pydantic AI is not counted as a tool that went missing.
+    assert found.notices == []
+
+
+def test_tools_registered_on_an_agent_that_no_call_shows_are_counted_in_a_notice(tmp_path: Path) -> None:
+    source = (
+        HANDED
+        + """
+
+def register_orphan(agent):
+    @agent.tool_plain
+    def orphan(x: int) -> int:
+        return x
+
+
+REGISTRY = {"orphan": register_orphan}
+REGISTRY["orphan"](coder)
+"""
+    )
+    found = analyze_source(tmp_path, source)
+    assert "orphan" not in [item.name for blueprint in found.agents for item in blueprint.tools]
+    line = source.splitlines().index("    def orphan(x: int) -> int:") + 1
+    assert found.notices == [
+        "1 tool is registered on an agent or toolset that a function is handed as an argument (`orphan` at "
+        f"module.py:{line}); which agent gets it is decided when the code runs, so it is shown on none"
+    ]
+
+    # Without any call at all, every such tool is unplaced: the count says how much there is that is not shown.
+    uncalled = "\n".join(line for line in HANDED.splitlines() if not line.startswith("register_"))
+    uncalled = uncalled.replace("    register_files(target)\n    register_search(agent=target)", "    pass")
+    uncalled = uncalled.replace("fill(tools)", "")
+    found = analyze_source(tmp_path, uncalled)
+    assert [blueprint.tools for blueprint in found.agents] == [[], [], []]
+    line = next(number for number, text in enumerate(uncalled.splitlines(), 1) if "def list_files(" in text)
+    assert found.notices == [
+        "4 tools are registered on an agent or toolset that a function is handed as an argument (for example "
+        f"`list_files` at module.py:{line}); which agent gets them is decided when the code runs, so they are "
+        "shown on none"
+    ]
