@@ -866,7 +866,7 @@ describe("a blueprint-only session (pydantic-ai-viz view)", () => {
     expect(screen.getByText("The server behind this page has stopped.")).toBeInTheDocument();
     for (const words of LIVE_WORDS) expect(screen.queryByText(words)).toBeNull();
     expect(within(bar).getByText("Blueprint")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Agent editor" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Agent editor, 2 warnings" })).toBeInTheDocument();
   });
 
   test("exported: the same view from a file, with nothing to export", () => {
@@ -900,6 +900,15 @@ describe("a blueprint-only session (pydantic-ai-viz view)", () => {
       "No runs in this export.",
     );
     expect(screen.queryByText("Waiting for a run")).toBeNull();
+  });
+
+  test("an agent card shows how many warnings its blueprint has", () => {
+    window.location.hash = "#/agents/a1";
+    render(<App plan={embedded(NEWSROOM)} />);
+    const card = screen.getByRole("button", { name: "Agent editor, 2 warnings" });
+    const badge = card.parentElement?.querySelector('[title="2 warnings"]');
+    expect(badge).toHaveTextContent(/^2$/);
+    expect(badge?.querySelector("svg")).not.toBeNull();
   });
 
   test("the sidebar groups blueprints by the file they are defined in", () => {

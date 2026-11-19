@@ -134,6 +134,7 @@ export function AgentNode({ data }: NodeProps<Node<AgentNodeData, "agent">>) {
   const bp = agent.blueprint;
   const requesting = agent.model.state === "running";
   const toolCount = bp.tools.length;
+  const warnings = bp.warnings.length;
   const computed = bp.model !== null && modelIsComputed(bp.model);
   const modelChip = bp.model ? (
     // An expression is not a model name: it is set as code, with a dashed edge.
@@ -173,7 +174,7 @@ export function AgentNode({ data }: NodeProps<Node<AgentNodeData, "agent">>) {
         style={{ left: DELEGATION_INLET }}
       />
       <Cover
-        label={`Agent ${bp.label}${activityPhrase(agent.run, overlay)}`}
+        label={`Agent ${bp.label}${warnings > 0 ? `, ${plural(warnings, "warning")}` : ""}${activityPhrase(agent.run, overlay)}`}
         target={{ kind: "agent", agentId: bp.id }}
       />
       <div className="pointer-events-none relative flex h-full flex-col gap-2 p-3">
@@ -182,6 +183,16 @@ export function AgentNode({ data }: NodeProps<Node<AgentNodeData, "agent">>) {
             <Icon name="agent" size={14} />
           </span>
           <span className="min-w-0 flex-1 truncate font-semibold text-em text-fg">{bp.label}</span>
+          {warnings > 0 && (
+            // What could not be read is listed in the inspector; the card says only that there is some.
+            <span
+              title={plural(warnings, "warning")}
+              className="flex shrink-0 items-center gap-0.5 text-faint text-meta tabular-nums"
+            >
+              <Icon name="warning" size={12} />
+              {warnings}
+            </span>
+          )}
           {overlay && agent.run.state !== "idle" && (
             <StatusDot status={agent.run.state} showLabel className="shrink-0" />
           )}
