@@ -9,6 +9,7 @@ edit_uri: edit/main/docs/
 copyright: >-
   pydantic-ai-viz is an unofficial community project, not affiliated with or
   endorsed by Pydantic. Released under the MIT licence.
+  <a href="#__consent">Change cookie settings</a>
 
 theme:
   name: material
@@ -55,6 +56,14 @@ extra_css:
   - stylesheets/extra.css
 
 extra:
+  # Google Analytics loads only after a visitor accepts the consent banner.
+  analytics:
+    provider: google
+    property: G-NM14TY4CRG
+  consent:
+    title: Cookie consent
+    description: >-
+      We use cookies to see how the docs are used, so we can improve them.
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/LowWeiLin/pydantic-ai-viz
