@@ -337,6 +337,7 @@ const tool = (name, toolset, description, parameters, extra = {}) => ({
   function: null,
   origin: "object",
   location: null,
+  library_version: null,
   ...extra,
 });
 
@@ -377,9 +378,23 @@ const BUILTIN_CAPABILITIES = [
 /** Adds the fields that only static analysis fills in, so the blueprints below list what matters. */
 const unlocated = (item) => ({ ...item, expression: null, location: null });
 
+/** A model with every field, keys in the order the backend writes them. */
+const fullModel = (model) => {
+  const full = { expression: null, ...model };
+  return { ...full, model_class: full.model_class ?? null, env: full.env ?? null };
+};
+
 const complete = (blueprint) => ({
   ...blueprint,
-  model: blueprint.model && { ...blueprint.model, expression: null },
+  model: blueprint.model && {
+    id: blueprint.model.id,
+    name: blueprint.model.name,
+    provider: blueprint.model.provider,
+    offline: blueprint.model.offline,
+    expression: null,
+    model_class: blueprint.model.model_class ?? null,
+    env: blueprint.model.env ?? null,
+  },
   instructions: blueprint.instructions.map(unlocated),
   toolsets: blueprint.toolsets.map(unlocated),
   output: { ...blueprint.output, location: null },
@@ -416,11 +431,41 @@ const agent = (fields) =>
     ...fields,
   });
 
+/** An agent read from source: what `agent` blanks, and only what static analysis can say. */
+const codeAgent = (fields) => {
+  const built = agent({ capabilities: [], ...fields });
+  return {
+    ...built,
+    source: "code",
+    // `agent` blanks what only static analysis fills in; here that is the point.
+    model: fullModel(fields.model),
+    instructions: fields.instructions ?? [],
+    toolsets: (fields.toolsets ?? []).map((toolset) => ({
+      expression: null,
+      location: null,
+      ...toolset,
+    })),
+    output: fields.output ?? built.output,
+    // Static analysis reads what the code sets and never fills in a default.
+    settings: {
+      model_settings: null,
+      end_strategy: null,
+      tool_retries: null,
+      output_retries: null,
+      tool_timeout: null,
+      expressions: {},
+      ...fields.settings,
+    },
+  };
+};
+
 const offlineModel = (name) => ({
   id: `function:${name}`,
   name,
   provider: "function",
   offline: true,
+  model_class: "FunctionModel",
+  env: null,
 });
 
 const retryError = (message) => ({
@@ -1246,32 +1291,6 @@ function newsroom() {
     expression: null,
     location: at(file, line),
   });
-  const codeAgent = (fields) => {
-    const built = agent({ capabilities: [], ...fields });
-    return {
-      ...built,
-      source: "code",
-      // `agent` blanks what only static analysis fills in; here that is the point.
-      model: { expression: null, ...fields.model },
-      instructions: fields.instructions ?? [],
-      toolsets: (fields.toolsets ?? []).map((toolset) => ({
-        expression: null,
-        location: null,
-        ...toolset,
-      })),
-      output: fields.output ?? built.output,
-      // Static analysis reads what the code sets and never fills in a default.
-      settings: {
-        model_settings: null,
-        end_strategy: null,
-        tool_retries: null,
-        output_retries: null,
-        tool_timeout: null,
-        expressions: {},
-        ...fields.settings,
-      },
-    };
-  };
   const computedBy = (what, code) =>
     `${what} is set by \`${code}\`, so it is only known when the code runs`;
 
@@ -1390,6 +1409,8 @@ function newsroom() {
       provider: null,
       offline: false,
       expression: "get_model()",
+      model_class: "OpenAIChatModel",
+      env: { variable: "NEWSROOM_MODEL", default: "gpt-5.2-mini" },
     },
     instructions: [
       {
@@ -1460,7 +1481,8 @@ function newsroom() {
     ],
     delegates: [{ tool_name: "ask_stringer", agent_id: "a3", evidence: "code" }],
     warnings: [
-      computedBy("the model", "get_model()"),
+      "the model name of `OpenAIChatModel` comes from the environment variable `NEWSROOM_MODEL` " +
+        "when the code runs; the source's default is `gpt-5.2-mini`",
       computedBy("an instruction", 'PROMPTS["reporter"]'),
       `the tools of \`${archive}\` are listed by the server, so they are only known when the code runs`,
     ],
@@ -1478,8 +1500,46 @@ function newsroom() {
       provider: null,
       offline: false,
       expression: 'AnthropicModel("claude-sonnet-4-5", provider=provider)',
+      model_class: "AnthropicModel",
     },
     instructions: [literal("Answer in one short quote, in the first person.", "reporters.py", 60)],
+    toolsets: [agentTools],
+    tools: [
+      fromCode(
+        "duckduckgo_search",
+        "ts0",
+        "Searches DuckDuckGo for the given query and returns the results.",
+        {
+          additionalProperties: false,
+          properties: { query: { description: "The query to search for.", type: "string" } },
+          required: ["query"],
+          type: "object",
+        },
+        "reporters.py",
+        58,
+        {
+          return_schema: {
+            $defs: {
+              DuckDuckGoResult: {
+                description: "A DuckDuckGo search result.",
+                properties: {
+                  title: { type: "string" },
+                  href: { type: "string" },
+                  body: { type: "string" },
+                },
+                required: ["title", "href", "body"],
+                title: "DuckDuckGoResult",
+                type: "object",
+              },
+            },
+            items: { $ref: "#/$defs/DuckDuckGoResult" },
+            type: "array",
+          },
+          function: "pydantic_ai.common_tools.duckduckgo.DuckDuckGoSearchTool.__call__",
+          library_version: "2.70.0",
+        },
+      ),
+    ],
   });
 
   const checker = codeAgent({
@@ -1575,6 +1635,145 @@ function newsroom() {
   return rec;
 }
 
+// ---------- blueprint/capabilities.pviz.jsonl ----------
+
+/**
+ * One agent read from source whose capabilities span eight docs categories: a configured one,
+ * one that is only loaded on demand, ones that give the agent toolsets (a drawn one with a tool,
+ * and harness ones whose tools are only known at run time), one that gives provider-side tools
+ * only, and the built-in one that stays folded away.
+ */
+function capabilities() {
+  const rec = new Recording({
+    title: "briefing",
+    seed: 0x5eed0005,
+    t0: 1795046400000,
+    stream: false,
+  });
+  rec.header.mode = "blueprint";
+
+  const at = (line) => ({ file: "briefing.py", line });
+  const capability = (name, category, fields = {}) => ({
+    name,
+    builtin: false,
+    category,
+    package: "pydantic_ai",
+    deferred: false,
+    details: {},
+    expressions: {},
+    toolsets: [],
+    native_tools: [],
+    ...fields,
+  });
+  const harness = { package: "pydantic_ai_harness" };
+  const toolset = (id, toolsetId, label, line, fields = {}) => ({
+    id,
+    toolset_id: toolsetId,
+    label,
+    kind: "function",
+    wrappers: ["CapabilityOwnedToolset"],
+    opaque: false,
+    expression: null,
+    location: at(line),
+    ...fields,
+  });
+  const fromCode = (name, toolsetId, description, parameters, line, returns) =>
+    tool(name, toolsetId, description, parameters, {
+      origin: "code",
+      function: `briefing.${name}`,
+      location: at(line),
+      return_schema: returns,
+    });
+  const unknownTools = (what) =>
+    `the tools of \`${what}\` depend on how it is set up, so they are only known when the code runs`;
+
+  const briefing = codeAgent({
+    id: "a1",
+    name: "briefing",
+    label: "briefing",
+    description: "Writes a short brief on a question, from the archive and the web",
+    location: at(31),
+    model: { id: "openai:gpt-5.2", name: "gpt-5.2", provider: "openai", offline: false },
+    instructions: [
+      {
+        kind: "instructions",
+        dynamic: false,
+        text: "Answer the question in a brief of five lines. Cite the pages you read.",
+        function: null,
+        expression: null,
+        location: at(34),
+      },
+    ],
+    toolsets: [
+      agentTools,
+      toolset("ts1", "web_search", "FunctionToolset 'web_search'", 12, {
+        wrappers: ["CapabilityOwnedToolset", "PreparedToolset"],
+      }),
+      toolset("ts2", "web_fetch", "FunctionToolset 'web_fetch'", 20, {
+        wrappers: ["CapabilityOwnedToolset", "PreparedToolset"],
+      }),
+      toolset("ts3", "memory", "MemoryToolset 'memory'", 38, {
+        opaque: true,
+        expression: "Memory(store=InMemoryMemoryStore())",
+      }),
+      toolset("ts4", "planning", "PlanningToolset 'planning'", 39, {
+        opaque: true,
+        expression: "Planning()",
+      }),
+    ],
+    tools: [
+      fromCode(
+        "search_archive",
+        "ts1",
+        "Search the archive of past briefs.",
+        objectSchema({ query: { type: "string" } }),
+        12,
+        { type: "array", items: { type: "string" } },
+      ),
+      fromCode(
+        "fetch_page",
+        "ts2",
+        "Fetch the text of a page.",
+        objectSchema({ url: { type: "string", format: "uri" } }),
+        20,
+        { type: "string" },
+      ),
+    ],
+    native_tools: ["web_search", "mcp_server"],
+    capabilities: [
+      ...BUILTIN_CAPABILITIES,
+      capability("Thinking", "reasoning", { details: { effort: "high" } }),
+      capability("WebSearch", "web", {
+        toolsets: ["ts1"],
+        native_tools: ["web_search"],
+        expressions: { local: "search_archive" },
+      }),
+      capability("WebFetch", "web", {
+        toolsets: ["ts2"],
+        expressions: { local: "fetch_page" },
+        details: { native: false },
+      }),
+      capability("MCP", "tools", {
+        native_tools: ["mcp_server"],
+        details: { url: "https://docs.example.com/mcp", native: true, local: false },
+      }),
+      capability("Skills", "knowledge", {
+        ...harness,
+        deferred: true,
+        details: { directories: ["skills"] },
+      }),
+      capability("Memory", "knowledge", { ...harness, toolsets: ["ts3"] }),
+      capability("Planning", "reasoning", { ...harness, toolsets: ["ts4"] }),
+      capability("InputGuardrail", "safety", { ...harness, expressions: { guard: "check_topic" } }),
+      capability("ModelFallback", "loop", { expressions: { models: "[backup_model]" } }),
+    ],
+    warnings: [unknownTools("Memory(store=InMemoryMemoryStore())"), unknownTools("Planning()")],
+  });
+
+  rec.emit(0, { type: "blueprint.agent", agent: briefing });
+  return rec;
+}
+
 // ---------- write ----------
 
 const files = {
@@ -1613,6 +1812,7 @@ const files = {
 };
 
 // Blueprint-only sessions are kept apart from the recordings: see `newsroom`.
+files["blueprint/capabilities.pviz.jsonl"] = capabilities().jsonl();
 files["blueprint/newsroom.pviz.jsonl"] = newsroom().jsonl();
 
 for (const [name, text] of Object.entries(files)) {
