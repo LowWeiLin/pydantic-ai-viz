@@ -424,7 +424,11 @@ def test_a_blueprint_session_of_the_demos_has_no_warnings() -> None:
     with blueprint_session(analyze(demos)) as session:
         agents = [envelope["agent"] for envelope in session.events if envelope["type"] == "blueprint.agent"]
     assert agents
-    assert [a["warnings"] for a in agents] == [[]] * len(agents)
+    # The capabilities demo's skills live in a workspace chosen at run time, so source analysis says where it looked.
+    guess = (
+        "`Skills` reads `_skills` from a workspace decided when the code runs; the skills shown are those in `_skills`"
+    )
+    assert {a["name"]: a["warnings"] for a in agents if a["warnings"]} == {"briefing": [guess]}
 
 
 def test_a_blueprint_session_of_an_analysis_is_titled_after_its_file_and_carries_its_notices(tmp_path: Path) -> None:

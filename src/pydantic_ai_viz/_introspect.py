@@ -28,6 +28,7 @@ from collections.abc import Callable
 from enum import Enum
 from pathlib import PurePath
 from typing import Annotated, Any, Literal, TypeAlias, Union, cast, get_args, get_origin
+from warnings import catch_warnings, simplefilter
 
 from pydantic_ai import Agent, NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.capabilities import AbstractCapability
@@ -61,6 +62,7 @@ from ._models import (
     Toolset,
 )
 from ._normalize import clip
+from ._skills import is_skills, skill_catalog
 
 AnyAgent: TypeAlias = "Agent[Any, Any]"
 AnyGraph: TypeAlias = "Graph[Any, Any, Any, Any]"
@@ -337,9 +339,30 @@ def _delegates_of(walk: _ToolsetWalk) -> list[tuple[str, AnyAgent]]:
     return pairs
 
 
+def _capability_delegates(agent: AnyAgent) -> list[tuple[str, AnyAgent]]:
+    """``(tool name, sub-agent)`` for each agent a harness ``SubAgents`` capability of ``agent`` delegates to."""
+    try:
+        capabilities: list[Any] = list(agent.root_capability.capabilities)
+    except Exception:
+        return []
+    pairs: list[tuple[str, AnyAgent]] = []
+    for capability in capabilities:
+        cls = type(cast("object", capability))
+        if cls.__name__ != "SubAgents" or not cls.__module__.startswith("pydantic_ai_harness.sub_agents"):
+            continue
+        tool_name: Any = _safe_getattr(capability, "tool_name")
+        held: Any = _safe_getattr(capability, "agents")
+        for sub in cast("list[Any]", held) if isinstance(held, list | tuple) else []:
+            target: Any = _safe_getattr(sub, "agent")
+            if isinstance(target, Agent):
+                name = tool_name if isinstance(tool_name, str) else _compat.SUB_AGENTS_TOOL_NAME
+                pairs.append((name, cast("AnyAgent", target)))
+    return pairs
+
+
 def find_delegates(agent: AnyAgent) -> list[tuple[str, AnyAgent]]:
-    """``(tool name, sub-agent)`` pairs found by the static delegation heuristic."""
-    return _delegates_of(_walk_toolsets(agent, []))
+    """``(tool name, sub-agent)`` pairs: those the delegation heuristic finds, then the agents ``SubAgents`` holds."""
+    return [*_delegates_of(_walk_toolsets(agent, [])), *_capability_delegates(agent)]
 
 
 def agent_closure(root: AnyAgent) -> list[AnyAgent]:
@@ -470,30 +493,44 @@ def _capabilities(agent: AnyAgent, walk: _ToolsetWalk, warnings: list[str]) -> l
         return []
     found: list[CapabilityInfo] = []
     stacks = {_harness_stack(capability) for capability in capabilities}
+    within: str | None = None  # the stack whose marker the capabilities since then follow, each one it puts there
+    left: tuple[str, ...] = ()  # the member classes it may still put there, in its order
+    entry: CapabilityInfo | None = None  # the entry of the last stack, which stands for its helpers
     for capability in capabilities:
         cls = type(cast("object", capability))
-        if cls.__name__.startswith("_") and cls.__module__.startswith(_compat.HARNESS_STACK_MODULES):
-            continue  # a helper of a harness stack, which the stack's entry stands for
-        if _stack_helper_of(capability) in stacks - {None}:
-            continue  # the same, built as a plain Capability
+        if (cls.__name__.startswith("_") and cls.__module__.startswith(_compat.HARNESS_STACK_MODULES)) or (
+            _stack_helper_of(capability) in stacks - {None}  # the same, built as a plain Capability
+        ):
+            # A helper of a harness stack, which the stack's entry stands for, with the toolsets it gives.
+            if entry is not None:
+                entry.toolsets.extend(t for t in _owned_toolsets(capability, walk, 0) if t not in entry.toolsets)
+            continue
         stack = _harness_stack(capability)
         if stack is not None:
-            found.append(
-                CapabilityInfo(
-                    name=stack,
-                    builtin=False,
-                    category="harness",
-                    package="pydantic_ai_harness",
-                    deferred=False,
-                    details={},
-                    expressions={},
-                    toolsets=[],
-                    native_tools=[],
-                )
+            within, left = stack, _compat.HARNESS_STACK_MEMBERS.get(stack, ())
+            entry = CapabilityInfo(
+                name=stack,
+                builtin=False,
+                category="harness",
+                package="pydantic_ai_harness",
+                deferred=False,
+                details={},
+                expressions={},
+                toolsets=[],
+                native_tools=[],
+                capability_id=None,
+                stack=None,
+                skills=[],
             )
+            found.append(entry)
             continue
+        if within is not None:
+            if package_of(cls.__module__) is not None and cls.__name__ in left:
+                left = left[left.index(cls.__name__) + 1 :]
+            else:
+                within = None  # the first capability the stack does not put there: the agent was given it otherwise
         try:
-            found.append(_capability(capability, walk, warnings))
+            found.append(_capability(capability, walk, warnings, capabilities, within))
         except Exception as exc:
             name = type(capability).__name__
             _compat.add_warning(warnings, f"capability {name} could not be read ({type(exc).__name__}: {exc})")
@@ -508,6 +545,9 @@ def _capabilities(agent: AnyAgent, walk: _ToolsetWalk, warnings: list[str]) -> l
                     expressions={},
                     toolsets=[],
                     native_tools=[],
+                    capability_id=None,
+                    stack=within,
+                    skills=[],
                 )
             )
     return found
@@ -531,7 +571,10 @@ def _stack_helper_of(capability: Any) -> str | None:
     return _compat.HARNESS_STACK_HELPER_IDS.get(capability_id) if isinstance(capability_id, str) else None
 
 
-def _capability(capability: Any, walk: _ToolsetWalk, warnings: list[str]) -> CapabilityInfo:
+def _capability(
+    capability: Any, walk: _ToolsetWalk, warnings: list[str], capabilities: list[Any], stack: str | None
+) -> CapabilityInfo:
+    """One capability; ``capabilities`` are all the agent's, ``stack`` is the harness stack that put it there."""
     cls = type(cast("object", capability))
     name = cls.__name__
     category: CapabilityCategory = "custom"
@@ -549,6 +592,7 @@ def _capability(capability: Any, walk: _ToolsetWalk, warnings: list[str]) -> Cap
     except Exception as exc:
         _compat.add_warning(warnings, f"capability {name} could not be read ({type(exc).__name__}: {exc})")
         native_tools = []
+    capability_id: Any = _safe_getattr(capability, "id")
     return CapabilityInfo(
         name=name,
         builtin=name in _compat.BUILTIN_CAPABILITIES,
@@ -559,6 +603,9 @@ def _capability(capability: Any, walk: _ToolsetWalk, warnings: list[str]) -> Cap
         expressions={},
         toolsets=list(dict.fromkeys(_owned_toolsets(capability, walk, 0))),
         native_tools=native_tools,
+        capability_id=capability_id if isinstance(capability_id, str) else None,
+        stack=stack,
+        skills=skill_catalog(capability, capabilities, warnings) if is_skills(capability) else [],
     )
 
 
@@ -578,12 +625,17 @@ def _owned_toolsets(capability: Any, walk: _ToolsetWalk, depth: int) -> list[str
 
 
 def _capability_details(capability: Any) -> dict[str, Any]:
-    """What a capability was given, by field: public fields whose value differs from the default and can be shown."""
+    """What a capability was given, by field: public fields whose value differs from the default and can be shown.
+
+    For a class of Pydantic AI or the harness, a value the class fills in itself (``Shell().denied_commands``) is a
+    default too: an instance given only the parameters the class requires holds it as well.
+    """
     if not dataclasses.is_dataclass(capability):
         return {}
     parameters: dict[str, inspect.Parameter] = {}
     with contextlib.suppress(TypeError, ValueError):  # a class with its own ``__init__`` keeps its defaults there
         parameters = dict(inspect.signature(type(capability).__init__).parameters)
+    reference, required = _reference(capability)
     details: dict[str, Any] = {}
     for field in dataclasses.fields(capability):
         if field.name.startswith("_") or field.name in ("id", "defer_loading") or is_secret(field.name):
@@ -599,9 +651,50 @@ def _capability_details(capability: Any) -> dict[str, Any]:
             except Exception:
                 continue
         converted = _detail_value(value)
-        if converted is not None and converted != [] and converted != {}:
-            details[field.name] = converted
+        if converted is None or converted == [] or converted == {}:
+            continue
+        if reference is not None and field.name not in required:
+            with contextlib.suppress(Exception):
+                if _detail_value(_safe_getattr(reference, field.name)) == converted:
+                    continue
+        details[field.name] = converted
+    if any(
+        base.__name__ == "Capability" and package_of(base.__module__) == "pydantic_ai"
+        for base in type(capability).__mro__
+    ):
+        held: Any = _safe_getattr(capability, _compat.CAPABILITY_INSTRUCTIONS)
+        items: list[Any] = list(cast("list[Any]", held)) if isinstance(held, list | tuple) else []
+        given = [_detail_value(_safe_getattr(item, "instruction")) for item in items]
+        if given and None not in given:
+            details["instructions"] = given[0] if len(given) == 1 else given
     return details
+
+
+def _reference(capability: Any) -> tuple[Any, frozenset[str]]:
+    """An instance of the class of ``capability`` given only the parameters it requires, with the values
+    ``capability`` holds, and the names of those parameters.
+
+    ``None`` for a class of neither Pydantic AI nor the harness, or one that cannot be made so.
+    """
+    cls = type(cast("object", capability))
+    if package_of(cls.__module__) is None:
+        return None, frozenset()
+    try:
+        required: dict[str, Any] = {}
+        for name, parameter in inspect.signature(cls).parameters.items():
+            if parameter.default is not inspect.Parameter.empty or parameter.kind in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            ):
+                continue
+            if parameter.kind is inspect.Parameter.POSITIONAL_ONLY:
+                return None, frozenset()
+            required[name] = getattr(capability, name)
+        with catch_warnings():
+            simplefilter("ignore")
+            return cls(**required), frozenset(required)
+    except Exception:
+        return None, frozenset()
 
 
 def _detail_value(value: Any) -> Any | None:
@@ -616,6 +709,15 @@ def _detail_value(value: Any) -> Any | None:
         return _detail_value(value.value)
     if isinstance(value, AbstractCapability):
         return type(cast("AbstractCapability[Any]", value)).__name__
+    if isinstance(value, Agent):
+        name: Any = cast("AnyAgent", value).name
+        return name if isinstance(name, str) else None
+    cls = type(cast("object", value))
+    if cls.__module__.startswith("pydantic_ai.workspaces"):
+        return cls.__name__  # where something is read from, without the path it holds
+    if cls.__name__ == "SubAgent" and package_of(cls.__module__) == "pydantic_ai_harness":
+        fields = {key: _detail_value(_safe_getattr(value, key)) for key in ("agent", "name", "description", "models")}
+        return {key: item for key, item in fields.items() if item is not None}
     if isinstance(value, Model):
         model = cast("Model[Any]", value)
         model_id: Any = _safe_getattr(model, "model_id")
@@ -655,6 +757,30 @@ def _int_or_none(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _run_settings(agent: AnyAgent, warnings: list[str]) -> dict[str, Any]:
+    """``end_strategy``, ``tool_retries``, ``output_retries`` and ``tool_timeout`` of an agent."""
+    timeout: Any = _compat.get_private(agent, "_tool_timeout", None, warnings)
+    end_strategy: Any = _safe_getattr(agent, "end_strategy")
+    return {
+        "end_strategy": end_strategy if isinstance(end_strategy, str) else None,
+        "tool_retries": _int_or_none(_compat.get_private(agent, "_max_tool_retries", None, warnings)),
+        "output_retries": _int_or_none(_compat.get_private(agent, "_max_output_retries", None, warnings)),
+        "tool_timeout": float(timeout) if isinstance(timeout, int | float) and not isinstance(timeout, bool) else None,
+    }
+
+
+@functools.cache
+def _default_settings(agent_class: type[AnyAgent]) -> dict[str, Any]:
+    """The settings of an agent of ``agent_class`` given none; ``{}`` when they cannot be read.
+
+    The class is passed in, so that static analysis of this file sees no agent made here.
+    """
+    try:
+        return _run_settings(agent_class(), [])
+    except Exception:
+        return {}
+
+
 def _settings(agent: AnyAgent, warnings: list[str]) -> AgentSettings:
     raw: Any = agent.model_settings
     model_settings: dict[str, Any] | None = None
@@ -662,15 +788,16 @@ def _settings(agent: AnyAgent, warnings: list[str]) -> AgentSettings:
         model_settings = {str(key): _json(value) for key, value in cast("dict[Any, Any]", raw).items()}
     elif raw is not None:
         _compat.add_warning(warnings, "model settings are computed per run; see a run's model requests")
-    timeout: Any = _compat.get_private(agent, "_tool_timeout", None, warnings)
-    end_strategy: Any = _safe_getattr(agent, "end_strategy")
+    values = _run_settings(agent, warnings)
+    defaults = _default_settings(Agent)
     return AgentSettings(
         model_settings=model_settings,
-        end_strategy=end_strategy if isinstance(end_strategy, str) else None,
-        tool_retries=_int_or_none(_compat.get_private(agent, "_max_tool_retries", None, warnings)),
-        output_retries=_int_or_none(_compat.get_private(agent, "_max_output_retries", None, warnings)),
-        tool_timeout=float(timeout) if isinstance(timeout, int | float) and not isinstance(timeout, bool) else None,
+        end_strategy=values["end_strategy"],
+        tool_retries=values["tool_retries"],
+        output_retries=values["output_retries"],
+        tool_timeout=values["tool_timeout"],
         expressions={},
+        defaults=[key for key, value in values.items() if value is not None and defaults.get(key) == value],
     )
 
 
@@ -695,7 +822,7 @@ def introspect_agent(
     walk = _walk_toolsets(agent, warnings)
 
     delegates: list[Delegate] = []
-    for tool_name, sub_agent in _delegates_of(walk):
+    for tool_name, sub_agent in [*_delegates_of(walk), *_capability_delegates(agent)]:
         agent_id = delegate_id(sub_agent)
         if agent_id is not None:
             delegates.append(Delegate(tool_name=tool_name, agent_id=agent_id, evidence="object"))

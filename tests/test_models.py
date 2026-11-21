@@ -222,6 +222,9 @@ def test_a_blueprint_read_from_code_carries_locations_and_expressions() -> None:
             "expressions": {"url": "os.environ['MCP_URL']"},
             "toolsets": ["ts1"],
             "native_tools": ["mcp_server"],
+            "capability_id": "docs",
+            "stack": None,
+            "skills": [],
         }
     )
     assert to_wire(parse_envelope(json.dumps(line))) == line
@@ -230,6 +233,43 @@ def test_a_blueprint_read_from_code_carries_locations_and_expressions() -> None:
     graph["graph"] |= {"source": "code", "location": location}
     graph["graph"]["nodes"][1]["location"] = location
     assert to_wire(parse_envelope(json.dumps(graph))) == graph
+
+
+def _with_skills() -> dict[str, Any]:
+    """The blueprint line, with a ``Skills`` capability that offers one skill and one a stack put there."""
+    line = _line(1)
+    skill = {
+        "name": "house-style",
+        "description": "How to write a briefing.",
+        "when_to_use": None,
+        "model_invocable": False,
+        "path": "_skills/house-style/SKILL.md",
+        "body": "# House style",
+    }
+    base = {"builtin": False, "deferred": False, "details": {}, "expressions": {}, "toolsets": [], "native_tools": []}
+    line["agent"]["capabilities"] += [
+        {**base, "name": "Skills", "category": "knowledge", "package": "pydantic_ai_harness"}
+        | {"capability_id": "skills", "stack": None, "skills": [skill]},
+        {**base, "name": "Shell", "category": "environment", "package": "pydantic_ai_harness"}
+        | {"capability_id": None, "stack": "Coder", "skills": []},
+    ]
+    line["agent"]["settings"]["defaults"] = ["end_strategy", "tool_retries"]
+    return line
+
+
+def test_skills_stacks_and_default_settings_round_trip_and_every_field_of_a_skill_is_required() -> None:
+    line = _with_skills()
+    assert to_wire(parse_envelope(json.dumps(line))) == line
+    skill = line["agent"]["capabilities"][-2]["skills"][0]
+    for key in list(skill):
+        broken = copy.deepcopy(line)
+        del broken["agent"]["capabilities"][-2]["skills"][0][key]
+        with pytest.raises(ValidationError):
+            parse_envelope(json.dumps(broken))
+    schema = envelope_json_schema()["$defs"]
+    assert sorted(schema["SkillInfo"]["required"]) == sorted(skill)
+    assert {"capability_id", "stack", "skills"} <= set(schema["CapabilityInfo"]["required"])
+    assert "defaults" in schema["AgentSettings"]["required"]
 
 
 @pytest.mark.parametrize("mode", ["capture", "blueprint"])

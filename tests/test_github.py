@@ -106,6 +106,8 @@ def hub(tmp_path_factory: pytest.TempPathFactory) -> Hub:
     hub.write("src/shop/extra.py", "from pydantic_ai import Agent\n\nextra = Agent('test', name='extra')\n")
     hub.write("examples/demo.py", "from pydantic_ai import Agent\n\ndemo = Agent('test', name='demo')\n")
     hub.write("examples/requirements.txt", "pydantic-ai\n")
+    hub.write("src/shop/skills/refunds/SKILL.md", "---\ndescription: How refunds are handled.\n---\n\nAsk first.\n")
+    hub.write("src/shop/skills/refunds/notes.txt", "not a skill file\n")
     # A symbolic link in the repository, added without needing the right to create one here.
     blob = subprocess.run(
         ["git", "hash-object", "-w", "--stdin"],
@@ -292,7 +294,7 @@ def test_the_only_program_ever_started_is_git() -> None:
 def test_a_commit_is_fetched_as_its_python_files_and_nothing_else(hub: Hub, cache: Path) -> None:
     checkout = fetch(Reference("acme", "shop", (), False))
     assert (checkout.sha, checkout.subpath, checkout.ref) == (hub.second, (), None)
-    assert checkout.path.name == hub.second
+    assert checkout.path.name == f"{hub.second}-{_github._KEPT}"  # pyright: ignore[reportPrivateUsage]
     assert names_in(checkout) == [
         "examples/demo.py",
         "examples/requirements.txt",
@@ -302,15 +304,17 @@ def test_a_commit_is_fetched_as_its_python_files_and_nothing_else(hub: Hub, cach
         "src/shop/extra.py",
         "src/shop/link.py",
         "src/shop/models.py",
+        "src/shop/skills/refunds/SKILL.md",
     ]
-    # No README, no data file, and no repository: only what is read, and what marks a project.
+    # No README, no data file, and no repository: only what is read, what marks a project, and the skills
+    # a `Skills` capability offers, at whatever depth they are.
     assert not (checkout.path / ".git").exists()
     # The link in the repository arrived as a small file holding its target. It leads nowhere.
     link = checkout.path / "src" / "shop" / "link.py"
     assert not link.is_symlink()
     assert link.read_text(encoding="utf-8") == "../../../outside.py"
     # Nothing is left over from the fetch itself.
-    assert [entry.name for entry in checkout.path.parent.iterdir()] == [hub.second]
+    assert [entry.name for entry in checkout.path.parent.iterdir()] == [checkout.path.name]
 
 
 def test_a_ref_is_a_branch_a_tag_or_a_full_sha_and_the_rest_is_the_path(hub: Hub, cache: Path) -> None:
@@ -348,12 +352,22 @@ def test_a_commit_already_in_the_cache_is_read_without_the_network(
         fetch(Reference("acme", "shop", ("main",), True))
 
 
+def test_a_commit_cached_with_other_patterns_is_fetched_again(hub: Hub, cache: Path) -> None:
+    # As a version that kept no SKILL.md left it.
+    old = cache / "github" / "acme" / "shop" / hub.second
+    (old / "src" / "shop").mkdir(parents=True)
+    (old / "src" / "shop" / "agents.py").write_text("", encoding="utf-8")
+    checkout = fetch(Reference("acme", "shop", (hub.second,), True))
+    assert checkout.path != old.resolve()
+    assert "src/shop/skills/refunds/SKILL.md" in names_in(checkout)
+
+
 def test_a_server_that_only_hands_out_whole_commits_is_asked_the_plain_way(hub: Hub, cache: Path) -> None:
     checkout = fetch(Reference("acme", "plain", ("main",), True))
     assert checkout.sha == hub.second
     assert "src/shop/agents.py" in names_in(checkout)
     assert "README.md" not in names_in(checkout)
-    assert [entry.name for entry in checkout.path.parent.iterdir()] == [hub.second]
+    assert [entry.name for entry in checkout.path.parent.iterdir()] == [checkout.path.name]
 
 
 @pytest.mark.parametrize(

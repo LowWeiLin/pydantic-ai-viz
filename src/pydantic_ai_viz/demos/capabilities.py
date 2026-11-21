@@ -1,14 +1,15 @@
 """Capabilities demo: one agent that uses most of what a capability can give it.
 
 The `briefing` agent writes a short brief about the Apollo 13 accident. It thinks first, writes
-a plan, searches and reads an archive through web tools, loads a skill on demand, saves a note
-to memory and then answers. Its `capabilities=` list shows up on the canvas, and each step of the
-run shows up in the timeline.
+a plan, searches and reads an archive through web tools, loads one of its two skills on demand,
+saves a note to memory and then answers. Its `capabilities=` list shows up on the canvas, with
+the skills it offers, and each step of the run shows up in the timeline.
 
 Everything is scripted and offline: the "model" is a `FunctionModel`, the web tools read a small
 archive bundled in this module, and nothing is ever fetched. The MCP server is illustrative: its
-tools run provider-side, so the address is never contacted. The skill lives in `_skills`, next to
-this module, and is only read.
+tools run provider-side, so the address is never contacted. The skills, `fact-check` and
+`house-style`, live in `_skills`, next to this module, and are only read; the run loads
+`house-style` and leaves `fact-check` unloaded.
 """
 
 from __future__ import annotations

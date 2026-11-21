@@ -8,6 +8,7 @@ spells out.
 
 from __future__ import annotations
 
+import textwrap
 from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
@@ -15,7 +16,7 @@ from pathlib import Path
 import pytest
 from pydantic_ai import Agent
 from pydantic_graph import Graph
-from static_support import without_titles
+from static_support import live_agents, without_titles
 
 from pydantic_ai_viz import AgentBlueprint, Analysis, GraphBlueprint, analyze, record
 
@@ -102,7 +103,15 @@ def test_a_helper_in_another_file_is_followed_and_defaults_are_not_made_up(name:
         assert found.model.expression is not None
         assert found.model.expression.startswith("scripted_model(")
         assert (found.model.provider, found.model.offline) == ("function", True)
-        assert found.warnings == []
+        # The demo's skills are read from a workspace its code makes, so the source says where it looked.
+        assert found.warnings == (
+            [
+                "`Skills` reads `_skills` from a workspace decided when the code runs; the skills shown are those "
+                "in `_skills`"
+            ]
+            if name == "capabilities"
+            else []
+        )
         # Pydantic AI's defaults are not passed off as something the source says.
         assert found.settings.end_strategy is None
         if name in DEMOS:
@@ -137,6 +146,85 @@ def test_the_capabilities_read_from_source_match_the_live_agent() -> None:
     assert [t.model_dump(exclude=ignored) for t in found.tools if t.toolset in drawn] == [
         t.model_dump(exclude=ignored) for t in expected.tools if t.toolset in drawn
     ]
+    # The skills, as the files the source names hold them and the live agent reads them.
+    assert [(c.name, c.skills) for c in found.capabilities if c.skills] == [(c.name, c.skills) for c in own if c.skills]
+
+
+def test_harness_toolsets_merged_capabilities_and_given_instructions_read_as_the_live_agent(tmp_path: Path) -> None:
+    pytest.importorskip("pydantic_ai_harness")
+    path = tmp_path / "team.py"
+    path.write_text(
+        textwrap.dedent(
+            """
+            from pydantic_ai import Agent
+            from pydantic_ai.capabilities import Capability, Thinking, WebSearch
+            from pydantic_ai.models.test import TestModel
+            from pydantic_ai_harness import Advisor, AskUser, Skills, SubAgent, SubAgents
+
+            def lookup(query: str) -> str:
+                \"\"\"Look it up.\"\"\"
+                return query
+
+            def answer(question: str) -> str:
+                return "yes"
+
+            helper = Agent(TestModel(), name="helper")
+            toolsets = Agent(
+                TestModel(),
+                name="toolsets",
+                capabilities=[
+                    AskUser(answerer=answer),
+                    SubAgents(agents=[SubAgent(helper, name="h", description="Helps.")]),
+                    Advisor("test"),
+                    Skills(".", read_files=True),
+                    WebSearch(local=lookup, allowed_domains=["a.example"]),
+                ],
+            )
+            merged = Agent(
+                TestModel(),
+                name="merged",
+                capabilities=[WebSearch(), Capability(instructions="Be kind."), WebSearch(max_uses=2)],
+            )
+
+            def other(query: str) -> str:
+                \"\"\"Look elsewhere.\"\"\"
+                return query
+
+            later = Agent(TestModel(), name="later", capabilities=[WebSearch(local=lookup), WebSearch(local=other)])
+            kept = Agent(TestModel(), name="kept", capabilities=[WebSearch(local=lookup), WebSearch()])
+            native_only = Agent(
+                TestModel(), name="native_only", capabilities=[WebSearch(local=lookup), WebSearch(max_uses=2)]
+            )
+            defaulted = Agent(
+                TestModel(),
+                name="defaulted",
+                capabilities=[Thinking(effort="high"), Thinking(), WebSearch(local=lookup, native=False), WebSearch()],
+            )
+            """
+        ),
+        encoding="utf-8",
+    )
+    live = live_agents(path)
+    static = {b.label: b for b in analyze(path).agents}
+    labels = {b.id: b.label for b in static.values()}
+
+    def toolsets(found: AgentBlueprint) -> list[tuple[object, ...]]:
+        return [(t.toolset_id, t.label, t.kind, t.wrappers) for t in found.toolsets]
+
+    assert toolsets(static["toolsets"]) == toolsets(live["toolsets"])
+    # Each live agent is described on its own, so its delegate is ``a2`` of its own listing: the helper.
+    assert [(d.tool_name, labels[d.agent_id]) for d in static["toolsets"].delegates] == [
+        (d.tool_name, "helper") for d in live["toolsets"].delegates if d.agent_id == "a2"
+    ]
+    assert static["toolsets"].delegates
+    for name in ("merged", "later", "kept", "native_only", "defaulted"):
+        # Merged by class and id: the toolsets are made from the merged arguments, as the live agent makes them.
+        own = [c for c in live[name].capabilities if not c.builtin]
+        assert [(c.name, c.details, c.native_tools, c.toolsets) for c in static[name].capabilities] == [
+            (c.name, c.details, c.native_tools, c.toolsets) for c in own
+        ], name
+        assert toolsets(static[name]) == toolsets(live[name]), name
+        assert [t.name for t in static[name].tools] == [t.name for t in live[name].tools], name
 
 
 def test_the_graph_read_from_source_matches_the_live_graph() -> None:

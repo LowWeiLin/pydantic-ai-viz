@@ -15,11 +15,17 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, Capability, WebSearch
+from pydantic_ai.capabilities import AbstractCapability, Capability, WebFetch, WebSearch
 from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_viz import AgentBlueprint, _compat, blueprint
-from pydantic_ai_viz._analyze._agents import _CAPABILITY_NATIVE_TOOLS, _HARNESS_TOOLSETS, _LOCAL_FALLBACKS
+from pydantic_ai_viz._analyze._agents import (
+    _CAPABILITY_NATIVE_TOOLS,
+    _HARNESS_POSITIONAL,
+    _HARNESS_TOOLSETS,
+    _LOCAL_FALLBACKS,
+    _NATIVE_ONLY_FIELDS,
+)
 from pydantic_ai_viz._capabilities import category_of
 
 
@@ -185,22 +191,100 @@ def test_static_analysis_knows_the_toolset_a_capability_puts_its_local_tool_in(n
     assert callable(getattr(capability, _compat.LOCAL_STRATEGY_METHOD, None))
 
 
+def _harness_needs(name: str, tmp_path: Path) -> dict[str, Any]:
+    """What a harness capability must be given for it to give its toolset."""
+    harness: Any = pytest.importorskip("pydantic_ai_harness")
+    needs: dict[str, dict[str, Any]] = {
+        "CapabilityCreation": {"directory": tmp_path},
+        "SubAgents": {"agents": [harness.SubAgent(Agent(TestModel()), name="h", description="d")]},
+        "AskUser": {"answerer": lambda question: "a"},  # pyright: ignore[reportUnknownLambdaType]
+        "Advisor": {"model": "test"},
+        "Skills": {"directories": tmp_path, "read_files": True},
+    }
+    return needs.get(name, {})
+
+
 @pytest.mark.parametrize("name", sorted(_HARNESS_TOOLSETS))
 def test_static_analysis_knows_the_toolset_each_harness_capability_gives(name: str, tmp_path: Path) -> None:
     harness = pytest.importorskip("pydantic_ai_harness")
-    toolset_class, toolset_id, renamed = _HARNESS_TOOLSETS[name]
-    needs: dict[str, Any] = {"directory": tmp_path} if name == "CapabilityCreation" else {}
-    for given, expected in [({}, toolset_id), ({"id": "custom"}, "custom" if renamed else toolset_id)]:
+    toolset_class, toolset_id, renamed, inner = _HARNESS_TOOLSETS[name]
+    needs = _harness_needs(name, tmp_path)
+    cases: list[tuple[dict[str, Any], str | None]] = [({}, toolset_id)]
+    if "id" in inspect.signature(getattr(harness, name)).parameters:  # ``Skills`` has the one id its class names
+        cases.append(({"id": "custom"}, "custom" if renamed else toolset_id))
+    for given, expected in cases:
         result = _blueprint(Agent(TestModel(), capabilities=[getattr(harness, name)(**needs, **given)]))
         (toolset,) = result.toolsets
         label = toolset_class + (f" {expected!r}" if expected else "")
         assert (toolset.label, toolset.toolset_id, toolset.kind) == (label, expected, "function")
-        assert toolset.wrappers == ["CapabilityOwnedToolset"]
+        assert toolset.wrappers == ["CapabilityOwnedToolset", *inner]
         assert result.capabilities[-1].toolsets == [toolset.id]
         assert result.capabilities[-1].native_tools == []
     if name == "FileSystem":  # static analysis adds the filter a read-only one puts around its toolset
         (toolset,) = _blueprint(Agent(TestModel(), capabilities=[harness.FileSystem(read_only=True)])).toolsets
         assert toolset.wrappers == ["CapabilityOwnedToolset", "FilteredToolset"]
+
+
+def test_some_harness_capabilities_give_a_toolset_only_when_given_what_it_holds(tmp_path: Path) -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    for capability in [harness.SubAgents(), harness.Skills(tmp_path), harness.Skills(tmp_path, read_files=False)]:
+        assert _blueprint(Agent(TestModel(), capabilities=[capability])).toolsets == []
+
+
+def test_positional_parameters_of_harness_capabilities_are_those_their_classes_name() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    for name, expected in _HARNESS_POSITIONAL.items():
+        parameters = inspect.signature(getattr(harness, name).__init__).parameters.values()
+        positional = [p.name for p in parameters if p.kind is p.POSITIONAL_OR_KEYWORD and p.name != "self"]
+        assert tuple(positional[: len(expected)]) == expected, name
+
+
+@pytest.mark.parametrize(
+    ("name", "field"), [(n, f) for n, fields in _NATIVE_ONLY_FIELDS.items() for f in sorted(fields)]
+)
+def test_a_constraint_only_the_provider_side_tool_honours_leaves_no_local_tool(name: str, field: str) -> None:
+    def lookup(query: str) -> str:
+        return query
+
+    capability: Any = {"WebSearch": WebSearch, "WebFetch": WebFetch}[name]
+    value: Any = 1 if field == "max_uses" else ["a.example"]
+    assert _blueprint(Agent(TestModel(), capabilities=[capability(local=lookup, **{field: value})])).toolsets == []
+    # Another setting keeps it: the set holds those that take it away, and only those.
+    kept = {"user_location": {"city": "Paris"}} if name == "WebSearch" else {}
+    assert len(_blueprint(Agent(TestModel(), capabilities=[capability(local=lookup, **kept)])).toolsets) == 1
+
+
+def test_harness_stacks_put_only_these_capabilities_after_their_marker() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    assert sorted(_compat.HARNESS_STACK_MEMBERS) == sorted(_compat.HARNESS_STACKS)
+    for stack in sorted(_compat.HARNESS_STACKS):
+        capabilities = Agent(TestModel(), capabilities=[getattr(harness, stack)()]).root_capability.capabilities
+        names = [type(c).__name__ for c in capabilities]
+        after = names[names.index(_compat.HARNESS_STACK_MARKER) + 1 :]
+        public = [n for n in after if not n.startswith("_") and n not in _compat.BUILTIN_CAPABILITIES]
+        assert [n for n in public if n != "Capability"] == list(_compat.HARNESS_STACK_MEMBERS[stack]), stack
+
+
+def test_the_harness_skills_capability_is_where_it_is_named() -> None:
+    skills = pytest.importorskip("pydantic_ai_harness.skills")
+    capability = skills.Skills(".")
+    assert type(capability).__module__.startswith(_compat.HARNESS_SKILLS_MODULE)
+    (source,) = getattr(capability, _compat.SKILLS_SOURCES)
+    assert source.workspace is None
+    assert callable(capability.load)
+
+
+def test_sub_agents_names_its_tool_delegate_task_by_default() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    assert inspect.signature(harness.SubAgents).parameters["tool_name"].default == _compat.SUB_AGENTS_TOOL_NAME
+
+
+def test_a_plain_capability_keeps_the_instructions_it_was_given() -> None:
+    def extra() -> str:
+        return "b"
+
+    held = getattr(Capability(instructions=["a", extra]), _compat.CAPABILITY_INSTRUCTIONS)
+    assert [item.instruction for item in held] == ["a", extra]
 
 
 def test_a_toolset_a_capability_gives_still_names_the_capability() -> None:
@@ -265,6 +349,7 @@ def test_blueprint_survives_losing_every_private_attribute() -> None:
             "output_retries": None,
             "tool_timeout": None,
             "expressions": {},
+            "defaults": ["end_strategy"],
         }
     )
     # Everything read through public API is still there.

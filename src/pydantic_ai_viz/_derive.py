@@ -55,6 +55,7 @@ def observed_blueprint(id: str, name: str, *, description: str | None, model_nam
             output_retries=None,
             tool_timeout=None,
             expressions={},
+            defaults=[],
         ),
         delegates=[],
         warnings=[],

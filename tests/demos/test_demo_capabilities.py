@@ -9,7 +9,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart, ToolRetu
 
 pytest.importorskip("pydantic_ai_harness")
 
-from pydantic_ai_viz import AgentBlueprint, record
+from pydantic_ai_viz import AgentBlueprint, analyze, record
 from pydantic_ai_viz.demos import capabilities
 from pydantic_ai_viz.demos.capabilities import briefing
 
@@ -98,6 +98,27 @@ def test_the_blueprint_shows_one_capability_per_category() -> None:
         "InputGuardrail": "safety",
     }
     assert [c.name for c in agent.capabilities if c.native_tools] == ["ToolSearch", "MCP"]
+
+
+def test_the_blueprint_lists_both_skills_and_reading_the_source_finds_the_same() -> None:
+    with record(briefing, instrument=False) as session:
+        events = session.events
+    agent = next(AgentBlueprint.model_validate(e["agent"]) for e in events if e["type"] == "blueprint.agent")
+    (skills,) = (c for c in agent.capabilities if c.name == "Skills")
+    assert [(s.name, s.path, s.model_invocable) for s in skills.skills] == [
+        ("fact-check", "_skills/fact-check/SKILL.md", True),
+        ("house-style", "_skills/house-style/SKILL.md", True),
+    ]
+    assert all(s.body for s in skills.skills)
+    assert skills.deferred is False
+    assert agent.warnings == []
+
+    (found,) = (b for b in analyze(Path(capabilities.__file__)).agents if b.label == "briefing")
+    (read,) = (c for c in found.capabilities if c.name == "Skills")
+    assert read.skills == skills.skills
+    assert found.warnings == [
+        "`Skills` reads `_skills` from a workspace decided when the code runs; the skills shown are those in `_skills`"
+    ]
 
 
 async def test_nothing_is_written_outside_a_temporary_directory(

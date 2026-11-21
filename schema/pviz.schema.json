@@ -380,6 +380,13 @@
     "AgentSettings": {
       "additionalProperties": false,
       "properties": {
+        "defaults": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Defaults",
+          "type": "array"
+        },
         "end_strategy": {
           "anyOf": [
             {
@@ -452,7 +459,8 @@
         "tool_retries",
         "output_retries",
         "tool_timeout",
-        "expressions"
+        "expressions",
+        "defaults"
       ],
       "title": "AgentSettings",
       "type": "object"
@@ -463,6 +471,17 @@
         "builtin": {
           "title": "Builtin",
           "type": "boolean"
+        },
+        "capability_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Capability Id"
         },
         "category": {
           "enum": [
@@ -527,6 +546,24 @@
           ],
           "title": "Package"
         },
+        "skills": {
+          "items": {
+            "$ref": "#/$defs/SkillInfo"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "stack": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Stack"
+        },
         "toolsets": {
           "items": {
             "type": "string"
@@ -544,7 +581,10 @@
         "details",
         "expressions",
         "toolsets",
-        "native_tools"
+        "native_tools",
+        "capability_id",
+        "stack",
+        "skills"
       ],
       "title": "CapabilityInfo",
       "type": "object"
@@ -1840,6 +1880,53 @@
         "versions"
       ],
       "title": "SessionStarted",
+      "type": "object"
+    },
+    "SkillInfo": {
+      "additionalProperties": false,
+      "description": "One skill a harness ``Skills`` capability offers, read from its ``SKILL.md``.",
+      "properties": {
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "model_invocable": {
+          "title": "Model Invocable",
+          "type": "boolean"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "when_to_use": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "When To Use"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "when_to_use",
+        "model_invocable",
+        "path",
+        "body"
+      ],
+      "title": "SkillInfo",
       "type": "object"
     },
     "SourceLocation": {

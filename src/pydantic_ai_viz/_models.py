@@ -172,6 +172,22 @@ CapabilityCategory: TypeAlias = Literal[
 """
 
 
+class SkillInfo(WireModel):
+    """One skill a harness ``Skills`` capability offers, read from its ``SKILL.md``."""
+
+    name: str
+    """The ``name`` of its frontmatter, or else its directory's name: the id ``load_capability`` takes."""
+    description: str
+    when_to_use: str | None
+    model_invocable: bool
+    """``False`` when its frontmatter has ``disable-model-invocation: true``: it is left out of the model's catalog."""
+    path: str
+    """Its ``SKILL.md``, with forward slashes, relative to the workspace it was read from (from a live object) or
+    to the analysed root (from source). Never absolute."""
+    body: str
+    """The Markdown after the frontmatter, as written: what the model gets when it loads the skill."""
+
+
 class CapabilityInfo(WireModel):
     name: str
     """The class name; for a capability static analysis cannot name, the source text that builds it."""
@@ -190,6 +206,17 @@ class CapabilityInfo(WireModel):
     """``Toolset.id`` of each toolset of this blueprint that the capability gives the agent."""
     native_tools: list[str]
     """Kinds of the provider-side tools the capability gives the agent, for example ``"web_search"``."""
+    capability_id: str | None
+    """The id Pydantic AI knows the capability by, which ``load_capability`` takes for one loaded on demand.
+
+    From source, only an ``id=`` the source spells out.
+    """
+    stack: str | None
+    """The harness stack (``"Coder"``, ``"Researcher"``) that put the capability on the agent; ``None`` when the
+    agent was given it otherwise. Read from a live object only: from source it is ``None``."""
+    skills: list[SkillInfo]
+    """For a harness ``Skills`` capability, the skills it offers, in the order of the model's catalog; ``[]`` for
+    every other capability."""
 
 
 class AgentSettings(WireModel):
@@ -204,6 +231,9 @@ class AgentSettings(WireModel):
     The key is a field of this model, or ``model_settings.<key>`` for one model setting.
     The field itself is ``None`` (or the key is absent from ``model_settings``).
     """
+    defaults: list[str]
+    """Settings (``end_strategy``, ``tool_retries``, ``output_retries``, ``tool_timeout``) whose value is the one
+    Pydantic AI gives an agent that is not given it. Read from a live object only: from source it is ``[]``."""
 
 
 class Delegate(WireModel):

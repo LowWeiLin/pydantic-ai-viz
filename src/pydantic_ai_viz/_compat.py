@@ -52,6 +52,28 @@ HARNESS_STACK_HELPER_IDS = {"researcher_instructions": "Researcher"}
 """``id`` of a plain ``pydantic_ai.capabilities.Capability`` a stack builds as a helper -> that stack. A blueprint
 leaves it out when the stack's marker is there too."""
 
+HARNESS_STACK_MEMBERS: dict[str, tuple[str, ...]] = {
+    "Coder": ("FileSystem", "Shell", "RepoContext", "SubAgents", "ClearToolResults", "RepairToolArguments"),
+    "Researcher": ("WebSearch", "WebFetch", "SubAgents", "ToolOutputLimits"),
+}
+"""Classes of the public capabilities each stack puts after its marker, each at most once and in this order. The
+first capability after the marker that does not follow it (another class, a class again, or one out of order, as
+the agent moves a capability merged with a later one of the same id to that one's place) is one the agent was given
+otherwise, and so are those after it."""
+
+HARNESS_SKILLS_MODULE = "pydantic_ai_harness.skills"
+"""Package of the harness ``Skills`` capability, whose skills a blueprint lists."""
+SKILLS_SOURCES = "_sources"
+"""Private field of ``Skills`` holding each configuration it serves; each has a ``workspace`` (``None`` for the run's
+workspace)."""
+
+SUB_AGENTS_TOOL_NAME = "delegate_task"
+"""The default ``tool_name`` of the harness ``SubAgents``: the tool the model delegates a task with."""
+
+CAPABILITY_INSTRUCTIONS = "_instructions"
+"""Private field of ``pydantic_ai.capabilities.Capability`` holding what ``instructions=`` gave it, as
+``SourcedInstruction``s with an ``instruction`` each."""
+
 LOCAL_STRATEGY_METHOD = "_resolve_local_strategy"
 """Method of ``WebSearch`` and ``WebFetch`` that makes the tool ``local=True`` stands for. Static analysis reads
 it from the installed source to learn which tool that is."""
