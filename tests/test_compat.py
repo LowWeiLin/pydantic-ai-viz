@@ -6,15 +6,20 @@ half proves that, when it does, users get a degraded blueprint and not a crash.
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
+import pydantic_ai.capabilities
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_viz import AgentBlueprint, _compat, blueprint
+from pydantic_ai_viz._analyze._agents import _CAPABILITY_NATIVE_TOOLS
+from pydantic_ai_viz._capabilities import category_of
 
 
 class Answer(BaseModel):
@@ -96,6 +101,46 @@ def test_builtin_capability_names_match_the_installed_release() -> None:
     names = {type(capability).__name__ for capability in Agent().root_capability.capabilities}
     assert names <= _compat.BUILTIN_CAPABILITIES
     assert names == snapshot({"PendingMessageDrainCapability", "ToolSearch"})
+
+
+_CAPABILITY_BASES = frozenset(
+    {
+        "AbstractCapability",
+        "Capability",
+        "CombinedCapability",
+        "WrapperCapability",
+        "NativeOrLocalTool",
+        "DynamicCapability",
+    }
+)
+"""What ``pydantic_ai.capabilities`` exports to build capabilities with, rather than as capabilities of a kind."""
+
+
+def test_every_capability_of_the_installed_release_is_in_a_group_of_the_docs() -> None:
+    exported = [getattr(pydantic_ai.capabilities, name) for name in dir(pydantic_ai.capabilities)]
+    classes = [
+        cls
+        for cls in exported
+        if inspect.isclass(cls) and issubclass(cls, AbstractCapability) and cls.__name__ not in _CAPABILITY_BASES
+    ]
+    assert classes
+    assert [cls.__name__ for cls in classes if category_of(cls.__module__, cls.__name__) is None] == []
+
+
+@pytest.mark.parametrize(("name", "kind"), sorted(_CAPABILITY_NATIVE_TOOLS.items()))
+def test_static_analysis_knows_the_native_tool_each_capability_gives(name: str, kind: str) -> None:
+    capability = getattr(pydantic_ai.capabilities, name, None)
+    if capability is None:
+        pytest.skip(f"{name} is not in this release")
+    assert [tool.kind for tool in capability().get_native_tools()] == [kind]
+
+
+def test_a_toolset_a_capability_gives_still_names_the_capability() -> None:
+    def double(x: int) -> int:
+        return x * 2
+
+    capabilities = _blueprint(Agent(capabilities=[Capability(tools=[double])])).capabilities
+    assert capabilities[-1].toolsets == ["ts0"]
 
 
 def test_pydantic_ai_version_is_reported() -> None:

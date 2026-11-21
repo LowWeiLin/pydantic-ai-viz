@@ -464,14 +464,87 @@
           "title": "Builtin",
           "type": "boolean"
         },
+        "category": {
+          "enum": [
+            "harness",
+            "environment",
+            "tools",
+            "integration",
+            "web",
+            "reasoning",
+            "context",
+            "knowledge",
+            "safety",
+            "self_extension",
+            "runtime",
+            "loop",
+            "custom"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "deferred": {
+          "title": "Deferred",
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Details",
+          "type": "object"
+        },
+        "expressions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Expressions",
+          "type": "object"
+        },
         "name": {
           "title": "Name",
           "type": "string"
+        },
+        "native_tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Native Tools",
+          "type": "array"
+        },
+        "package": {
+          "anyOf": [
+            {
+              "enum": [
+                "pydantic_ai",
+                "pydantic_ai_harness"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Package"
+        },
+        "toolsets": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Toolsets",
+          "type": "array"
         }
       },
       "required": [
         "name",
-        "builtin"
+        "builtin",
+        "category",
+        "package",
+        "deferred",
+        "details",
+        "expressions",
+        "toolsets",
+        "native_tools"
       ],
       "title": "CapabilityInfo",
       "type": "object"

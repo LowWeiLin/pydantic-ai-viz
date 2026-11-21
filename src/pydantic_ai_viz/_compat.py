@@ -32,6 +32,12 @@ AGENT_PRIVATE_ATTRS: dict[str, str] = {
 OUTPUT_TOOLSET_TOOL_DEFS = "_tool_defs"
 """Private attribute of the agent's output toolset holding its ``ToolDefinition`` list."""
 
+CAPABILITY_OWNED_TOOLSET = "CapabilityOwnedToolset"
+"""Class name of the private wrapper (``pydantic_ai.toolsets._capability_owned``) that Pydantic AI puts
+around a toolset a capability gives the agent."""
+CAPABILITY_OWNED_OWNER = "capability"
+"""Its attribute holding the capability that gave the toolset."""
+
 MERMAID_MODULE = "pydantic_graph.graph_builder"
 MERMAID_FUNCTION = "build_mermaid_graph"
 """Importable, but not in ``pydantic_graph.graph_builder.__all__``."""

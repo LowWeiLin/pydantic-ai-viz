@@ -151,9 +151,45 @@ class OutputInfo(WireModel):
     """Where the output type is defined."""
 
 
+CapabilityCategory: TypeAlias = Literal[
+    "harness",
+    "environment",
+    "tools",
+    "integration",
+    "web",
+    "reasoning",
+    "context",
+    "knowledge",
+    "safety",
+    "self_extension",
+    "runtime",
+    "loop",
+    "custom",
+]
+"""The group of the Pydantic AI capabilities docs a capability is listed in, in the docs' order.
+
+``"custom"`` for every other capability: the project's own, another package's, or one this release does not know.
+"""
+
+
 class CapabilityInfo(WireModel):
     name: str
+    """The class name; for a capability static analysis cannot name, the source text that builds it."""
     builtin: bool
+    """One that Pydantic AI adds to every agent (``_compat.BUILTIN_CAPABILITIES``)."""
+    category: CapabilityCategory
+    package: Literal["pydantic_ai", "pydantic_ai_harness"] | None
+    """Where the class itself is defined, when that is Pydantic AI or the Pydantic AI harness; ``None`` otherwise."""
+    deferred: bool
+    """Given ``defer_loading=True``: the model loads it on demand."""
+    details: dict[str, JsonValue]
+    """What the capability was given, by parameter name: values only, secrets and defaults left out."""
+    expressions: dict[str, str]
+    """Parameters the source computes at run time: name -> source text. Static analysis only; ``{}`` otherwise."""
+    toolsets: list[str]
+    """``Toolset.id`` of each toolset of this blueprint that the capability gives the agent."""
+    native_tools: list[str]
+    """Kinds of the provider-side tools the capability gives the agent, for example ``"web_search"``."""
 
 
 class AgentSettings(WireModel):

@@ -89,6 +89,7 @@ def _paths(value: Any, prefix: tuple[str | int, ...] = ()) -> list[tuple[str | i
         "return_schema",
         "json_schema",
         "model_settings",
+        "details",
         "settings",
         "arguments",
         "result",
@@ -169,6 +170,8 @@ def test_unknown_fields_are_rejected_at_every_level() -> None:
         (1, ("agent", "toolsets", 0, "kind"), "magic"),
         (1, ("agent", "tools", 0, "kind"), "builtin"),
         (1, ("agent", "delegates", 0, "evidence"), "rumour"),
+        (1, ("agent", "capabilities", 0, "category"), "magic"),
+        (1, ("agent", "capabilities", 0, "package"), "pydantic_ai_slim"),
         (3, ("span", "trace_id"), "0AF7651916CD43DD8448EB211C80319C"),
         (3, ("span", "span_id"), "b7ad6b71"),
         (3, ("span", "status"), "done"),
@@ -208,6 +211,19 @@ def test_a_blueprint_read_from_code_carries_locations_and_expressions() -> None:
     agent["output"]["location"] = location
     agent["settings"]["expressions"] = {"tool_retries": "RETRIES", "model_settings.temperature": "TEMP"}
     agent["delegates"][0]["evidence"] = "code"
+    agent["capabilities"].append(
+        {
+            "name": "MCP",
+            "builtin": False,
+            "category": "tools",
+            "package": "pydantic_ai",
+            "deferred": True,
+            "details": {"effort": "high"},
+            "expressions": {"url": "os.environ['MCP_URL']"},
+            "toolsets": ["ts1"],
+            "native_tools": ["mcp_server"],
+        }
+    )
     assert to_wire(parse_envelope(json.dumps(line))) == line
 
     graph = _line(2)
