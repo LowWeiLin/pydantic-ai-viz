@@ -1,11 +1,12 @@
 /**
- * The agent blueprint canvas: the subject agent, its tools grouped by toolset, its output, and
- * the agents it can reach through delegation. With `overlay` the same picture shows a run: the
- * model chip pulses during a request, tools show their state and call count, edges move while
- * their target is running, and the output lights when the agent finishes.
+ * The agent blueprint canvas: the subject agent, its tools grouped by toolset, its output, its
+ * capabilities, and the agents it can reach through delegation. With `overlay` the same picture
+ * shows a run: the model chip pulses during a request, tools show their state and call count,
+ * edges move while their target is running, and the output lights when the agent finishes.
  */
 import type { Edge, Node } from "@xyflow/react";
 import { type ReactNode, useMemo } from "react";
+import { shownCapabilities } from "../data/model";
 import { type CanvasAgent, type CanvasModel, fileName } from "../data/selectors";
 import { CanvasFrame } from "./CanvasFrame";
 import { type EdgeState, edgeMarker, type FlowEdgeData } from "./edges";
@@ -13,6 +14,8 @@ import { agentLayoutKey, type LayoutNode, layoutAgentCanvas, SEEN_GROUP } from "
 import {
   type AgentNodeData,
   agentNodeTypes,
+  type CapabilitiesNodeData,
+  type CapabilityNodeData,
   Legend,
   type OutputNodeData,
   type PlaceholderNodeData,
@@ -20,6 +23,9 @@ import {
   type ToolsetNodeData,
 } from "./nodes";
 import { type CanvasTarget, targetNodeId } from "./targets";
+
+/** A capability's edge to the toolset it gives: quieter than the edges of a run. */
+const GIVES_TONE = "color-mix(in srgb, var(--kind-capability) 70%, transparent)";
 
 function toolEntry(agent: CanvasAgent, name: string) {
   for (const group of agent.toolsets) {
@@ -93,6 +99,22 @@ function nodeData(
         toolsetLabel: toolset.label,
       } satisfies PlaceholderNodeData;
     }
+    case "capabilities":
+      return { count: shownCapabilities(agent.blueprint).length } satisfies CapabilitiesNodeData;
+    case "capability": {
+      const index = Number(node.ref);
+      const capability = agent.blueprint.capabilities[index];
+      if (!capability) return null;
+      return {
+        agentId: node.agentId,
+        index,
+        capability,
+        toolsets: capability.toolsets.map(
+          (id) => agent.blueprint.toolsets.find((toolset) => toolset.id === id)?.label ?? id,
+        ),
+        selected: isChosen,
+      } satisfies CapabilityNodeData;
+    }
   }
 }
 
@@ -121,8 +143,11 @@ export function buildAgentFlow(
       data,
       ...(node.parentId ? { parentId: node.parentId, extent: "parent" as const } : {}),
       // Toolset boxes sit behind their rows. Only the box's own button takes clicks, so the
-      // group of tools seen in a run, which has none, lets them through to the canvas.
-      ...(node.kind === "toolset" ? { zIndex: -1, style: { pointerEvents: "none" as const } } : {}),
+      // group of tools seen in a run and the box of capabilities, which have none, let them
+      // through to the canvas.
+      ...(node.kind === "toolset" || node.kind === "capabilities"
+        ? { zIndex: -1, style: { pointerEvents: "none" as const } }
+        : {}),
     });
   }
 
@@ -145,6 +170,11 @@ export function buildAgentFlow(
     } else if (edge.kind === "output") {
       tone = "var(--kind-output)";
       if (overlay && agent.outputReady) state = "done";
+    } else if (edge.kind === "gives") {
+      // Structure, not activity: always in the capability colour, never moving.
+      tone = GIVES_TONE;
+      dashed = true;
+      state = "done";
     } else {
       const delegation = model.delegations.find(
         (d) =>
@@ -178,20 +208,30 @@ export function buildAgentFlow(
       target: edge.target,
       sourceHandle: edge.back ? "loop-out" : "out",
       targetHandle: edge.back ? "loop-in" : edge.lane !== null ? "down" : "in",
-      ...(edge.kind === "flow" ? {} : { markerEnd: edgeMarker(state, tone) }),
+      ...(edge.kind === "flow" || edge.kind === "gives"
+        ? {}
+        : { markerEnd: edgeMarker(state, tone) }),
       data: { state, tone, back: edge.back, label, dashed, lane: edge.lane },
     });
   }
   return { nodes, edges };
 }
 
-function LegendLine({ dashed, children }: { dashed: boolean; children: string }) {
+function LegendLine({
+  dashed,
+  stroke = dashed ? "var(--border-strong)" : "var(--kind-agent)",
+  children,
+}: {
+  dashed: boolean;
+  stroke?: string;
+  children: string;
+}) {
   return (
     <li className="flex items-center gap-1.5">
       <svg aria-hidden="true" width="22" height="6">
         <path
           d="M0 3h22"
-          stroke={dashed ? "var(--border-strong)" : "var(--kind-agent)"}
+          stroke={stroke}
           strokeWidth="1.5"
           strokeDasharray={dashed ? "4 4" : undefined}
         />
@@ -231,6 +271,7 @@ export function AgentCanvas({
   // line solid at any moment, so there the key always has both.
   const seen = overlay || model.delegations.some((d) => d.evidence === "observed");
   const written = overlay || model.delegations.some((d) => d.evidence !== "observed");
+  const gives = layout.edges.some((edge) => edge.kind === "gives");
   return (
     <CanvasFrame
       label={`${overlay ? "Run on the blueprint" : "Blueprint"} of ${subject?.blueprint.label ?? "agent"}`}
@@ -242,10 +283,19 @@ export function AgentCanvas({
       onClear={onClear}
       topLeft={topLeft}
       bottomRight={
-        model.delegations.length > 0 ? (
+        model.delegations.length > 0 || gives ? (
           <Legend>
-            {written && <LegendLine dashed>delegation found in code</LegendLine>}
-            {seen && <LegendLine dashed={false}>delegation seen in a run</LegendLine>}
+            {model.delegations.length > 0 && written && (
+              <LegendLine dashed>delegation found in code</LegendLine>
+            )}
+            {model.delegations.length > 0 && seen && (
+              <LegendLine dashed={false}>delegation seen in a run</LegendLine>
+            )}
+            {gives && (
+              <LegendLine dashed stroke={GIVES_TONE}>
+                capability gives toolset
+              </LegendLine>
+            )}
           </Legend>
         ) : undefined
       }

@@ -200,6 +200,14 @@ const SCREENS: { name: string; open: (page: Page) => Promise<void> }[] = [
     },
   },
   {
+    name: "blueprint-only view: an agent's capabilities, one picked on the canvas",
+    open: async (page) => {
+      await page.goto(`${FX}?src=recordings/blueprint/capabilities.pviz.jsonl#/agents/a1`);
+      await canvasNode(page, /^Capability Skills, /).click();
+      await expect(page.getByRole("complementary", { name: /details/ })).toContainText("On demand");
+    },
+  },
+  {
     name: "run view, a toolset picked on the canvas",
     open: async (page) => {
       await openRun(page, "sample", TRIAGE);

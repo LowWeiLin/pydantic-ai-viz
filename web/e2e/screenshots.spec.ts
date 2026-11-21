@@ -1,8 +1,8 @@
 /**
- * The docs screenshots (spec section 7): eight PNGs at 1440x900, device scale 2.
+ * The docs screenshots (spec section 7): ten PNGs at 1440x900, device scale 2.
  *
- *   PVIZ_RECORDINGS_DIR   directory holding the real demo recordings (support, research and
- *                         pipeline `.pviz.jsonl`, and `source.pviz.jsonl`, the demos read from
+ *   PVIZ_RECORDINGS_DIR   directory holding the real demo recordings (support, research,
+ *                         pipeline and capabilities `.pviz.jsonl`, and `source.pviz.jsonl`, the demos read from
  *                         source), as written by `scripts/build_demo_site.py`.
  *                         Not set: the committed fixtures stand in, so the spec always runs.
  *   PVIZ_SCREENSHOTS_DIR  where to write. Default: `docs/assets/screenshots` when the real
@@ -15,7 +15,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
-import type { Envelope, Span } from "../src/wire";
+import type { AgentBlueprint, Envelope, Span } from "../src/wire";
 import {
   canvasNode,
   finalSpans,
@@ -71,20 +71,41 @@ function source(): { url: string; hash: string } {
   return { url: "/fx/?src=recordings/blueprint/newsroom.pviz.jsonl", hash: "#/agents/a1" };
 }
 
+/**
+ * The capabilities demo's agent, its web search capability picked: the real recording, or the
+ * blueprint-only fixture, which the server keeps apart.
+ */
+function capabilities(): string {
+  const recording: Recording = real
+    ? load("capabilities")
+    : {
+        file: "blueprint/capabilities.pviz.jsonl",
+        events: readRecording(path.join(fixturesDir, "blueprint", "capabilities.pviz.jsonl")),
+        spans: [],
+      };
+  const agent = blueprint(recording, "briefing");
+  const index = agent.capabilities.findIndex((capability) => capability.name === "WebSearch");
+  const hash = `#/agents/${agent.id}?part=capability%3A${index}`;
+  return real ? src(recording, hash) : `/fx/?src=recordings/${recording.file}${hash}`;
+}
+
 const agentRun = (recording: Recording): Span =>
   rootSpan(recording.events, (span) => span.kind === "agent_run");
 const graphRun = (recording: Recording): Span =>
   rootSpan(recording.events, (span) => span.kind === "graph_run");
 
-/** Id of the blueprint for an agent name (the last one emitted wins, as in the viewer). */
-function blueprintId(recording: Recording, agentName: string | null): string {
-  let id: string | null = null;
+/** The blueprint for an agent name (the last one emitted wins, as in the viewer). */
+function blueprint(recording: Recording, agentName: string | null): AgentBlueprint {
+  let found: AgentBlueprint | null = null;
   for (const event of recording.events) {
-    if (event.type === "blueprint.agent" && event.agent.name === agentName) id = event.agent.id;
+    if (event.type === "blueprint.agent" && event.agent.name === agentName) found = event.agent;
   }
-  if (!id) throw new Error(`${recording.file} has no blueprint for agent ${agentName}`);
-  return id;
+  if (!found) throw new Error(`${recording.file} has no blueprint for agent ${agentName}`);
+  return found;
 }
+
+const blueprintId = (recording: Recording, agentName: string | null): string =>
+  blueprint(recording, agentName).id;
 
 /**
  * How many "step forward" presses from the start reach the busiest moment of a run: the span
@@ -176,6 +197,19 @@ for (const scheme of ["dark", "light"] as const) {
       const inspector = page.getByRole("complementary", { name: /details/ });
       await expect(inspector.getByText("From source")).toBeVisible();
       await shoot(page, `view-${scheme}.png`);
+    });
+  });
+
+  test.describe(`capabilities, ${scheme}`, () => {
+    test.use({ colorScheme: scheme });
+    // An agent built from capabilities: grouped by kind under its card, the toolsets they give
+    // linked to them, and the picked one explained in the inspector.
+    test(`capabilities-${scheme}.png`, async ({ page }) => {
+      await page.goto(capabilities());
+      await expect(canvasNode(page, /^Capability WebSearch, /)).toBeVisible();
+      const inspector = page.getByRole("complementary", { name: /details/ });
+      await expect(inspector.getByRole("heading", { name: "WebSearch" })).toBeVisible();
+      await shoot(page, `capabilities-${scheme}.png`);
     });
   });
 }

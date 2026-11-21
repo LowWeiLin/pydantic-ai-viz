@@ -20,6 +20,8 @@ export type CanvasTarget =
   /** The box that groups a toolset's tools; its placeholder row picks it too. */
   | { kind: "toolset"; agentId: string; toolsetId: string }
   | { kind: "output"; agentId: string }
+  /** A capability the canvas lists under its agent; `index` is into `blueprint.capabilities`. */
+  | { kind: "capability"; agentId: string; index: number }
   | { kind: "graphNode"; nodeId: string };
 
 export const agentNodeId = (agentId: string): string => `agent:${agentId}`;
@@ -27,6 +29,8 @@ export const toolNodeId = (agentId: string, name: string): string => `tool:${age
 export const toolsetNodeId = (agentId: string, toolsetId: string): string =>
   `toolset:${agentId}:${toolsetId}`;
 export const outputNodeId = (agentId: string): string => `output:${agentId}`;
+export const capabilityNodeId = (agentId: string, index: number): string =>
+  `capability:${agentId}:${index}`;
 export const graphNodeId = (nodeId: string): string => `node:${nodeId}`;
 
 /** The canvas node a target lives on. The model chip is part of its agent's card. */
@@ -41,6 +45,8 @@ export function targetNodeId(target: CanvasTarget): string {
       return toolsetNodeId(target.agentId, target.toolsetId);
     case "output":
       return outputNodeId(target.agentId);
+    case "capability":
+      return capabilityNodeId(target.agentId, target.index);
     case "graphNode":
       return graphNodeId(target.nodeId);
   }
@@ -51,7 +57,7 @@ export const sameTarget = (a: CanvasTarget | null, b: CanvasTarget | null): bool
 
 /**
  * A part of an agent as the `?part=` of the agent's link: "tool:<name>", "toolset:<id>",
- * "model" or "output". The agent itself, and a graph node, have none.
+ * "capability:<index>", "model" or "output". The agent itself, and a graph node, have none.
  */
 export function partOf(target: CanvasTarget): string | undefined {
   switch (target.kind) {
@@ -59,6 +65,8 @@ export function partOf(target: CanvasTarget): string | undefined {
       return `tool:${target.name}`;
     case "toolset":
       return `toolset:${target.toolsetId}`;
+    case "capability":
+      return `capability:${target.index}`;
     case "model":
     case "output":
       return target.kind;
@@ -78,12 +86,17 @@ export function parsePart(agentId: string, part: string | undefined): CanvasTarg
   if (name === "") return null;
   if (kind === "tool") return { kind: "tool", agentId, name };
   if (kind === "toolset") return { kind: "toolset", agentId, toolsetId: name };
+  if (kind === "capability" && /^\d+$/.test(name)) {
+    const index = Number(name);
+    return Number.isSafeInteger(index) ? { kind: "capability", agentId, index } : null;
+  }
   return null;
 }
 
 /**
- * Whether the agent has the tool or toolset a target names. A link from another session, or
- * one edited by hand, may name one that is not there; the agent itself is shown instead.
+ * Whether the agent has the tool, toolset or capability a target names. A link from another
+ * session, or one edited by hand, may name one that is not there; the agent itself is shown
+ * instead.
  */
 export function agentHas(agent: AgentBlueprint, target: CanvasTarget): boolean {
   switch (target.kind) {
@@ -91,6 +104,8 @@ export function agentHas(agent: AgentBlueprint, target: CanvasTarget): boolean {
       return agent.tools.some((tool) => tool.name === target.name);
     case "toolset":
       return agent.toolsets.some((toolset) => toolset.id === target.toolsetId);
+    case "capability":
+      return target.agentId === agent.id && target.index < agent.capabilities.length;
     case "graphNode":
       return false;
     default:
@@ -131,8 +146,10 @@ function agentActivity(model: CanvasModel, target: CanvasTarget): Activity | nul
   const agent = model.agents.find((a) => a.blueprint.id === target.agentId);
   if (!agent) return null;
   switch (target.kind) {
-    // A toolset is never a span of its own: picking it shows its blueprint, also in a run.
+    // A toolset or a capability is never a span of its own: picking one shows its blueprint,
+    // also in a run.
     case "toolset":
+    case "capability":
       return null;
     case "agent":
     case "output":

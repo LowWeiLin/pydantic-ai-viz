@@ -8,6 +8,7 @@ import { useViewer } from "../data/store";
 import type { GraphBlueprint } from "../wire";
 import {
   AgentInspector,
+  CapabilityInspector,
   GraphInspector,
   GraphNodeInspector,
   ToolInspector,
@@ -62,6 +63,10 @@ export function BlueprintInspector({
     if (agent && target.kind === "toolset") {
       const toolset = agent.toolsets.find((t) => t.id === target.toolsetId);
       if (toolset) return <ToolsetInspector agent={agent} toolset={toolset} />;
+    }
+    if (agent && target.kind === "capability") {
+      const capability = agent.capabilities[target.index];
+      if (capability) return <CapabilityInspector agent={agent} capability={capability} />;
     }
     if (agent) return <AgentInspector agent={agent} reveal={reveal} />;
   }

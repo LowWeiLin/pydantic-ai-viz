@@ -6,6 +6,7 @@
  *               Capabilities · Mermaid
  *   toolset     Tools · Definition
  *   tool        Parameters · Returns · Definition
+ *   capability  Definition
  *   graph       Warnings · Types · Nodes · Mermaid
  *   graph node  Node · Comes from · Leads to
  *
@@ -16,6 +17,14 @@
 import { type ReactNode, useMemo } from "react";
 import { graphNodeLabel, nodeKind } from "../canvas/layout";
 import { agentMermaid } from "../data/mermaid";
+import {
+  CAPABILITY_CATEGORIES,
+  capabilityCategory,
+  categoryNames,
+  foldedAway,
+  type ShownCapability,
+  shownCapabilities,
+} from "../data/model";
 import { canvasModel, fileName } from "../data/selectors";
 import { useViewer } from "../data/store";
 import { Facts } from "../screens/parts";
@@ -28,7 +37,6 @@ import { SchemaTable } from "../ui/SchemaTable";
 import type {
   AgentBlueprint,
   Capability,
-  CapabilityCategory,
   Delegate,
   GraphBlueprint,
   GraphNode,
@@ -378,24 +386,6 @@ function AgentMermaid({ agent }: { agent: AgentBlueprint }) {
   return source === null ? null : <MermaidSource source={source} />;
 }
 
-/** The groups of the Pydantic AI capabilities docs, in the docs' order. */
-export const CAPABILITY_CATEGORIES: [CapabilityCategory, string][] = [
-  ["harness", "Harnesses"],
-  ["environment", "Execution environments"],
-  ["tools", "Tools & native abilities"],
-  ["integration", "Integrations"],
-  ["web", "Web & research"],
-  ["reasoning", "Reasoning, planning & delegation"],
-  ["context", "Context management"],
-  ["knowledge", "Knowledge & memory"],
-  ["safety", "Control & safety"],
-  ["self_extension", "Self-extension"],
-  ["runtime", "Execution runtime"],
-  ["loop", "Loop customization"],
-  ["custom", "Custom"],
-];
-const categoryIds = new Set<string>(CAPABILITY_CATEGORIES.map(([id]) => id));
-
 function DetailValue({ value }: { value: Json }) {
   if (typeof value === "string") return <code className="break-all">{value}</code>;
   if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
@@ -412,58 +402,69 @@ function DetailValue({ value }: { value: Json }) {
   return <code>{JSON.stringify(value)}</code>;
 }
 
-function CapabilityItem({ agent, item }: { agent: AgentBlueprint; item: Capability }) {
+/** Where a capability is defined (Core, Harness) and whether it loads on demand. */
+function CapabilityChips({ item }: { item: Capability }) {
+  return (
+    <>
+      {item.package === "pydantic_ai" && <Chip>Core</Chip>}
+      {item.package === "pydantic_ai_harness" && <Chip>Harness</Chip>}
+      {item.deferred && <Chip tone="accent">on demand</Chip>}
+    </>
+  );
+}
+
+/** What a capability was given, and the toolsets and provider-side tools it gives the agent. */
+const capabilityFacts = (agent: AgentBlueprint, item: Capability): Fact[] =>
+  known([
+    ...Object.entries(item.details).map(
+      ([key, value]): Fact => [key, <DetailValue key={key} value={value} />],
+    ),
+    ...Object.entries(item.expressions).map(
+      ([key, code]): Fact => [key, <Expression key={key} code={code} hint={false} />],
+    ),
+    item.toolsets.length > 0 && [
+      "Toolsets",
+      <span key="toolsets" className="flex flex-wrap gap-x-3 gap-y-1">
+        {item.toolsets.map((id) => (
+          <PickLink key={id} target={{ kind: "toolset", agentId: agent.id, toolsetId: id }}>
+            {agent.toolsets.find((t) => t.id === id)?.label ?? id}
+          </PickLink>
+        ))}
+      </span>,
+    ],
+    item.native_tools.length > 0 && [
+      "Provider-side tools",
+      <span key="native" className="flex flex-wrap gap-1.5">
+        {item.native_tools.map((kind) => (
+          <Chip key={kind} tone="tool" mono>
+            {kind}
+          </Chip>
+        ))}
+      </span>,
+    ],
+  ]);
+
+function CapabilityItem({ agent, entry }: { agent: AgentBlueprint; entry: ShownCapability }) {
+  const { capability: item, index } = entry;
   return (
     <li className="flex flex-col gap-1.5 text-ui">
       <div className="flex flex-wrap items-center gap-1.5">
-        <Chip mono>{item.name}</Chip>
-        {item.package === "pydantic_ai" && <Chip>Core</Chip>}
-        {item.package === "pydantic_ai_harness" && <Chip>Harness</Chip>}
-        {item.deferred && <Chip tone="accent">on demand</Chip>}
+        <PickLink
+          target={{ kind: "capability", agentId: agent.id, index }}
+          className="break-all font-medium font-mono text-data text-fg"
+        >
+          {item.name}
+        </PickLink>
+        <CapabilityChips item={item} />
       </div>
-      <Facts
-        items={known([
-          ...Object.entries(item.details).map(
-            ([key, value]): Fact => [key, <DetailValue key={key} value={value} />],
-          ),
-          ...Object.entries(item.expressions).map(
-            ([key, code]): Fact => [key, <Expression key={key} code={code} hint={false} />],
-          ),
-          item.toolsets.length > 0 && [
-            "Toolsets",
-            <span key="toolsets" className="flex flex-wrap gap-x-3 gap-y-1">
-              {item.toolsets.map((id) => (
-                <PickLink key={id} target={{ kind: "toolset", agentId: agent.id, toolsetId: id }}>
-                  {agent.toolsets.find((t) => t.id === id)?.label ?? id}
-                </PickLink>
-              ))}
-            </span>,
-          ],
-          item.native_tools.length > 0 && [
-            "Provider-side tools",
-            <span key="native" className="flex flex-wrap gap-1.5">
-              {item.native_tools.map((kind) => (
-                <Chip key={kind} tone="tool" mono>
-                  {kind}
-                </Chip>
-              ))}
-            </span>,
-          ],
-        ])}
-      />
+      <Facts items={capabilityFacts(agent, item)} />
     </li>
   );
 }
 
 function agentSections(agent: AgentBlueprint): SectionItem[] {
-  // A built-in capability the agent configures (`ToolSearch(max_results=3)`) is listed with the rest.
-  // Native tools do not count: the default `ToolSearch` always gives one.
-  const configured = (c: Capability) =>
-    Object.keys(c.details).length > 0 ||
-    Object.keys(c.expressions).length > 0 ||
-    c.toolsets.length > 0;
-  const builtin = agent.capabilities.filter((c) => c.builtin && !configured(c));
-  const custom = agent.capabilities.filter((c) => !c.builtin || configured(c));
+  const shown = shownCapabilities(agent);
+  const builtin = agent.capabilities.filter(foldedAway);
   return present([
     warningsSection(agent.warnings),
     modelSection(agent),
@@ -590,13 +591,11 @@ function agentSections(agent: AgentBlueprint): SectionItem[] {
     agent.capabilities.length > 0 && {
       id: "capabilities",
       title: "Capabilities",
-      aside: custom.length > 0 ? String(custom.length) : undefined,
+      aside: shown.length > 0 ? String(shown.length) : undefined,
       content: (
         <>
           {CAPABILITY_CATEGORIES.map(([id, label]) => {
-            const members = custom.filter(
-              (c) => (categoryIds.has(c.category) ? c.category : "custom") === id,
-            );
+            const members = shown.filter((entry) => capabilityCategory(entry.capability) === id);
             return (
               members.length > 0 && (
                 <section key={id} aria-label={label} className="flex flex-col gap-2">
@@ -604,8 +603,8 @@ function agentSections(agent: AgentBlueprint): SectionItem[] {
                     {label} <Badge>{members.length}</Badge>
                   </h5>
                   <ul className="m-0 flex list-none flex-col gap-3 p-0">
-                    {members.map((item, i) => (
-                      <CapabilityItem key={`${item.name}-${i}`} agent={agent} item={item} />
+                    {members.map((entry) => (
+                      <CapabilityItem key={entry.index} agent={agent} entry={entry} />
                     ))}
                   </ul>
                 </section>
@@ -820,7 +819,9 @@ const TOOLSET_KINDS: Record<string, string> = {
 
 export function ToolsetInspector({ agent, toolset }: { agent: AgentBlueprint; toolset: Toolset }) {
   const tools = toolsOf(agent, toolset);
-  const owners = agent.capabilities.filter((c) => c.toolsets.includes(toolset.id));
+  const owners = agent.capabilities.flatMap((capability, index) =>
+    capability.toolsets.includes(toolset.id) ? [{ capability, index }] : [],
+  );
   return (
     <>
       <InspectorHeader tone="tool" icon="toolset" kind="Toolset" title={toolset.label}>
@@ -903,11 +904,15 @@ export function ToolsetInspector({ agent, toolset }: { agent: AgentBlueprint; to
                   ],
                   owners.length > 0 && [
                     "Given by",
-                    <span key="owners" className="flex flex-wrap gap-1.5">
-                      {owners.map((c) => (
-                        <Chip key={c.name} mono>
-                          {c.name}
-                        </Chip>
+                    <span key="owners" className="flex flex-wrap gap-x-3 gap-y-1">
+                      {owners.map(({ capability, index }) => (
+                        <PickLink
+                          key={index}
+                          target={{ kind: "capability", agentId: agent.id, index }}
+                          className="break-all font-mono text-data"
+                        >
+                          {capability.name}
+                        </PickLink>
                       ))}
                     </span>,
                   ],
@@ -918,6 +923,57 @@ export function ToolsetInspector({ agent, toolset }: { agent: AgentBlueprint; to
                 ])}
               />
             ),
+          },
+        ]}
+      />
+    </>
+  );
+}
+
+// ---------- capability ----------
+
+export function CapabilityInspector({
+  agent,
+  capability,
+}: {
+  agent: AgentBlueprint;
+  capability: Capability;
+}) {
+  const facts = known([
+    capability.deferred && ["Loaded", "On demand, when the model asks for it"],
+    ...capabilityFacts(agent, capability),
+  ]);
+  return (
+    <>
+      <InspectorHeader
+        tone="neutral"
+        icon="capability"
+        kind="Capability"
+        title={capability.name}
+        mono
+      >
+        <OfAgent agent={agent} />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <CapabilityChips item={capability} />
+          <span className="text-muted text-ui">{categoryNames(capability).label}</span>
+        </div>
+        {capability.builtin && <Note>Added by Pydantic AI to every agent.</Note>}
+      </InspectorHeader>
+      <Sections
+        label="Capability"
+        items={[
+          {
+            id: "definition",
+            title: "Definition",
+            content:
+              facts.length > 0 ? (
+                <Facts items={facts} />
+              ) : (
+                <Note>
+                  It was given nothing the blueprint records, and gives the agent no toolset or
+                  provider-side tool.
+                </Note>
+              ),
           },
         ]}
       />

@@ -146,6 +146,9 @@
   .tone-graph {
     --tone: var(--kind-graph);
   }
+  .tone-capability {
+    --tone: var(--kind-capability);
+  }
   .tone-ok {
     --tone: var(--ok);
   }

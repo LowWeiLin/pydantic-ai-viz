@@ -1,17 +1,18 @@
 /** What the canvases hand to React Flow, and how spans map onto canvas nodes. */
 import { describe, expect, test } from "vitest";
 import { canvasModel, graphCanvasModel, type RunView, runs, runView } from "../data/selectors";
-import { fixtureState } from "../test/factory";
+import { agentBlueprint, capability, fixtureState, stateOf } from "../test/factory";
 import type { Span } from "../wire";
 import { buildAgentFlow } from "./AgentCanvas";
 import { arcPath, type FlowEdgeData, lanePath } from "./edges";
 import { buildGraphFlow } from "./GraphCanvas";
-import { activityPhrase, graphNodeState, modelIsComputed } from "./nodes";
+import { activityPhrase, capabilityName, graphNodeState, modelIsComputed } from "./nodes";
 import { agentModelSignature, graphModelSignature } from "./signature";
 import {
   agentHas,
   agentNodeId,
   type CanvasTarget,
+  capabilityNodeId,
   graphNodeId,
   latestSpanFor,
   outputNodeId,
@@ -199,6 +200,118 @@ describe("agent canvas flow", () => {
   });
 });
 
+describe("capabilities on the agent canvas", () => {
+  const blueprint = agentBlueprint({
+    id: "a1",
+    toolsets: [
+      {
+        id: "ts0",
+        toolset_id: "web_search",
+        label: "FunctionToolset 'web_search'",
+        kind: "function",
+        wrappers: ["CapabilityOwnedToolset"],
+        opaque: false,
+        expression: null,
+        location: null,
+      },
+    ],
+    tools: [
+      {
+        name: "search_archive",
+        toolset: "ts0",
+        description: null,
+        parameters_schema: {},
+        return_schema: null,
+        kind: "function",
+        takes_ctx: null,
+        is_async: null,
+        max_retries: null,
+        function: null,
+        origin: "object",
+        location: null,
+        library_version: null,
+      },
+    ],
+    capabilities: [
+      capability({ name: "ToolSearch", builtin: true, category: "context", native_tools: ["x"] }),
+      capability({
+        name: "WebSearch",
+        category: "web",
+        package: "pydantic_ai",
+        toolsets: ["ts0"],
+        native_tools: ["web_search"],
+        deferred: true,
+      }),
+      capability({ name: "Thinking", category: "reasoning", package: "pydantic_ai" }),
+    ],
+  });
+  const model = canvasModel(
+    stateOf([1, { type: "blueprint.agent", agent: blueprint }]),
+    "a1",
+    null,
+  );
+  if (!model) throw new Error("expected a model");
+
+  test("a box of rows, the built-in ones left out, and a dashed edge to the toolset given", () => {
+    const { nodes, edges } = buildAgentFlow(model, false, []);
+    const box = nodes.find((node) => node.type === "capabilities");
+    expect(box).toMatchObject({ id: "capabilities:a1", zIndex: -1, data: { count: 2 } });
+    const rows = nodes.filter((node) => node.type === "capability");
+    expect(rows.map((node) => node.id)).toEqual([
+      capabilityNodeId("a1", 1),
+      capabilityNodeId("a1", 2),
+    ]);
+    expect(rows[0]).toMatchObject({
+      parentId: "capabilities:a1",
+      data: {
+        agentId: "a1",
+        index: 1,
+        toolsets: ["FunctionToolset 'web_search'"],
+        selected: false,
+      },
+    });
+    const gives = edges.filter((edge) => edge.id.startsWith("gives:"));
+    expect(gives).toHaveLength(1);
+    expect(gives[0]).toMatchObject({
+      type: "flow",
+      source: capabilityNodeId("a1", 1),
+      target: toolsetNodeId("a1", "ts0"),
+      sourceHandle: "out",
+      targetHandle: "in",
+      data: { dashed: true, state: "done", label: null },
+    });
+    expect(gives[0]?.data?.tone).toContain("--kind-capability");
+    expect(gives[0]?.markerEnd).toBeUndefined();
+    // A run does not change it.
+    expect(buildAgentFlow(model, true, []).edges.find((e) => e.id === gives[0]?.id)?.data).toEqual(
+      gives[0]?.data,
+    );
+  });
+
+  test("a picked capability is outlined; its spoken name says what it gives", () => {
+    const picked = { kind: "capability", agentId: "a1", index: 2 } as const;
+    expect(targetNodeId(picked)).toBe(capabilityNodeId("a1", 2));
+    const { nodes } = buildAgentFlow(model, false, [picked]);
+    expect(nodes.filter((node) => node.data.selected).map((node) => node.id)).toEqual([
+      capabilityNodeId("a1", 2),
+    ]);
+    const [, webSearch, thinking] = blueprint.capabilities;
+    if (!webSearch || !thinking) throw new Error("expected capabilities");
+    expect(capabilityName(webSearch, ["FunctionToolset 'web_search'"])).toBe(
+      "Capability WebSearch, Web & research, gives toolset FunctionToolset 'web_search', " +
+        "provider-side tool web_search, on demand",
+    );
+    expect(capabilityName(thinking, [])).toBe(
+      "Capability Thinking, Reasoning, planning & delegation",
+    );
+    expect(
+      capabilityName(capability({ name: "X", category: "quantum" as never }), ["a", "b"]),
+    ).toBe("Capability X, Custom, gives toolsets a, b");
+    // No span is a capability's own: a pick in a run shows its blueprint.
+    expect(latestSpanFor(model, picked)).toBeNull();
+  });
+});
+
 describe("graph canvas flow", () => {
   const model = (view: RunView | null) => {
     const built = graphCanvasModel(sample, "g1", view);
@@ -303,6 +416,8 @@ describe("targets", () => {
       // Whatever a tool's name holds after the first colon is its name.
       [{ kind: "tool", agentId: "a1", name: "ns:get" }, "tool:ns:get"],
       [{ kind: "toolset", agentId: "a1", toolsetId: "ts1" }, "toolset:ts1"],
+      [{ kind: "capability", agentId: "a1", index: 0 }, "capability:0"],
+      [{ kind: "capability", agentId: "a1", index: 12 }, "capability:12"],
       [{ kind: "model", agentId: "a1" }, "model"],
       [{ kind: "output", agentId: "a1" }, "output"],
     ];
@@ -313,7 +428,21 @@ describe("targets", () => {
     // The agent itself is the screen without a part; a graph node is no part of an agent.
     expect(partOf({ kind: "agent", agentId: "a1" })).toBeUndefined();
     expect(partOf({ kind: "graphNode", nodeId: "write" })).toBeUndefined();
-    for (const part of [undefined, "", "tool:", "tool", "agent:a1", "graphNode:write", "nope:x"]) {
+    for (const part of [
+      undefined,
+      "",
+      "tool:",
+      "tool",
+      "agent:a1",
+      "graphNode:write",
+      "nope:x",
+      "capability:",
+      "capability:-1",
+      "capability:1.5",
+      "capability:x",
+      "capability:1e3",
+      "capability:99999999999999999999",
+    ]) {
       expect(parsePart("a1", part)).toBeNull();
     }
   });
@@ -328,6 +457,10 @@ describe("targets", () => {
     expect(agentHas(agent, { kind: "toolset", agentId: "a1", toolsetId: "ts99" })).toBe(false);
     expect(agentHas(agent, { kind: "output", agentId: "a1" })).toBe(true);
     expect(agentHas(agent, { kind: "model", agentId: "a2" })).toBe(false);
+    const last = agent.capabilities.length - 1;
+    expect(agentHas(agent, { kind: "capability", agentId: "a1", index: last })).toBe(true);
+    expect(agentHas(agent, { kind: "capability", agentId: "a1", index: last + 1 })).toBe(false);
+    expect(agentHas(agent, { kind: "capability", agentId: "a2", index: 0 })).toBe(false);
     expect(agentHas(agent, { kind: "graphNode", nodeId: "write" })).toBe(false);
   });
 });

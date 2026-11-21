@@ -1,8 +1,9 @@
 // @vitest-environment node
 import { describe, expect, test } from "vitest";
 import { canvasModel } from "../data/selectors";
-import { agentBlueprint, fixtureState, graphBlueprint, stateOf } from "../test/factory";
+import { agentBlueprint, capability, fixtureState, graphBlueprint, stateOf } from "../test/factory";
 import type { AgentBlueprint, Event, GraphBlueprint } from "../wire";
+import { arcPath } from "./edges";
 import {
   agentLayoutKey,
   backEdges,
@@ -18,7 +19,14 @@ import {
   SIZE,
   toolGroups,
 } from "./layout";
-import { agentNodeId, graphNodeId, outputNodeId, toolNodeId } from "./targets";
+import {
+  agentNodeId,
+  capabilityNodeId,
+  graphNodeId,
+  outputNodeId,
+  toolNodeId,
+  toolsetNodeId,
+} from "./targets";
 
 const sample = fixtureState("sample.pviz.jsonl");
 
@@ -288,6 +296,194 @@ describe("layoutAgentCanvas", () => {
     expect(again && agentLayoutKey(again)).toBe(key);
     const other = canvasModel(sample, "a2", null);
     expect(other && agentLayoutKey(other)).not.toBe(key);
+  });
+});
+
+describe("capabilities on the agent canvas", () => {
+  const builtins = [
+    capability({ name: "ToolSearch", builtin: true, category: "context", native_tools: ["x"] }),
+    capability({ name: "PendingMessageDrainCapability", builtin: true, category: "runtime" }),
+  ];
+  const layoutOf = (...agents: AgentBlueprint[]) => {
+    const model = canvasModel(stateWith(...agents), agents[0]?.id ?? "", null);
+    if (!model) throw new Error("expected a model");
+    return { model, layout: layoutAgentCanvas(model) };
+  };
+  const find = (nodes: LayoutNode[], id: string): LayoutNode => {
+    const found = nodes.find((n) => n.id === id);
+    if (!found) throw new Error(`no node ${id}`);
+    return found;
+  };
+
+  test("an agent with only the built-in ones is laid out as one with none", () => {
+    const plain = agentBlueprint({ id: "a1", toolsets: [toolset("ts0")], tools: [tool("a")] });
+    const folded = { ...plain, capabilities: builtins };
+    const without = layoutOf(plain);
+    const withBuiltins = layoutOf(folded);
+    expect(withBuiltins.layout).toEqual(without.layout);
+    expect(withBuiltins.layout.nodes.map((n) => n.kind)).not.toContain("capabilities");
+  });
+
+  test("a box under the card lists them by docs group, and links each to the toolsets it gives", () => {
+    const { layout } = layoutOf(
+      agentBlueprint({
+        id: "a1",
+        toolsets: [toolset("ts0"), toolset("ts1"), toolset("empty")],
+        tools: [tool("a"), tool("b", "ts1")],
+        capabilities: [
+          ...builtins,
+          capability({ name: "Memory", category: "knowledge", toolsets: ["ts1"] }),
+          capability({ name: "Thinking", category: "reasoning" }),
+          // Gives a toolset with no tools, which the canvas leaves out: no edge.
+          capability({ name: "Hollow", category: "tools", toolsets: ["empty"] }),
+        ],
+      }),
+    );
+    const card = find(layout.nodes, agentNodeId("a1"));
+    const box = find(layout.nodes, "capabilities:a1");
+    expect(box).toMatchObject({
+      kind: "capabilities",
+      x: card.x,
+      y: card.y + card.height + 12,
+      width: card.width,
+      parentId: null,
+    });
+    const rows = layout.nodes.filter((n) => n.kind === "capability");
+    // tools, reasoning, knowledge: the docs' order; the index stays the one in the blueprint.
+    expect(rows.map((n) => n.id)).toEqual([4, 3, 2].map((i) => capabilityNodeId("a1", i)));
+    expect(rows.map((n) => n.ref)).toEqual(["4", "3", "2"]);
+    for (const row of rows) {
+      expect(row.parentId).toBe(box.id);
+      expect(row.x).toBeGreaterThanOrEqual(0);
+      expect(row.y).toBeGreaterThanOrEqual(SIZE.groupHeader);
+      expect(row.x + row.width).toBeLessThanOrEqual(box.width);
+      expect(row.y + row.height).toBeLessThanOrEqual(box.height);
+    }
+    expect(layout.edges.filter((e) => e.kind === "gives")).toEqual([
+      {
+        id: "gives:a1:2:ts1",
+        kind: "gives",
+        source: capabilityNodeId("a1", 2),
+        target: toolsetNodeId("a1", "ts1"),
+        agentId: "a1",
+        ref: "ts1",
+        toAgentId: null,
+        back: false,
+        lane: null,
+      },
+    ]);
+    expectNoOverlap(layout.nodes.filter((n) => n.parentId === null));
+  });
+
+  test("a tall list pushes the next row down and stays clear of the lanes to sub-agents", () => {
+    const many = (n: number) =>
+      Array.from({ length: n }, (_, i) => capability({ name: `Cap${i}`, category: "safety" }));
+    const names = ["b", "c"];
+    const hub = agentBlueprint({
+      id: "hub",
+      toolsets: [toolset("ts0")],
+      tools: names.map((name) => tool(`ask_${name}`)),
+      delegates: names.map((name) => ({
+        tool_name: `ask_${name}`,
+        agent_id: name,
+        evidence: "object" as const,
+      })),
+      capabilities: many(12),
+    });
+    const subs = names.map((id) =>
+      agentBlueprint({
+        id,
+        toolsets: [toolset("ts0")],
+        tools: [tool("work")],
+        capabilities: many(6),
+      }),
+    );
+    const { layout } = layoutOf(hub, ...subs);
+    const blocks = layout.nodes.filter((n) => n.parentId === null);
+    expectNoOverlap(blocks);
+    const hubBox = find(layout.nodes, "capabilities:hub");
+    const bBox = find(layout.nodes, "capabilities:b");
+    const b = find(layout.nodes, agentNodeId("b"));
+    const c = find(layout.nodes, agentNodeId("c"));
+    expect(b.y).toBeGreaterThanOrEqual(hubBox.y + hubBox.height);
+    expect(c.y).toBeGreaterThanOrEqual(bBox.y + bBox.height);
+    // Every lane passes the capability boxes above its sub-agent, never through one.
+    for (const edge of layout.edges.filter((e) => e.kind === "delegation")) {
+      const card = find(layout.nodes, agentNodeId(edge.toAgentId ?? ""));
+      for (const box of blocks.filter((n) => n.kind === "capabilities" && n.y < card.y)) {
+        const lane = edge.lane ?? Number.NaN;
+        expect(lane <= box.x || lane >= box.x + box.width, `lane through ${box.id}`).toBe(true);
+      }
+    }
+  });
+
+  test("a delegation cycle back into an agent with capabilities arcs in under their box", () => {
+    const a = agentBlueprint({
+      id: "a1",
+      toolsets: [toolset("ts0")],
+      tools: [tool("ask_b")],
+      delegates: [{ tool_name: "ask_b", agent_id: "a2", evidence: "object" }],
+      capabilities: [
+        capability({ name: "Thinking", category: "reasoning" }),
+        capability({ name: "Memory", category: "knowledge" }),
+      ],
+    });
+    const b = agentBlueprint({
+      id: "a2",
+      toolsets: [toolset("ts0")],
+      tools: [tool("ask_a")],
+      delegates: [{ tool_name: "ask_a", agent_id: "a1", evidence: "object" }],
+    });
+    const { layout } = layoutOf(a, b);
+    const loop = layout.edges.find((edge) => edge.back);
+    expect(loop).toMatchObject({ source: toolNodeId("a2", "ask_a"), target: "capabilities:a1" });
+    // The arc as drawn, from the bottom of the tool row to the bottom of the box, misses the
+    // card and the box: it never comes between the rows of capabilities.
+    const absolute = (node: LayoutNode): LayoutNode => {
+      const parent = node.parentId ? find(layout.nodes, node.parentId) : null;
+      return parent ? { ...node, x: parent.x + node.x, y: parent.y + node.y } : node;
+    };
+    const from = absolute(find(layout.nodes, toolNodeId("a2", "ask_a")));
+    const box = find(layout.nodes, "capabilities:a1");
+    const [path] = arcPath(
+      from.x + from.width * 0.38,
+      from.y + from.height,
+      box.x + box.width * 0.62,
+      box.y + box.height,
+    );
+    const points = [...path.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => ({
+      x: Number(m[1]),
+      y: Number(m[2]),
+    }));
+    expect(points).toHaveLength(4);
+    const along = (t: number, axis: "x" | "y"): number => {
+      const weights = [(1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t ** 2, t ** 3];
+      return points.reduce((sum, point, i) => sum + (weights[i] ?? 0) * point[axis], 0);
+    };
+    for (const blocked of [find(layout.nodes, agentNodeId("a1")), box]) {
+      for (let step = 1; step < 100; step++) {
+        const [x, y] = [along(step / 100, "x"), along(step / 100, "y")];
+        const inside =
+          x > blocked.x &&
+          x < blocked.x + blocked.width &&
+          y > blocked.y &&
+          y < blocked.y + blocked.height;
+        expect(inside, `arc through ${blocked.id} at t=${step / 100}`).toBe(false);
+      }
+    }
+  });
+
+  test("the layout key changes when the capabilities shown change", () => {
+    const plain = agentBlueprint({ id: "a1" });
+    const key = (agent: AgentBlueprint) => agentLayoutKey(layoutOf(agent).model);
+    expect(key({ ...plain, capabilities: builtins })).toBe(key(plain));
+    const one = { ...plain, capabilities: [capability({ name: "Thinking" })] };
+    expect(key(one)).not.toBe(key(plain));
+    // A name is not structure; what it gives is.
+    expect(key({ ...plain, capabilities: [capability({ name: "Other" })] })).toBe(key(one));
+    expect(
+      key({ ...plain, capabilities: [capability({ name: "Thinking", toolsets: ["ts0"] })] }),
+    ).not.toBe(key(one));
   });
 });
 

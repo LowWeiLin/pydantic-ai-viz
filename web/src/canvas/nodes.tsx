@@ -5,15 +5,15 @@
  */
 import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
 import { createContext, type ReactNode, useContext } from "react";
-import { environmentWords, modelLabel } from "../data/model";
+import { categoryNames, environmentWords, modelLabel } from "../data/model";
 import type { Activity, CanvasAgent, CanvasTool, GraphCanvasNode } from "../data/selectors";
 import { plural } from "../shell/format";
 import { Badge, Chip, StatusDot } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { cx, statusMeta, toneClass } from "../ui/tone";
-import type { ModelInfo, Toolset } from "../wire";
-import { DELEGATION_INLET, graphNodeLabel, nodeKind } from "./layout";
+import type { Capability, ModelInfo, Toolset } from "../wire";
+import { DELEGATION_INLET, graphNodeLabel, nodeKind, SIZE } from "./layout";
 import type { CanvasTarget } from "./targets";
 
 /** How nodes report clicks. Provided by the canvas frame. */
@@ -53,12 +53,13 @@ function Ports({ loop = false }: { loop?: boolean }) {
 const CLICKABLE = { pointerEvents: "auto" } as const;
 
 /** The button that makes a node clickable and focusable. It sits under the node's content. */
-function Cover({ label, target }: { label: string; target: CanvasTarget }) {
+function Cover({ label, target, title }: { label: string; target: CanvasTarget; title?: string }) {
   const pick = useContext(CanvasPick);
   return (
     <button
       type="button"
       aria-label={label}
+      title={title}
       onClick={() => pick(target)}
       // React Flow turns pointer events off on nodes that cannot be dragged or selected.
       style={CLICKABLE}
@@ -269,6 +270,14 @@ export function ToolsetHeader({ data }: NodeProps<Node<ToolsetNodeData, "toolset
         data.selected && "pviz-selected",
       )}
     >
+      {/* Where the edge from a capability that gives this toolset comes in: at the header. */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="in"
+        isConnectable={false}
+        style={{ top: SIZE.groupHeader / 2 }}
+      />
       {toolset && (
         <Cover
           label={`Toolset ${toolset.label}${count === null ? "" : `, ${count}`}`}
@@ -387,6 +396,90 @@ export function OutputNode({ data }: NodeProps<Node<OutputNodeData, "output">>) 
           <span className="truncate font-mono text-data text-fg">{type}</span>
         </span>
         {data.ready && <Icon name="check" size={14} className="tone-text" />}
+      </div>
+    </div>
+  );
+}
+
+export type CapabilitiesNodeData = { count: number };
+
+/**
+ * The box under an agent's card that lists its capabilities. Its rows are picked on their own.
+ * A delegation arc to or from the agent comes in under the box, so it does not cross the rows.
+ */
+export function CapabilitiesBox({ data }: NodeProps<Node<CapabilitiesNodeData, "capabilities">>) {
+  return (
+    <div className="relative size-full rounded-card border border-line bg-surface-2/70">
+      <Ports loop />
+      <div className="pointer-events-none relative flex h-[30px] items-center gap-1.5 px-2.5 text-meta">
+        <Icon name="capability" size={12} className="text-faint" />
+        <span className="min-w-0 flex-1 truncate font-medium text-muted">Capabilities</span>
+        <span className="shrink-0 text-faint">{data.count}</span>
+      </div>
+    </div>
+  );
+}
+
+export type CapabilityNodeData = {
+  agentId: string;
+  /** Index into `blueprint.capabilities`. */
+  index: number;
+  capability: Capability;
+  /** Labels of the toolsets it gives the agent. */
+  toolsets: string[];
+  selected: boolean;
+};
+
+const listed = (one: string, many: string, items: readonly string[]): string =>
+  `${items.length === 1 ? one : many} ${items.join(", ")}`;
+
+/** "Capability WebSearch, Web & research, gives toolset ..., provider-side tool web_search". */
+export function capabilityName(capability: Capability, toolsets: readonly string[]): string {
+  const parts = [`Capability ${capability.name}`, categoryNames(capability).label];
+  if (toolsets.length > 0) parts.push(listed("gives toolset", "gives toolsets", toolsets));
+  if (capability.native_tools.length > 0) {
+    parts.push(listed("provider-side tool", "provider-side tools", capability.native_tools));
+  }
+  if (capability.deferred) parts.push("on demand");
+  return parts.join(", ");
+}
+
+/**
+ * A capability of the agent: its name, and on the right its group in the Pydantic AI docs. A
+ * sparkle in the model's colour marks one that gives the model a provider-side tool.
+ */
+export function CapabilityNode({ data }: NodeProps<Node<CapabilityNodeData, "capability">>) {
+  const { capability } = data;
+  const name = capabilityName(capability, data.toolsets);
+  return (
+    <div
+      className={cx(
+        "tone-capability relative size-full rounded-control border border-line-strong bg-surface",
+        data.selected && "pviz-selected",
+      )}
+    >
+      <Ports />
+      {/* The row may be too narrow for all of it: hovering it says the whole of it. */}
+      <Cover
+        label={name}
+        title={name}
+        target={{ kind: "capability", agentId: data.agentId, index: data.index }}
+      />
+      <div className="pointer-events-none relative flex h-full items-center gap-2 px-2.5">
+        <Icon name="capability" size={14} className="shrink-0 tone-text" />
+        {/* The name keeps its width the longest: the group gives way first, four times as fast. */}
+        <span className="min-w-0 flex-auto truncate font-mono text-data text-fg">
+          {capability.name}
+        </span>
+        {capability.native_tools.length > 0 && (
+          <Icon name="model" size={12} className="shrink-0 tone-model tone-text" />
+        )}
+        {capability.deferred && (
+          <span className="shrink-0 font-medium text-accent text-meta">on demand</span>
+        )}
+        <span className="min-w-0 shrink-[4] truncate text-faint text-meta">
+          {categoryNames(capability).short}
+        </span>
       </div>
     </div>
   );
@@ -549,6 +642,8 @@ export const agentNodeTypes = {
   tool: ToolNode,
   placeholder: PlaceholderNode,
   output: OutputNode,
+  capabilities: CapabilitiesBox,
+  capability: CapabilityNode,
 };
 
 export const graphNodeTypes = {

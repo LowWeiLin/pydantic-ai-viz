@@ -3,15 +3,16 @@
  * hosted demo serves. The fixtures are written by hand from the wire contract; these recordings
  * come out of the Python backend, so this is where the two halves are proven to agree.
  *
- *   PVIZ_RECORDINGS_DIR   directory with support, research and pipeline `.pviz.jsonl` and their
- *                         `index.json`. Not set: every test here is skipped.
+ *   PVIZ_RECORDINGS_DIR   directory with support, research, pipeline and capabilities
+ *                         `.pviz.jsonl` and their `index.json`. Not set: every test here is skipped.
  *
  * Expected numbers are computed from the recording itself, never typed in, so a change to a demo
  * script does not break the spec unless the viewer shows something the recording does not say.
  */
 import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
-import type { Envelope, Span } from "../src/wire";
+import { foldedAway } from "../src/data/model";
+import type { AgentBlueprint, Envelope, Span } from "../src/wire";
 import {
   canvasNode,
   finalSpans,
@@ -63,7 +64,7 @@ const subject = (page: Page, name: string) =>
 test.describe("real demo recordings", () => {
   test.skip(!dir, "PVIZ_RECORDINGS_DIR is not set; build it with scripts/build_demo_site.py");
 
-  test("the gallery lists the three demos and their source, and plays one, asking for nothing else", async ({
+  test("the gallery lists the four demos and their source, and plays one, asking for nothing else", async ({
     page,
     baseURL,
   }) => {
@@ -71,7 +72,12 @@ test.describe("real demo recordings", () => {
     const requests = trackRequests(page);
     await page.goto(MOUNT);
     await expect(page.getByRole("heading", { name: "Recordings" })).toBeVisible();
-    for (const title of ["Support triage", "Research team", "Article pipeline"]) {
+    for (const title of [
+      "Support triage",
+      "Research team",
+      "Article pipeline",
+      "Capabilities tour",
+    ]) {
       await expect(page.getByRole("link", { name: `Play ${title}` })).toBeVisible();
     }
     // The demos' source, as `view` reads it, has no run to play: it is opened.
@@ -185,6 +191,40 @@ test.describe("real demo recordings", () => {
     await expect(page.locator("main")).toContainText(totals(recording));
     await subject(page, "searcher").click();
     await expect(canvasNode(page, /^Tool search_library, 3 calls, OK$/)).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test("capabilities: drawn under the agent and linked to the toolsets they give", async ({
+    page,
+  }) => {
+    const errors = trackErrors(page);
+    const recording = load("capabilities");
+    let agent: AgentBlueprint | null = null;
+    for (const event of recording.events) {
+      if (event.type === "blueprint.agent" && event.agent.name === recording.root.agent_name) {
+        agent = event.agent;
+      }
+    }
+    if (!agent) throw new Error("the capabilities recording has no blueprint for its agent");
+    await page.goto(src(recording, `#/agents/${agent.id}`));
+    // A builtin the user did not configure is folded away; every other capability has a row.
+    const shown = agent.capabilities.filter((capability) => !foldedAway(capability));
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.length).toBeLessThan(agent.capabilities.length);
+    await expect(canvasNode(page, /^Capability /)).toHaveCount(shown.length);
+    for (const capability of shown) {
+      await expect(canvasNode(page, new RegExp(`^Capability ${capability.name}, `))).toBeVisible();
+    }
+    await expect(page.getByText("capability gives toolset")).toBeVisible();
+
+    // The toolset a capability gives is one link away from it.
+    const giver = shown.find((capability) => capability.toolsets.length > 0);
+    const toolset = agent.toolsets.find((candidate) => candidate.id === giver?.toolsets[0]);
+    if (!giver || !toolset) throw new Error("no capability in the recording gives a toolset");
+    await canvasNode(page, new RegExp(`^Capability ${giver.name}, `)).click();
+    const inspector = page.getByRole("complementary", { name: /details/ });
+    await inspector.getByRole("button", { name: toolset.label }).click();
+    await expect(inspector.getByRole("list", { name: `Tools of ${toolset.label}` })).toBeVisible();
     expect(errors).toEqual([]);
   });
 

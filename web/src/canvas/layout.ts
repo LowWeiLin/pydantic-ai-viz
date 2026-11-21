@@ -8,9 +8,17 @@
  * `agentLayoutKey` and `graphLayoutKey` say when it has to be computed again.
  */
 import dagre from "@dagrejs/dagre";
+import { shownCapabilities } from "../data/model";
 import type { CanvasAgent, CanvasModel } from "../data/selectors";
 import type { GraphBlueprint } from "../wire";
-import { agentNodeId, graphNodeId, outputNodeId, toolNodeId, toolsetNodeId } from "./targets";
+import {
+  agentNodeId,
+  capabilityNodeId,
+  graphNodeId,
+  outputNodeId,
+  toolNodeId,
+  toolsetNodeId,
+} from "./targets";
 
 export const SIZE = {
   agentWidth: 240,
@@ -47,13 +55,23 @@ const INDENT = SIZE.agentWidth + RANK_GAP + SIZE.groupWidth + 20 - DELEGATION_IN
 const LANE_OFFSET = 14;
 const LANE_STEP = 10;
 
-export type AgentNodeKind = "agent" | "toolset" | "tool" | "placeholder" | "output";
+export type AgentNodeKind =
+  | "agent"
+  | "toolset"
+  | "tool"
+  | "placeholder"
+  | "output"
+  | "capabilities"
+  | "capability";
 
 export type LayoutNode = {
   id: string;
   kind: AgentNodeKind;
   agentId: string;
-  /** Toolset id for `toolset` and `placeholder`, tool name for `tool`, else "". */
+  /**
+   * Toolset id for `toolset` and `placeholder`, tool name for `tool`, the index into
+   * `blueprint.capabilities` for `capability`, else "".
+   */
   ref: string;
   /** Top-left corner; relative to the parent when `parentId` is set. */
   x: number;
@@ -65,13 +83,16 @@ export type LayoutNode = {
 
 export type LayoutEdge = {
   id: string;
-  /** `flow`: agent to tool; `output`: agent to output; `delegation`: tool to sub-agent. */
-  kind: "flow" | "output" | "delegation";
+  /**
+   * `flow`: agent to tool; `output`: agent to output; `delegation`: tool to sub-agent;
+   * `gives`: capability to the toolset it gives the agent.
+   */
+  kind: "flow" | "output" | "delegation" | "gives";
   source: string;
   target: string;
   /** The agent the edge leaves from. */
   agentId: string;
-  /** Tool name for `flow` and `delegation` edges. */
+  /** Tool name for `flow` and `delegation` edges, toolset id for `gives`. */
   ref: string;
   /** For delegation edges: the agent delegated to. */
   toAgentId: string | null;
@@ -132,6 +153,11 @@ export function agentLayoutKey(model: CanvasModel): string {
       agent.blueprint.id,
       agent.blueprint.description ? 1 : 0,
       toolGroups(agent).map((group) => [group.toolsetId, group.tools]),
+      shownCapabilities(agent.blueprint).map(({ index, capability }) => [
+        index,
+        capability.category,
+        capability.toolsets,
+      ]),
     ]),
     model.delegations.map((d) => [d.fromAgentId, d.toolName, d.toAgentId]),
   ]);
@@ -195,7 +221,10 @@ function newGraph() {
   return g;
 }
 
-/** Stacks an agent's column (toolsets, then its output) and returns its height. */
+/**
+ * The height of an agent's row: its card with the box of its capabilities underneath, or its
+ * column (toolsets, then its output), whichever is taller.
+ */
 function clusterHeight(agent: CanvasAgent): number {
   const groups = toolGroups(agent);
   const column =
@@ -203,18 +232,21 @@ function clusterHeight(agent: CanvasAgent): number {
       (sum, group) => sum + groupHeight(group.placeholder ? 1 : group.tools.length) + COLUMN_GAP,
       0,
     ) + SIZE.outputHeight;
-  return Math.max(agentHeight(agent), column);
+  const capabilities = shownCapabilities(agent.blueprint).length;
+  const card = agentHeight(agent) + (capabilities > 0 ? COLUMN_GAP + groupHeight(capabilities) : 0);
+  return Math.max(card, column);
 }
 
 /**
  * Lays the delegation closure out as a staircase, with no ranking pass:
  *
  *   [agent] -> [toolsets, output]
- *                     |  (from the delegating tool, down a lane beside the column)
+ *   [capabilities]    |  (from the delegating tool, down a lane beside the column)
  *                     v
  *              [sub-agent] -> [toolsets, output]
  *
- * Each agent is a row: its card, then one column with its toolsets and its output. An agent it
+ * Each agent is a row: its card, the capabilities it lists in a box under the card, then one
+ * column with its toolsets and its output. An agent it
  * delegates to goes in a row underneath, one step to the right. A side-by-side chain would be
  * twice as wide, and the canvas is wider than it is tall only until the timeline dock opens.
  *
@@ -234,6 +266,11 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
   const parent = new Map<string, string | null>();
   /** Lane x of the delegation edges into each placed sub-agent. */
   const lanes = new Map<string, number>();
+  /**
+   * The node an arc leaves an agent from or comes into it at, from below: its card, or the box
+   * of capabilities under the card, which an arc to the card would cross.
+   */
+  const bottom = new Map<string, string>();
   let cursor = 0;
 
   const place = (agent: CanvasAgent, x: number, under: string | null): void => {
@@ -241,6 +278,7 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
     parent.set(agentId, under);
     const top = cursor;
     const card = agentNodeId(agentId);
+    bottom.set(agentId, card);
     nodes.push({
       id: card,
       kind: "agent",
@@ -326,6 +364,55 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
       back: false,
       lane: null,
     });
+
+    // Capabilities go in a box under the card, which the column never reaches into. A dashed
+    // edge leads from a capability to each toolset it gives the agent that is drawn.
+    const capabilities = shownCapabilities(agent.blueprint);
+    if (capabilities.length > 0) {
+      const box = `capabilities:${agentId}`;
+      bottom.set(agentId, box);
+      const drawn = new Set(toolGroups(agent).map((group) => group.toolsetId));
+      const inset = (SIZE.groupWidth - SIZE.rowWidth) / 2;
+      nodes.push({
+        id: box,
+        kind: "capabilities",
+        agentId,
+        ref: "",
+        x,
+        y: top + agentHeight(agent) + COLUMN_GAP,
+        width: SIZE.agentWidth,
+        height: groupHeight(capabilities.length),
+        parentId: null,
+      });
+      for (const [row, { index, capability }] of capabilities.entries()) {
+        const id = capabilityNodeId(agentId, index);
+        nodes.push({
+          id,
+          kind: "capability",
+          agentId,
+          ref: String(index),
+          x: inset,
+          y: SIZE.groupHeader + row * (SIZE.rowHeight + SIZE.rowGap),
+          width: SIZE.agentWidth - 2 * inset,
+          height: SIZE.rowHeight,
+          parentId: box,
+        });
+        for (const toolsetId of capability.toolsets) {
+          if (!drawn.has(toolsetId)) continue;
+          edges.push({
+            id: `gives:${agentId}:${index}:${toolsetId}`,
+            kind: "gives",
+            source: id,
+            target: toolsetNodeId(agentId, toolsetId),
+            agentId,
+            ref: toolsetId,
+            toAgentId: null,
+            back: false,
+            lane: null,
+          });
+        }
+      }
+    }
     cursor = top + clusterHeight(agent) + CLUSTER_GAP;
 
     // Sub-agents share one indent. The lane to the first runs straight into its card; the
@@ -357,12 +444,15 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
   for (const delegation of shown) {
     const tool = toolNodeId(delegation.fromAgentId, delegation.toolName);
     const back = parent.get(delegation.toAgentId) !== delegation.fromAgentId;
+    // An arc runs under the card; with capabilities listed there, it runs under their box.
+    const end = (agentId: string): string =>
+      (back ? bottom.get(agentId) : undefined) ?? agentNodeId(agentId);
     edges.push({
       id: `delegation:${delegation.fromAgentId}:${delegation.toolName}:${delegation.toAgentId}`,
       kind: "delegation",
       // A delegation through a tool the canvas does not show starts at the agent card.
-      source: hasTool.has(tool) ? tool : agentNodeId(delegation.fromAgentId),
-      target: agentNodeId(delegation.toAgentId),
+      source: hasTool.has(tool) ? tool : end(delegation.fromAgentId),
+      target: end(delegation.toAgentId),
       agentId: delegation.fromAgentId,
       ref: delegation.toolName,
       toAgentId: delegation.toAgentId,

@@ -29,8 +29,13 @@ function AgentBlueprintView({ id, part }: { id: string; part: string | undefined
   const pick = (next: CanvasTarget | null): void => {
     setReveal(null);
     setPicks((n) => n + 1);
+    // A part of a sub-agent drawn on this canvas opens that agent's blueprint on it: `?part=`
+    // names no agent, so here it would name this agent's part of the same name or index.
+    const owner = next && "agentId" in next ? next.agentId : id;
     const named = next ? partOf(next) : undefined;
-    navigate(named ? { name: "agent", id, part: named } : { name: "agent", id }, { replace: true });
+    navigate(named ? { name: "agent", id: owner, part: named } : { name: "agent", id: owner }, {
+      replace: owner === id,
+    });
   };
   const model = useMemo(() => canvasModel(data, id, null), [data, id]);
   const agent = data.agents[id];
