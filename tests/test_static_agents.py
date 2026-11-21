@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
+import pydantic_ai.capabilities
 import pytest
 from static_support import agent, analyze_source, fixture, one_agent, properties, tool
 
 from pydantic_ai_viz import AgentBlueprint
+from pydantic_ai_viz._analyze._agents import _POSITIONAL
+from pydantic_ai_viz._capabilities import _GROUPS
 from pydantic_ai_viz._models import ENVELOPE_ADAPTER, Instruction, SourceLocation, to_wire
 
 # ------------------------------------------------------------ fully literal
@@ -513,6 +517,136 @@ def test_capabilities_are_listed_by_class_name(tmp_path: Path) -> None:
         "the capabilities are built by `load_capabilities()`; they are only known when the code runs"
     ]
     assert agent(found, "none").warnings == []
+    assert [(c.category, c.package) for c in listed.capabilities] == [
+        ("reasoning", "pydantic_ai"),
+        ("loop", "pydantic_ai"),
+        ("context", "pydantic_ai"),
+        ("custom", None),
+        ("custom", None),
+        ("custom", None),
+        ("reasoning", "pydantic_ai"),
+    ]
+    assert listed.capabilities[0].details == {"effort": "high"}  # through the name it is assigned to
+
+
+def test_capabilities_say_what_the_source_gives_them(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        import os
+        from typing import Any
+        from pydantic_ai import Agent, CodeExecutionTool
+        from pydantic_ai.capabilities import (
+            AbstractCapability, MCP, ModelFallback, NativeTool, Thinking, WebSearch,
+        )
+        from pydantic_ai_harness.code_mode import CodeMode
+
+        TOKEN = os.environ["TOKEN"]
+
+
+        class Memory(AbstractCapability[Any]):
+            pass
+
+
+        agent = Agent(
+            "test",
+            capabilities=[
+                Thinking(effort="high"),
+                MCP(os.environ["URL"], authorization_token=TOKEN),
+                MCP("https://u:p@h.example/mcp?key=1", native=True, headers={"X": "y"}),
+                ModelFallback("a", "b"),
+                ModelFallback(*MODELS),
+                WebSearch(),
+                WebSearch(native=False),
+                NativeTool(CodeExecutionTool()),
+                Thinking(defer_loading=True),
+                CodeMode(),
+                Memory(),
+                Thinking.from_spec(effort="high"),
+            ],
+        )
+        """,
+    )
+    assert [
+        (c.name, c.category, c.package, c.deferred, c.details, c.expressions, c.native_tools)
+        for c in found.capabilities
+    ] == [
+        ("Thinking", "reasoning", "pydantic_ai", False, {"effort": "high"}, {}, []),
+        ("MCP", "tools", "pydantic_ai", False, {}, {"url": 'os.environ["URL"]'}, []),
+        ("MCP", "tools", "pydantic_ai", False, {"url": "https://h.example/mcp", "native": True}, {}, ["mcp_server"]),
+        ("ModelFallback", "loop", "pydantic_ai", False, {"models": ["a", "b"]}, {}, []),
+        ("ModelFallback", "loop", "pydantic_ai", False, {}, {"models": "*MODELS"}, []),
+        ("WebSearch", "web", "pydantic_ai", False, {}, {}, ["web_search"]),
+        ("WebSearch", "web", "pydantic_ai", False, {"native": False}, {}, []),
+        ("NativeTool", "tools", "pydantic_ai", False, {}, {"tool": "CodeExecutionTool()"}, ["code_execution"]),
+        ("Thinking", "reasoning", "pydantic_ai", True, {}, {}, []),
+        ("CodeMode", "context", "pydantic_ai_harness", False, {}, {}, []),
+        ("Memory", "custom", None, False, {}, {}, []),  # the project's own, whatever its name
+        ("Thinking", "reasoning", "pydantic_ai", False, {"effort": "high"}, {}, []),
+    ]
+    assert found.native_tools == ["mcp_server", "web_search", "code_execution"]
+    assert found.warnings == []
+
+
+def test_capability_arguments_of_unknown_name_are_not_shown(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.capabilities import Capability, ProcessHistory, Thinking
+        from pydantic_ai_harness.exa import ExaSearch
+
+        agent = Agent(
+            "test",
+            capabilities=[
+                ExaSearch("exa-SECRET"),
+                Thinking(*ARGS, "high"),
+                Thinking(**KW),
+                Capability(**KW),
+                ProcessHistory(keep_last),
+            ],
+        )
+        """,
+    )
+    assert [(c.name, c.details, c.expressions, c.toolsets) for c in found.capabilities] == [
+        ("ExaSearch", {}, {}, []),
+        ("Thinking", {}, {}, []),
+        ("Thinking", {}, {}, []),
+        ("Capability", {}, {}, []),  # ``**KW`` may hold ``toolsets``, so no toolset of its own is made up
+        ("ProcessHistory", {}, {"processor": "keep_last"}, []),
+    ]
+    assert "exa-SECRET" not in found.model_dump_json()
+    assert found.warnings == [
+        "capability `ExaSearch` is given arguments by position, which are not shown",
+        "capability `Thinking` is given `*` arguments, which are not shown",
+        "capability `Thinking` is given `**` arguments, which are not shown",
+        "capability `Capability` is given `**` arguments, which are not shown",
+    ]
+
+
+def test_positional_parameters_are_those_pydantic_ai_names() -> None:
+    for name, expected in _POSITIONAL.items():
+        cls = getattr(pydantic_ai.capabilities, name, None)
+        if cls is None:  # not in the installed release
+            continue
+        parameters = inspect.signature(cls.__init__).parameters.values()
+        positional = [p.name for p in parameters if p.kind is p.POSITIONAL_OR_KEYWORD and p.name != "self"]
+        assert tuple(positional[: len(expected)]) == expected, name
+
+
+@pytest.mark.parametrize(("category", "name"), [(category, names[0]) for category, names in _GROUPS.items()])
+def test_a_capability_of_each_group_of_the_docs_is_put_in_it(tmp_path: Path, category: str, name: str) -> None:
+    found = one_agent(
+        tmp_path,
+        f"""
+        from pydantic_ai import Agent
+        from pydantic_ai_harness.stand_in import {name}
+
+        agent = Agent("test", capabilities=[{name}()])
+        """,
+    )
+    (capability,) = found.capabilities
+    assert (capability.name, capability.category, capability.package) == (name, category, "pydantic_ai_harness")
 
 
 def test_retries_forms(tmp_path: Path) -> None:

@@ -19,6 +19,7 @@ from functools import cached_property
 from typing import Any, Literal, TypeAlias, cast
 
 from .. import _compat
+from .._capabilities import category_of, is_secret, package_of, without_credentials
 from .._models import (
     AgentBlueprint,
     AgentSettings,
@@ -32,6 +33,7 @@ from .._models import (
     Tool,
     Toolset,
 )
+from .._normalize import clip
 from ._docstring import Style, describe
 from ._installed import InstalledPydanticAI
 from ._resolve import END_OF_MODULE, Definition, Expression, External, Project, Resolved, Resolver, receiver_class
@@ -82,6 +84,40 @@ _NATIVE_TOOLS: dict[str, str] = {
     "MCPServerTool": "mcp_server",
 }
 """Classes that ``builtin_tools=[...]`` took in earlier Pydantic AI releases -> the kind of native tool each is."""
+_CAPABILITY_NATIVE_TOOLS: dict[str, str] = {
+    "WebSearch": "web_search",
+    "WebFetch": "web_fetch",
+    "XSearch": "x_search",
+    "ImageGeneration": "image_generation",
+    "ToolSearch": "tool_search",
+}
+"""Core capabilities that give a provider-side tool unless they are given ``native=False``."""
+_POSITIONAL: dict[str, tuple[str, ...]] = {
+    "Thinking": ("effort",),
+    "MCP": ("url",),
+    "LocalWorkspace": ("working_dir",),
+    "WindowsWorkspace": ("working_dir",),
+    "Caching": ("retention",),
+    "FileUnderstanding": ("fallback_subagent_model",),
+    "PrefixTools": ("wrapped", "prefix"),
+    "NativeTool": ("tool",),
+    "Toolset": ("toolset",),
+    "ToolSearch": ("strategy", "max_results", "tool_description", "parameter_description"),
+    "SelectModel": ("selector",),
+    "ResolveModelId": ("resolver",),
+    "ProcessHistory": ("processor",),
+    "ProcessEventStream": ("handler",),
+    "PrepareTools": ("prepare_func",),
+    "PrepareOutputTools": ("prepare_func",),
+    "HandleDeferredToolCalls": ("handler",),
+    "IncludeToolReturnSchemas": ("tools",),
+    "ReinjectSystemPrompt": ("replace_existing",),
+    "Instrumentation": ("settings",),
+    "UseThreadExecutor": ("executor",),
+    "CombinedCapability": ("capabilities",),
+    "WrapperCapability": ("wrapped",),
+}
+"""Positional parameters of Pydantic AI's capability classes, as their ``__init__`` names them."""
 _MAX_LIST_ITEMS = 500
 _MAX_VERBATIM_CHARS = 20_000
 """How much of the source of a computed instruction is kept, as written."""
@@ -135,6 +171,17 @@ def _class_around(scope: Scope) -> ast.ClassDef | None:
             return current.node
         current = current.parent
     return None
+
+
+def _detail(value: Any) -> Any:
+    """A literal argument of a capability as it is shown: URLs without credentials, secrets left out, long text cut."""
+    if isinstance(value, str):
+        return clip(without_credentials(value))
+    if isinstance(value, list):
+        return [_detail(item) for item in cast("list[Any]", value)]
+    if isinstance(value, dict):
+        return {key: _detail(item) for key, item in cast("dict[str, Any]", value).items() if not is_secret(key)}
+    return value
 
 
 def brief(text: str) -> str:
@@ -1110,6 +1157,8 @@ class _AgentBuilder:
         self.arguments: dict[str, ast.expr] = {}
         self._spread_from: dict[int, tuple[Scope, int]] = {}
         """``id(node)`` of an argument taken out of a ``**dict`` -> the scope and line it is written at."""
+        self._owned_toolsets: list[list[str]] = []
+        """Filled by ``_toolsets``: for each capability entry, the ids of the toolsets it gives the agent."""
         if self.call.args and not isinstance(self.call.args[0], ast.Starred):
             self.arguments["model"] = self.call.args[0]
         spread: list[ast.expr] = []
@@ -1261,7 +1310,7 @@ class _AgentBuilder:
         toolsets, tools, delegates = self._toolsets()
         via = self.agent.via
         bound_to = (via.bound_to if via is not None else None) or self.agent.site.bound_to
-        return AgentBlueprint(
+        built = AgentBlueprint(
             id=blueprint_id,
             name=name,
             label=name or bound_to or f"agent-{blueprint_id[1:]}",
@@ -1280,6 +1329,12 @@ class _AgentBuilder:
             delegates=delegates,
             warnings=self.warnings,
         )
+        # The provider-side tools the capabilities give the agent, as a live agent lists them: after its own.
+        for capability in built.capabilities:
+            for kind in capability.native_tools:
+                if kind not in built.native_tools:
+                    built.native_tools.append(kind)
+        return built
 
     def _text_argument(self, key: str) -> str | None:
         node = self.arguments.get(key)
@@ -1639,25 +1694,153 @@ class _AgentBuilder:
 
     def _capabilities(self) -> list[CapabilityInfo]:
         found: list[CapabilityInfo] = []
-        for entry in self._capability_entries:
-            name = self._class_name(entry)
+        for index, entry in enumerate(self._capability_entries):
+            target = self.resolver.resolve(entry.node, entry.scope, entry.line)
+            call: ast.Call | None = None
+            callee: Resolved = target
+            if isinstance(target, Expression) and isinstance(target.node, ast.Call):
+                call = target.node
+                callee = self.resolver.callee(call, target.scope, target.line)
+            # ``Thinking.from_spec(effort="high")`` builds a ``Thinking``.
+            from_spec = isinstance(callee, External) and callee.last == "from_spec"
+            if isinstance(callee, External) and from_spec:
+                callee = External(callee.name.rpartition(".")[0])
+            name = (
+                callee.last
+                if isinstance(callee, External) and from_spec and callee.is_library_class()
+                else self._class_name(entry)
+            )
             if name is None:
                 name = entry.module.text(entry.node)
                 built = brief(self._as_assigned(entry))
                 self.warn(f"a capability is built by `{built}`; its type is only known when the code runs")
-            found.append(CapabilityInfo(name=name, builtin=name in _compat.BUILTIN_CAPABILITIES))
+                found.append(
+                    CapabilityInfo(
+                        name=name,
+                        builtin=name in _compat.BUILTIN_CAPABILITIES,
+                        category="custom",
+                        package=None,
+                        deferred=False,
+                        details={},
+                        expressions={},
+                        toolsets=[],
+                        native_tools=[],
+                    )
+                )
+                continue
+            base = self._library_base(callee)
+            details: dict[str, Any] = {}
+            expressions: dict[str, str] = {}
+            deferred, native = False, None
+            if call is not None and isinstance(target, Expression):
+                deferred, native = self._capability_arguments(callee, call, target, details, expressions)
+            found.append(
+                CapabilityInfo(
+                    name=name,
+                    builtin=name in _compat.BUILTIN_CAPABILITIES,
+                    category=(None if base is None else category_of(base.name, base.last)) or "custom",
+                    package=package_of(callee.name) if isinstance(callee, External) else None,
+                    deferred=deferred,
+                    details=details,
+                    expressions=expressions,
+                    toolsets=self._owned_toolsets[index],
+                    native_tools=self._capability_native_tools(base, call, target, native),
+                )
+            )
         return found
 
+    def _capability_arguments(
+        self, callee: Resolved, call: ast.Call, target: Expression, details: dict[str, Any], expressions: dict[str, str]
+    ) -> tuple[bool, bool | None]:
+        """Read what a capability is given into ``details`` and ``expressions``.
+
+        Returns whether it is given ``defer_loading=True``, and what it is given as ``native=``:
+        ``None`` when nothing, ``False`` when that is computed.
+        """
+        arguments: list[tuple[str, ast.expr]] = []
+        last = callee.last if isinstance(callee, External) else None
+        callee_text = brief(target.module.text(call.func))
+        if last == "ModelFallback" and call.args:
+            # ``ModelFallback(*models)``: the positional arguments together are the chain of models.
+            try:
+                if any(isinstance(node, ast.Starred) for node in call.args):
+                    raise NotLiteral
+                models = [literal(self.resolver, node, target.scope, target.line) for node in call.args]
+                details["models"] = [_detail(model) for model in models]
+            except NotLiteral:
+                expressions["models"] = ", ".join(target.module.text(node) for node in call.args)
+        else:
+            names = _POSITIONAL.get(last, ()) if last is not None else ()
+            for position, node in enumerate(call.args):
+                if isinstance(node, ast.Starred):
+                    # What it holds, and so the position of what follows, is only known when the code runs.
+                    self.warn(f"capability `{callee_text}` is given `*` arguments, which are not shown")
+                    break
+                if position >= len(names):
+                    # A parameter of unknown name may hold a key, so neither its value nor its source is shown.
+                    self.warn(f"capability `{callee_text}` is given arguments by position, which are not shown")
+                    break
+                arguments.append((names[position], node))
+        arguments.extend((keyword.arg, keyword.value) for keyword in call.keywords if keyword.arg is not None)
+        if any(keyword.arg is None for keyword in call.keywords):
+            self.warn(f"capability `{callee_text}` is given `**` arguments, which are not shown")
+        deferred = False
+        native: bool | None = None
+        for key, node in arguments:
+            if key == "id" or is_secret(key):
+                continue
+            try:
+                value = literal(self.resolver, node, target.scope, target.line)
+            except NotLiteral:
+                expressions[key] = target.module.text(node)
+                if key == "native":
+                    native = False
+                continue
+            if key == "defer_loading":
+                deferred = value is True
+                continue
+            if key == "native":
+                native = bool(value)
+            shown = _detail(value)
+            if shown is not None and shown != [] and shown != {}:
+                details[key] = shown
+        return deferred, native
+
+    def _capability_native_tools(
+        self, base: External | None, call: ast.Call | None, target: Resolved, native: bool | None
+    ) -> list[str]:
+        """The kinds of provider-side tool one of Pydantic AI's capabilities gives the agent."""
+        if base is None or package_of(base.name) != "pydantic_ai":
+            return []
+        kind = _CAPABILITY_NATIVE_TOOLS.get(base.last)
+        if kind is not None:
+            return [kind] if native is None or native else []
+        if base.last == "MCP":
+            return ["mcp_server"] if native else []  # off unless it is asked for
+        if base.last == "NativeTool" and call is not None and isinstance(target, Expression):
+            tool = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
+            tool = next((keyword.value for keyword in call.keywords if keyword.arg == "tool"), tool)
+            name = None if tool is None else self._class_name(Expression(tool, target.scope, target.line))
+            native_kind = None if name is None else _NATIVE_TOOLS.get(name)
+            return [] if native_kind is None else [native_kind]
+        return []
+
     def _capability_toolsets(self, entry: Expression) -> list[_ToolsetEntry]:
-        """The toolset a capability class of the project gives the agent: what its ``get_toolset`` returns.
+        """The toolset a capability gives the agent: for a class of the project, what its ``get_toolset`` returns.
 
         Pydantic AI wraps that toolset in a ``CapabilityOwnedToolset``, so it is shown inside one.
-        A capability defined outside the analysed files gives nothing that can be read.
+        Of the capabilities defined outside the analysed files, only Pydantic AI's ``Toolset`` and
+        ``Capability`` give one that can be read.
         """
         target = self.resolver.resolve(entry.node, entry.scope, entry.line)
         if not isinstance(target, Expression) or not isinstance(target.node, ast.Call):
             return []
         callee = self.resolver.callee(target.node, target.scope, target.line)
+        if isinstance(callee, External) and callee.comes_from("pydantic_ai", "Toolset", "Capability"):
+            given = self._library_capability_toolsets(callee.last, target.node, target)
+            for item in given:
+                item.wrappers = ["CapabilityOwnedToolset", *item.wrappers]
+            return given
         if not isinstance(callee, Definition) or not isinstance(callee.node, ast.ClassDef):
             return []
         method = self.resolver.method(callee, "get_toolset")
@@ -1670,6 +1853,36 @@ class _AgentBuilder:
             for item in self._toolset(Expression(node, method.body, node.lineno), 0):
                 item.wrappers = ["CapabilityOwnedToolset", *item.wrappers]
                 found.append(item)
+        return found
+
+    def _library_capability_toolsets(self, last: str, call: ast.Call, context: Expression) -> list[_ToolsetEntry]:
+        """What Pydantic AI's ``Toolset(toolset)`` or ``Capability(tools=..., toolsets=...)`` gives, in its order."""
+        if last == "Toolset":
+            node = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
+            node = next((keyword.value for keyword in call.keywords if keyword.arg == "toolset"), node)
+            return [] if node is None else self._toolset(Expression(node, context.scope, context.line), 0)
+        keywords = {keyword.arg: keyword.value for keyword in call.keywords if keyword.arg is not None}
+        found: list[_ToolsetEntry] = []
+        unpacked = any(keyword.arg is None for keyword in call.keywords)  # ``**kwargs`` may give either
+        if "tools" in keywords or ("toolsets" not in keywords and not unpacked):
+            # Its own ``FunctionToolset``, which it gives when it has tools or nothing else to give.
+            toolset_id = self._keyword_string(call, "id", context)
+            found.append(
+                _ToolsetEntry(
+                    kind="function",
+                    label="FunctionToolset" + (f" {toolset_id!r}" if toolset_id else ""),
+                    opaque=False,
+                    toolset_id=toolset_id,
+                    where=location(context.module, call),
+                    tools=self._constructor_tools(call, context),
+                )
+            )
+        if "toolsets" in keywords:
+            listed = self._listed(keywords["toolsets"], context.scope, context.line, "toolsets")
+            if listed is None:
+                listed = [Expression(keywords["toolsets"], context.scope, context.line)]
+            for item in listed:
+                found.extend(self._toolset(item, 0))
         return found
 
     def _as_assigned_to(self, entry: Expression) -> Expression:
@@ -1891,8 +2104,11 @@ class _AgentBuilder:
             else:
                 for item in listed:
                     entries.extend(self._toolset(item, 0))
+        self._owned_toolsets = []
         for capability in self._capability_entries:
+            start = len(entries)
             entries.extend(self._capability_toolsets(capability))
+            self._owned_toolsets.append([f"ts{index}" for index in range(start, len(entries))])
         for function in self.agent.toolset_functions:
             entries.append(
                 _ToolsetEntry(

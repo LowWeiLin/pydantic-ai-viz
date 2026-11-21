@@ -1,13 +1,25 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
+import pydantic_ai.capabilities
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_ai import Agent, NativeOutput, PromptedOutput, RunContext, TextOutput, ToolOutput
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import (
+    MCP,
+    AbstractCapability,
+    Capability,
+    Hooks,
+    PrefixTools,
+    Thinking,
+    Toolset,
+    WebFetch,
+    WebSearch,
+)
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -16,6 +28,7 @@ from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ExternalTools
 
 import pydantic_ai_viz
 from pydantic_ai_viz import AgentBlueprint, blueprint
+from pydantic_ai_viz._capabilities import _GROUPS
 from pydantic_ai_viz._introspect import agent_closure, find_delegates, introspect_agent
 from pydantic_ai_viz._models import Delegate, ModelInfo
 
@@ -296,8 +309,28 @@ def test_full_agent_blueprint() -> None:
                 "location": None,
             },
             "capabilities": [
-                {"name": "ToolSearch", "builtin": True},
-                {"name": "PendingMessageDrainCapability", "builtin": True},
+                {
+                    "name": "ToolSearch",
+                    "builtin": True,
+                    "category": "context",
+                    "package": "pydantic_ai",
+                    "deferred": False,
+                    "details": {},
+                    "expressions": {},
+                    "toolsets": [],
+                    "native_tools": ["tool_search"],
+                },
+                {
+                    "name": "PendingMessageDrainCapability",
+                    "builtin": True,
+                    "category": "runtime",
+                    "package": "pydantic_ai",
+                    "deferred": False,
+                    "details": {},
+                    "expressions": {},
+                    "toolsets": [],
+                    "native_tools": [],
+                },
             ],
             "settings": {
                 "model_settings": {"temperature": 0.2},
@@ -854,12 +887,173 @@ def test_builtin_capabilities_are_flagged() -> None:
     result = _agent_blueprint(Agent(capabilities=[Hooks()]))
     assert [c.model_dump() for c in result.capabilities] == snapshot(
         [
-            {"name": "ToolSearch", "builtin": True},
-            {"name": "PendingMessageDrainCapability", "builtin": True},
-            {"name": "Hooks", "builtin": False},
+            {
+                "name": "ToolSearch",
+                "builtin": True,
+                "category": "context",
+                "package": "pydantic_ai",
+                "deferred": False,
+                "details": {},
+                "expressions": {},
+                "toolsets": [],
+                "native_tools": ["tool_search"],
+            },
+            {
+                "name": "PendingMessageDrainCapability",
+                "builtin": True,
+                "category": "runtime",
+                "package": "pydantic_ai",
+                "deferred": False,
+                "details": {},
+                "expressions": {},
+                "toolsets": [],
+                "native_tools": [],
+            },
+            {
+                "name": "Hooks",
+                "builtin": False,
+                "category": "loop",
+                "package": "pydantic_ai",
+                "deferred": False,
+                "details": {},
+                "expressions": {},
+                "toolsets": [],
+                "native_tools": [],
+            },
         ]
     )
     assert result.native_tools == snapshot(["tool_search"])
+
+
+def _double(x: int) -> int:
+    return x * 2
+
+
+def test_capabilities_say_what_they_are_given_and_what_they_give_the_agent() -> None:
+    result = _agent_blueprint(
+        Agent(
+            TestModel(),
+            capabilities=[
+                Thinking(effort="high"),
+                WebSearch(),
+                MCP(url="https://h.example/mcp?k=1", native=True, local=False, authorization_token="s"),
+                PrefixTools(WebFetch(), "w"),
+                Capability(tools=[_double], id="mine"),
+                Toolset(FunctionToolset([_double], id="kb")),
+                Thinking(effort="low", id="t2", defer_loading=True),
+                Hooks(),
+            ],
+        )
+    )
+    shown = {(c.name, c.deferred): c for c in result.capabilities[2:]}
+    assert {c.package for c in result.capabilities} == {"pydantic_ai"}
+    thinking = shown["Thinking", False]
+    assert (thinking.category, thinking.details) == ("reasoning", {"effort": "high"})
+    search = shown["WebSearch", False]
+    assert (search.category, search.details, search.native_tools) == ("web", {}, ["web_search"])
+    mcp = shown["MCP", False]
+    assert (mcp.category, mcp.details["url"], mcp.native_tools) == ("tools", "https://h.example/mcp", ["mcp_server"])
+    assert "authorization_token" not in mcp.details
+    prefixed = shown["PrefixTools", False]
+    assert (prefixed.category, prefixed.details, prefixed.native_tools) == (
+        "loop",
+        {"wrapped": "WebFetch", "prefix": "w"},
+        ["web_fetch"],
+    )
+    labels = {t.id: t.label for t in result.toolsets}
+    capability = shown["Capability", False]
+    assert (capability.category, [labels[i] for i in capability.toolsets]) == ("custom", ["FunctionToolset 'mine'"])
+    assert capability.details == {"tools": [f"{MODULE}._double"]}
+    toolset = shown["Toolset", False]
+    assert (toolset.category, [labels[i] for i in toolset.toolsets]) == ("tools", ["FunctionToolset 'kb'"])
+    assert shown["Thinking", True].details == {"effort": "low"}
+    hooks = shown["Hooks", False]
+    assert (hooks.category, hooks.details) == ("loop", {})
+    assert all(c.expressions == {} for c in result.capabilities)
+    assert result.native_tools == ["tool_search", "web_search", "mcp_server", "web_fetch"]
+    assert result.warnings == []
+
+
+def test_a_model_fallback_shows_its_chain_of_models() -> None:
+    model_fallback: Any = getattr(pydantic_ai.capabilities, "ModelFallback", None)
+    if model_fallback is None:
+        pytest.skip("ModelFallback is not in this release")
+    (fallback,) = _agent_blueprint(Agent(capabilities=[model_fallback("openai:gpt-5", "test")])).capabilities[2:]
+    assert (fallback.category, fallback.details["models"]) == ("loop", ["openai:gpt-5", "test"])
+
+
+@pytest.mark.parametrize(("category", "name"), [(category, names[0]) for category, names in _GROUPS.items()])
+def test_a_capability_of_each_group_of_the_docs_is_put_in_it(category: str, name: str) -> None:
+    # Only the name and the package count, so a stand-in for a class of the harness, which is not installed, does.
+    stand_in = type(name, (AbstractCapability,), {"__module__": "pydantic_ai_harness.stand_in"})
+    (found,) = _agent_blueprint(Agent(capabilities=[stand_in()])).capabilities[2:]
+    assert (found.name, found.category, found.package) == (name, category, "pydantic_ai_harness")
+
+
+@dataclass
+class Memory(AbstractCapability[Any]):
+    size: int = 10
+    api_key: str | None = None
+
+
+Memory.__module__ = "pydantic_ai_harness.memory._capability"
+
+
+class MyMCP(Thinking):
+    pass
+
+
+class Audit(AbstractCapability[Any]):
+    pass
+
+
+def test_a_capability_is_placed_by_the_class_of_pydantic_ai_it_is() -> None:
+    result = _agent_blueprint(Agent(capabilities=[Memory(size=20, api_key="sk"), MyMCP(), Audit()]))
+    assert [(c.name, c.category, c.package, c.details) for c in result.capabilities[2:]] == [
+        ("Memory", "knowledge", "pydantic_ai_harness", {"size": 20}),
+        ("MyMCP", "reasoning", None, {}),  # a class of the project, in the group of the class it derives from
+        ("Audit", "custom", None, {}),
+    ]
+
+
+@dataclass
+class Flaky(AbstractCapability[Any]):
+    fail: bool = False
+
+    def get_native_tools(self) -> list[Any]:
+        if self.fail:
+            raise RuntimeError("boom")
+        return []
+
+
+def test_a_capability_that_fails_to_say_its_native_tools_is_still_shown() -> None:
+    flaky = Flaky()
+    agent = Agent(capabilities=[flaky])
+    flaky.fail = True  # Pydantic AI asks once, when the agent is made
+    result = _agent_blueprint(agent)
+    (found,) = result.capabilities[2:]
+    assert (found.name, found.native_tools, found.details) == ("Flaky", [], {"fail": True})
+    assert result.warnings == ["capability Flaky could not be read (RuntimeError: boom)"]
+
+
+@dataclass(init=False)
+class Window(AbstractCapability[Any]):
+    size: int
+    ratio: float
+
+    def __init__(self, size: int = 10, ratio: float = 0.5) -> None:
+        self.size = size
+        self.ratio = ratio
+
+
+def test_a_capability_with_its_own_init_leaves_out_its_defaults_and_writes_valid_json() -> None:
+    result = _agent_blueprint(Agent(capabilities=[Window(), Window(size=20, ratio=float("inf"))]))
+    assert [c.details for c in result.capabilities[2:]] == [{}, {"size": 20, "ratio": "inf"}]
+    json.dumps(result.model_dump(mode="json"), allow_nan=False)  # ``Infinity`` is not JSON
+    retry: Any = getattr(pydantic_ai.capabilities, "RetryOnModelErrors", None)
+    if retry is not None:
+        (found,) = _agent_blueprint(Agent(capabilities=[retry()])).capabilities[2:]
+        assert found.details == {}
 
 
 # ---------------------------------------------------------------- delegation
