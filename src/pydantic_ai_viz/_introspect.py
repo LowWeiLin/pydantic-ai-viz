@@ -469,7 +469,29 @@ def _capabilities(agent: AnyAgent, walk: _ToolsetWalk, warnings: list[str]) -> l
         _compat.add_warning(warnings, f"capabilities unavailable ({type(exc).__name__}: {exc})")
         return []
     found: list[CapabilityInfo] = []
+    stacks = {_harness_stack(capability) for capability in capabilities}
     for capability in capabilities:
+        cls = type(cast("object", capability))
+        if cls.__name__.startswith("_") and cls.__module__.startswith(_compat.HARNESS_STACK_MODULES):
+            continue  # a helper of a harness stack, which the stack's entry stands for
+        if _stack_helper_of(capability) in stacks - {None}:
+            continue  # the same, built as a plain Capability
+        stack = _harness_stack(capability)
+        if stack is not None:
+            found.append(
+                CapabilityInfo(
+                    name=stack,
+                    builtin=False,
+                    category="harness",
+                    package="pydantic_ai_harness",
+                    deferred=False,
+                    details={},
+                    expressions={},
+                    toolsets=[],
+                    native_tools=[],
+                )
+            )
+            continue
         try:
             found.append(_capability(capability, walk, warnings))
         except Exception as exc:
@@ -489,6 +511,24 @@ def _capabilities(agent: AnyAgent, walk: _ToolsetWalk, warnings: list[str]) -> l
                 )
             )
     return found
+
+
+def _harness_stack(capability: Any) -> str | None:
+    """The harness stack whose marker this capability is: what the agent keeps of a ``Coder`` or ``Researcher``."""
+    cls = type(cast("object", capability))
+    if cls.__name__ != _compat.HARNESS_STACK_MARKER or package_of(cls.__module__) != "pydantic_ai_harness":
+        return None
+    owner: Any = _safe_getattr(capability, _compat.HARNESS_STACK_OWNER)
+    return owner if isinstance(owner, str) and owner in _compat.HARNESS_STACKS else None
+
+
+def _stack_helper_of(capability: Any) -> str | None:
+    """The harness stack that built this plain ``Capability`` as a helper, going by its id."""
+    cls = type(cast("object", capability))
+    if cls.__name__ != "Capability" or package_of(cls.__module__) != "pydantic_ai":
+        return None
+    capability_id: Any = _safe_getattr(capability, "id")
+    return _compat.HARNESS_STACK_HELPER_IDS.get(capability_id) if isinstance(capability_id, str) else None
 
 
 def _capability(capability: Any, walk: _ToolsetWalk, warnings: list[str]) -> CapabilityInfo:
@@ -598,7 +638,16 @@ def _native_tools(agent: AnyAgent, warnings: list[str]) -> list[str]:
     names: list[str] = []
     for tool in _compat.get_private(agent, "_cap_native_tools", [], warnings):
         kind: Any = _safe_getattr(tool, "kind")
-        names.append(kind if isinstance(kind, str) else (qualified_name(tool) or type(tool).__name__))
+        if not isinstance(kind, str):  # a function standing in for the native tool of a capability loaded on demand
+            defaults: Any = _safe_getattr(tool, "__kwdefaults__")
+            held: Any = (
+                cast("dict[str, Any]", defaults).get(_compat.DEFERRED_NATIVE_TOOL_ARG)
+                if isinstance(defaults, dict)
+                else None
+            )
+            kind = _safe_getattr(held, "kind")
+        if isinstance(kind, str):
+            names.append(kind)
     return names
 
 

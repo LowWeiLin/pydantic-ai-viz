@@ -27,7 +27,7 @@ _WORD = re.compile(r"[\w-]+")
 """A word of source text: what a name of a project is matched against, whole. Hyphens join, as in repo names."""
 
 ALLOWED_PACKAGES = {
-    *("pydantic_ai", "pydantic_ai_slim", "pydantic_graph", "pydantic_evals", "pydantic_ai_harness"),
+    *("pydantic_ai", "pydantic_graph", "pydantic_evals", "pydantic_ai_harness"),
     *("pydantic", "pydantic_core"),
     *("typing", "typing_extensions", "builtins", "types", "collections", "dataclasses", "enum"),
     *("datetime", "uuid", "decimal", "pathlib"),  # types whose JSON schema pydantic defines

@@ -7,6 +7,7 @@ half proves that, when it does, users get a degraded blueprint and not a crash.
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 from typing import Any
 
 import pydantic_ai.capabilities
@@ -14,11 +15,11 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, Capability
+from pydantic_ai.capabilities import AbstractCapability, Capability, WebSearch
 from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_viz import AgentBlueprint, _compat, blueprint
-from pydantic_ai_viz._analyze._agents import _CAPABILITY_NATIVE_TOOLS
+from pydantic_ai_viz._analyze._agents import _CAPABILITY_NATIVE_TOOLS, _HARNESS_TOOLSETS, _LOCAL_FALLBACKS
 from pydantic_ai_viz._capabilities import category_of
 
 
@@ -97,6 +98,16 @@ def test_private_attribute_shapes() -> None:
     assert [tool.kind for tool in agent._cap_native_tools] == ["tool_search"]
 
 
+def test_the_native_tool_of_a_capability_loaded_on_demand_is_held_by_the_function_in_its_place() -> None:
+    def search(query: str) -> str:
+        return query
+
+    agent: Any = Agent(TestModel(), capabilities=[WebSearch(local=search, defer_loading=True, id="ws")])
+    _, deferred = agent._cap_native_tools
+    assert not hasattr(deferred, "kind")
+    assert deferred.__kwdefaults__[_compat.DEFERRED_NATIVE_TOOL_ARG].kind == "web_search"
+
+
 def test_builtin_capability_names_match_the_installed_release() -> None:
     names = {type(capability).__name__ for capability in Agent().root_capability.capabilities}
     assert names <= _compat.BUILTIN_CAPABILITIES
@@ -127,6 +138,20 @@ def test_every_capability_of_the_installed_release_is_in_a_group_of_the_docs() -
     assert [cls.__name__ for cls in classes if category_of(cls.__module__, cls.__name__) is None] == []
 
 
+def test_every_capability_the_installed_harness_exports_is_in_a_group_of_the_docs() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    classes: list[type] = []
+    for name in harness.__all__:
+        try:
+            exported = getattr(harness, name)
+        except ImportError:  # exported lazily, and needs an extra that is not installed
+            continue
+        if inspect.isclass(exported) and issubclass(exported, AbstractCapability):
+            classes.append(exported)
+    assert classes
+    assert [cls.__name__ for cls in classes if category_of(cls.__module__, cls.__name__) is None] == []
+
+
 @pytest.mark.parametrize(("name", "kind"), sorted(_CAPABILITY_NATIVE_TOOLS.items()))
 def test_static_analysis_knows_the_native_tool_each_capability_gives(name: str, kind: str) -> None:
     capability = getattr(pydantic_ai.capabilities, name, None)
@@ -135,12 +160,69 @@ def test_static_analysis_knows_the_native_tool_each_capability_gives(name: str, 
     assert [tool.kind for tool in capability().get_native_tools()] == [kind]
 
 
+@pytest.mark.parametrize("name", sorted(_LOCAL_FALLBACKS))
+def test_static_analysis_knows_the_toolset_a_capability_puts_its_local_tool_in(name: str) -> None:
+    capability: Any = getattr(pydantic_ai.capabilities, name, None)
+    if capability is None or "local" not in inspect.signature(capability).parameters:
+        pytest.skip(f"{name} takes no local tool in this release")
+    toolset_id = _LOCAL_FALLBACKS[name]
+
+    def lookup(query: str) -> str:
+        return query
+
+    owned = "CapabilityOwnedToolset"
+    for given, wrappers in [({}, [owned, "PreparedToolset"]), ({"native": False}, [owned])]:
+        result = _blueprint(Agent(TestModel(), capabilities=[capability(local=lookup, **given)]))
+        (toolset,) = result.toolsets
+        assert (toolset.label, toolset.toolset_id, toolset.kind) == (
+            f"FunctionToolset {toolset_id!r}",
+            toolset_id,
+            "function",
+        )
+        assert toolset.wrappers == wrappers
+        assert [(tool.name, tool.toolset) for tool in result.tools] == [("lookup", toolset.id)]
+    # Where static analysis reads what ``local=True`` stands for.
+    assert callable(getattr(capability, _compat.LOCAL_STRATEGY_METHOD, None))
+
+
+@pytest.mark.parametrize("name", sorted(_HARNESS_TOOLSETS))
+def test_static_analysis_knows_the_toolset_each_harness_capability_gives(name: str, tmp_path: Path) -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    toolset_class, toolset_id, renamed = _HARNESS_TOOLSETS[name]
+    needs: dict[str, Any] = {"directory": tmp_path} if name == "CapabilityCreation" else {}
+    for given, expected in [({}, toolset_id), ({"id": "custom"}, "custom" if renamed else toolset_id)]:
+        result = _blueprint(Agent(TestModel(), capabilities=[getattr(harness, name)(**needs, **given)]))
+        (toolset,) = result.toolsets
+        label = toolset_class + (f" {expected!r}" if expected else "")
+        assert (toolset.label, toolset.toolset_id, toolset.kind) == (label, expected, "function")
+        assert toolset.wrappers == ["CapabilityOwnedToolset"]
+        assert result.capabilities[-1].toolsets == [toolset.id]
+        assert result.capabilities[-1].native_tools == []
+    if name == "FileSystem":  # static analysis adds the filter a read-only one puts around its toolset
+        (toolset,) = _blueprint(Agent(TestModel(), capabilities=[harness.FileSystem(read_only=True)])).toolsets
+        assert toolset.wrappers == ["CapabilityOwnedToolset", "FilteredToolset"]
+
+
 def test_a_toolset_a_capability_gives_still_names_the_capability() -> None:
     def double(x: int) -> int:
         return x * 2
 
     capabilities = _blueprint(Agent(capabilities=[Capability(tools=[double])])).capabilities
     assert capabilities[-1].toolsets == ["ts0"]
+
+
+def test_a_harness_stack_leaves_its_marker_among_the_agents_capabilities() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    assert sorted(_compat.HARNESS_STACKS) == ["Coder", "Researcher"]
+    for stack in sorted(_compat.HARNESS_STACKS):
+        capabilities = Agent(TestModel(), capabilities=[getattr(harness, stack)()]).root_capability.capabilities
+        markers = [c for c in capabilities if type(c).__name__ == _compat.HARNESS_STACK_MARKER]
+        assert [getattr(marker, _compat.HARNESS_STACK_OWNER) for marker in markers] == [stack]
+        assert type(markers[0]).__module__.startswith("pydantic_ai_harness.")
+        helpers = [type(c) for c in capabilities if type(c).__name__.startswith("_")]
+        assert all(cls.__module__.startswith(_compat.HARNESS_STACK_MODULES) for cls in helpers)
+        plain = [getattr(c, "id", None) for c in capabilities if type(c) is Capability]
+        assert plain == [i for i, owner in _compat.HARNESS_STACK_HELPER_IDS.items() if owner == stack]
 
 
 def test_pydantic_ai_version_is_reported() -> None:

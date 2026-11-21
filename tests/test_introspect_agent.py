@@ -974,6 +974,39 @@ def test_capabilities_say_what_they_are_given_and_what_they_give_the_agent() -> 
     assert result.warnings == []
 
 
+def test_the_native_tool_of_a_capability_loaded_on_demand_is_named_by_its_kind() -> None:
+    result = _agent_blueprint(Agent(TestModel(), capabilities=[WebSearch(local=_double, defer_loading=True, id="ws")]))
+    assert result.native_tools == ["tool_search", "web_search"]
+    assert result.warnings == []
+
+
+def test_a_harness_stack_is_one_entry_beside_the_capabilities_it_holds() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    for stack, members in [
+        ("Coder", ["FileSystem", "Shell", "RepoContext", "SubAgents", "ClearToolResults", "RepairToolArguments"]),
+        ("Researcher", ["WebSearch", "WebFetch", "SubAgents", "ToolOutputLimits"]),
+    ]:
+        result = _agent_blueprint(Agent(TestModel(), capabilities=[getattr(harness, stack)()]))
+        shown = [(c.name, c.category, c.package) for c in result.capabilities[2:]]
+        assert shown[0] == (stack, "harness", "pydantic_ai_harness")
+        # The stack's helpers are left out: private classes, and Researcher's instructions as a plain Capability.
+        assert [name for name, _, _ in shown[1:]] == members
+
+
+def test_a_capability_with_the_id_of_a_stack_helper_is_listed_without_that_stack() -> None:
+    result = _agent_blueprint(Agent(TestModel(), capabilities=[Capability(id="researcher_instructions")]))
+    assert [c.name for c in result.capabilities[2:]] == ["Capability"]
+
+
+def test_a_researcher_that_needs_no_workspace_leaves_nothing_to_tell_it_by() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    from pydantic_ai_harness.tool_output_limits import LocalFileOverflowStore
+
+    researcher = harness.Researcher(instructions=None, store=LocalFileOverflowStore())
+    result = _agent_blueprint(Agent(TestModel(), capabilities=[researcher]))
+    assert [c.name for c in result.capabilities[2:]] == ["WebSearch", "WebFetch", "SubAgents", "ToolOutputLimits"]
+
+
 def test_a_model_fallback_shows_its_chain_of_models() -> None:
     model_fallback: Any = getattr(pydantic_ai.capabilities, "ModelFallback", None)
     if model_fallback is None:

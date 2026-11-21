@@ -22,6 +22,14 @@ def test_classes_are_in_the_group_the_harness_readme_puts_them_in() -> None:
     assert category_of("pydantic_ai_harness.peers", "Peers") == "reasoning"
     assert category_of("pydantic_ai_harness.stale_files", "ReportStaleFiles") == "knowledge"
     assert category_of("pydantic_ai_harness.router", "ModelRouter") == "runtime"
+    assert category_of("pydantic_ai_harness.coder._capability", "BenchmarkInstructions") == "harness"
+    assert category_of("pydantic_ai.durable_exec._base", "BaseDurabilityCapability") == "runtime"
+
+
+def test_deprecated_names_of_the_harness_are_placed_with_the_classes_they_name() -> None:
+    assert category_of("pydantic_ai_harness.guardrails", "InputGuard") == "safety"
+    assert category_of("pydantic_ai_harness.guardrails", "OutputGuard") == "safety"
+    assert category_of("pydantic_ai_harness.bubblewrap_sandbox", "BubblewrapSandbox") == "environment"
 
 
 def test_the_package_is_the_top_module() -> None:

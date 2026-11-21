@@ -14,6 +14,8 @@ not mention stays ``None`` here, although the library has a default for it.
 from __future__ import annotations
 
 import ast
+import contextlib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any, Literal, TypeAlias, cast
@@ -92,6 +94,20 @@ _CAPABILITY_NATIVE_TOOLS: dict[str, str] = {
     "ToolSearch": "tool_search",
 }
 """Core capabilities that give a provider-side tool unless they are given ``native=False``."""
+_LOCAL_FALLBACKS: dict[str, str] = {"WebSearch": "web_search", "WebFetch": "web_fetch"}
+"""Core capabilities that give a toolset when given ``local=``: the id it has unless ``id=`` names another."""
+_HARNESS_TOOLSETS: dict[str, tuple[str, str | None, bool]] = {
+    "FileSystem": ("FileSystemToolset", "file_system", True),
+    "Shell": ("ShellToolset", "shell", True),
+    "Memory": ("MemoryToolset", "memory", True),
+    "Planning": ("PlanningToolset", "planning", False),
+    "ToolOutputLimits": ("FunctionToolset", "tool_output_limits", True),
+    "PydanticAIDocs": ("PydanticAIDocsToolset", None, False),
+    "PruneToolResults": ("FunctionToolset", "prune_tool_results", True),
+    "CapabilityCreation": ("CapabilityCreationToolset", "capability_creation", True),
+}
+"""Harness capabilities that give a toolset when they are made: its class, its id, and whether ``id=`` renames it.
+Which tools it holds depends on what the capability is given, so they are not listed."""
 _POSITIONAL: dict[str, tuple[str, ...]] = {
     "Thinking": ("effort",),
     "MCP": ("url",),
@@ -182,6 +198,16 @@ def _detail(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _detail(item) for key, item in cast("dict[str, Any]", value).items() if not is_secret(key)}
     return value
+
+
+def _is_combined(callee: Resolved) -> bool:
+    """Whether a capability is made by Pydantic AI's ``CombinedCapability``."""
+    return isinstance(callee, External) and callee.comes_from("pydantic_ai", "CombinedCapability")
+
+
+def _union(groups: Iterable[list[str]]) -> list[str]:
+    """The items of ``groups`` in order, each once."""
+    return list(dict.fromkeys(item for group in groups for item in group))
 
 
 def brief(text: str) -> str:
@@ -986,10 +1012,10 @@ class AgentExtractor:
                 self._overrides(spec, keywords, target.scope, target.line)
                 return spec
             if isinstance(callee, External) and depth == 0:
-                return self._installed_tool(callee, location(target.module, call))
+                return self.installed_tool(callee, location(target.module, call))
         return None
 
-    def _installed_tool(self, callee: External, where: SourceLocation) -> _ToolSpec | None:
+    def installed_tool(self, callee: External, where: SourceLocation) -> _ToolSpec | None:
         """A tool that a function of Pydantic AI makes, such as a factory of ``common_tools``, read from its source.
 
         The function's one ``return`` is read like a ``Tool(...)`` in the project, in the file of
@@ -1017,6 +1043,19 @@ class AgentExtractor:
         spec.made_by = callee.name
         spec.library_version = self.installed.version
         return spec
+
+    def installed_class(self, name: str) -> Definition | None:
+        """The ``class`` of Pydantic AI that the dotted ``name`` stands for, if its installed source has one."""
+        for _ in range(4):  # through re-exports, as ``InstalledPydanticAI.function`` follows them
+            dotted, _, attribute = name.rpartition(".")
+            module = None if self.installed is None else self.installed.module(dotted)
+            found = None if module is None else self.resolver.member(module, attribute)
+            if isinstance(found, Definition):
+                return found if isinstance(found.node, ast.ClassDef) else None
+            if not isinstance(found, External) or found.name == name:
+                return None
+            name = found.name
+        return None
 
     def _method_tool(self, target: Expression) -> _ToolSpec | None:
         """A tool that is a method of an object made in the analysed source: ``db.query`` with ``db = Database()``."""
@@ -1690,26 +1729,92 @@ class _AgentBuilder:
                 f"the capabilities are built by `{brief(self.text(node))}`; they are only known when the code runs"
             )
             return []
-        return entries
+        return self._opened(entries, 0)
+
+    def _opened(self, entries: list[Expression], depth: int) -> list[Expression]:
+        """The entries with each of Pydantic AI's ``CombinedCapability([...])`` replaced by what it holds.
+
+        The agent does the same, except with one that is loaded on demand: that stays one entry.
+        """
+        found: list[Expression] = []
+        for entry in entries:
+            held: list[Expression] | None = None
+            if depth < 4:
+                target, call, callee, _ = self._built(entry)
+                if call is not None and isinstance(target, Expression) and _is_combined(callee):
+                    held = None if self._kept_whole(call, target) else self._held(call, target)
+            if held is None:
+                found.append(entry)
+            else:
+                found.extend(self._opened(held, depth + 1))
+        return found
+
+    def _held(self, call: ast.Call, context: Expression) -> list[Expression] | None:
+        """What a ``CombinedCapability([...])`` is given to hold, or ``None`` when that is not spelled out."""
+        node = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
+        node = next((keyword.value for keyword in call.keywords if keyword.arg == "capabilities"), node)
+        if node is None:
+            return None
+        held = self._listed(node, context.scope, context.line, "capabilities")
+        if held is None:
+            text = brief(context.module.text(node))
+            self.warn(f"the capabilities are built by `{text}`; they are only known when the code runs")
+        return held
+
+    def _kept_whole(self, call: ast.Call, context: Expression) -> bool:
+        """Whether the agent may keep a ``CombinedCapability`` as one entry, as it does one loaded on demand.
+
+        A computed ``defer_loading=`` may be true, so that one is kept whole too, its expression shown.
+        """
+        for keyword in call.keywords:
+            if keyword.arg == "defer_loading":
+                try:
+                    return literal(self.resolver, keyword.value, context.scope, context.line) is True
+                except NotLiteral:
+                    return True
+        return False
+
+    def _members(self, call: ast.Call, context: Expression, depth: int) -> list[Expression]:
+        """What a ``CombinedCapability`` kept as one entry holds, opened as the agent opens it."""
+        held = self._held(call, context) if depth < 4 else None
+        return [] if held is None else self._opened(held, depth + 1)
+
+    def _built(self, entry: Expression) -> tuple[Resolved, ast.Call | None, Resolved, str | None]:
+        """What a capability entry is: what it resolves to, the call that makes it, the class called, its name.
+
+        ``Thinking.from_spec(effort="high")`` builds a ``Thinking``, so it reads as ``Thinking(effort="high")``.
+        """
+        target = self.resolver.resolve(entry.node, entry.scope, entry.line)
+        call: ast.Call | None = None
+        callee: Resolved = target
+        if isinstance(target, Expression) and isinstance(target.node, ast.Call):
+            call = target.node
+            callee = self.resolver.callee(call, target.scope, target.line)
+        if isinstance(callee, External) and callee.last == "from_spec":
+            callee = External(callee.name.rpartition(".")[0])
+            return target, call, callee, callee.last if callee.is_library_class() else self._class_name(entry)
+        return target, call, callee, self._class_name(entry)
+
+    def _member_native_tools(self, entry: Expression, depth: int) -> list[str]:
+        """The kinds of provider-side tool a capability that a ``CombinedCapability`` holds gives the agent."""
+        target, call, callee, _ = self._built(entry)
+        if call is None or not isinstance(target, Expression):
+            return []
+        if _is_combined(callee):
+            return _union(self._member_native_tools(m, depth + 1) for m in self._members(call, target, depth))
+        native: bool | None = None
+        given = next((keyword.value for keyword in call.keywords if keyword.arg == "native"), None)
+        if given is not None:
+            try:
+                native = bool(literal(self.resolver, given, target.scope, target.line))
+            except NotLiteral:
+                native = False
+        return self._capability_native_tools(self._library_base(callee), call, target, native)
 
     def _capabilities(self) -> list[CapabilityInfo]:
         found: list[CapabilityInfo] = []
         for index, entry in enumerate(self._capability_entries):
-            target = self.resolver.resolve(entry.node, entry.scope, entry.line)
-            call: ast.Call | None = None
-            callee: Resolved = target
-            if isinstance(target, Expression) and isinstance(target.node, ast.Call):
-                call = target.node
-                callee = self.resolver.callee(call, target.scope, target.line)
-            # ``Thinking.from_spec(effort="high")`` builds a ``Thinking``.
-            from_spec = isinstance(callee, External) and callee.last == "from_spec"
-            if isinstance(callee, External) and from_spec:
-                callee = External(callee.name.rpartition(".")[0])
-            name = (
-                callee.last
-                if isinstance(callee, External) and from_spec and callee.is_library_class()
-                else self._class_name(entry)
-            )
+            target, call, callee, name = self._built(entry)
             if name is None:
                 name = entry.module.text(entry.node)
                 built = brief(self._as_assigned(entry))
@@ -1732,8 +1837,17 @@ class _AgentBuilder:
             details: dict[str, Any] = {}
             expressions: dict[str, str] = {}
             deferred, native = False, None
+            native_tools: list[str] | None = None
             if call is not None and isinstance(target, Expression):
                 deferred, native = self._capability_arguments(callee, call, target, details, expressions)
+                if _is_combined(callee):
+                    # Kept as one entry: it shows what it holds by class, as the live agent does, and gives
+                    # what they give. Their source is not shown, as it may hold a key.
+                    members = self._members(call, target, 0)
+                    names = [self._built(member)[3] for member in members]
+                    if members and None not in names:
+                        details["capabilities"] = names
+                    native_tools = _union(self._member_native_tools(member, 1) for member in members)
             found.append(
                 CapabilityInfo(
                     name=name,
@@ -1744,7 +1858,11 @@ class _AgentBuilder:
                     details=details,
                     expressions=expressions,
                     toolsets=self._owned_toolsets[index],
-                    native_tools=self._capability_native_tools(base, call, target, native),
+                    native_tools=(
+                        self._capability_native_tools(base, call, target, native)
+                        if native_tools is None
+                        else native_tools
+                    ),
                 )
             )
         return found
@@ -1789,6 +1907,8 @@ class _AgentBuilder:
         for key, node in arguments:
             if key == "id" or is_secret(key):
                 continue
+            if key == "capabilities" and _is_combined(callee):
+                continue  # what a CombinedCapability holds is read by the caller, by class
             try:
                 value = literal(self.resolver, node, target.scope, target.line)
             except NotLiteral:
@@ -1825,22 +1945,31 @@ class _AgentBuilder:
             return [] if native_kind is None else [native_kind]
         return []
 
-    def _capability_toolsets(self, entry: Expression) -> list[_ToolsetEntry]:
+    def _capability_toolsets(self, entry: Expression, depth: int = 0) -> list[_ToolsetEntry]:
         """The toolset a capability gives the agent: for a class of the project, what its ``get_toolset`` returns.
 
         Pydantic AI wraps that toolset in a ``CapabilityOwnedToolset``, so it is shown inside one.
         Of the capabilities defined outside the analysed files, only Pydantic AI's ``Toolset`` and
         ``Capability`` give one that can be read.
         """
-        target = self.resolver.resolve(entry.node, entry.scope, entry.line)
+        target, _, callee, _ = self._built(entry)
         if not isinstance(target, Expression) or not isinstance(target.node, ast.Call):
             return []
-        callee = self.resolver.callee(target.node, target.scope, target.line)
-        if isinstance(callee, External) and callee.comes_from("pydantic_ai", "Toolset", "Capability"):
-            given = self._library_capability_toolsets(callee.last, target.node, target)
+        if _is_combined(callee):  # one kept whole gives what the capabilities it holds give
+            members = self._members(target.node, target, depth)
+            return [item for member in members for item in self._capability_toolsets(member, depth + 1)]
+        if isinstance(callee, External) and callee.comes_from(
+            "pydantic_ai", "Toolset", "Capability", *_LOCAL_FALLBACKS
+        ):
+            if callee.last in _LOCAL_FALLBACKS:
+                given = self._local_fallback(callee, target.node, target)
+            else:
+                given = self._library_capability_toolsets(callee.last, target.node, target)
             for item in given:
                 item.wrappers = ["CapabilityOwnedToolset", *item.wrappers]
             return given
+        if isinstance(callee, External) and callee.comes_from("pydantic_ai_harness", *_HARNESS_TOOLSETS):
+            return [self._harness_toolset(callee.last, target.node, target)]
         if not isinstance(callee, Definition) or not isinstance(callee.node, ast.ClassDef):
             return []
         method = self.resolver.method(callee, "get_toolset")
@@ -1884,6 +2013,80 @@ class _AgentBuilder:
             for item in listed:
                 found.extend(self._toolset(item, 0))
         return found
+
+    def _local_fallback(self, callee: External, call: ast.Call, context: Expression) -> list[_ToolsetEntry]:
+        """The toolset ``WebSearch(local=...)`` or ``WebFetch(local=...)`` gives: the tool for a model without the
+        provider-side one. Pydantic AI hides it from a model that has that, unless it is given ``native=False``."""
+        keywords = {keyword.arg: keyword.value for keyword in call.keywords if keyword.arg is not None}
+        node = keywords.get("local")
+        if node is None:
+            return []
+        where = location(context.module, call)
+        spec: _ToolSpec | None = None
+        try:
+            value = literal(self.resolver, node, context.scope, context.line)
+        except NotLiteral:
+            spec = self.extractor.tool_of(node, context.scope, context.line)
+        else:
+            if value is None or value is False:
+                return []
+            if value is True or isinstance(value, str):  # a strategy that Pydantic AI names: ``"duckduckgo"``
+                spec = self._strategy_tool(callee, where)
+        native: Any = None
+        if "native" in keywords:
+            with contextlib.suppress(NotLiteral):
+                native = literal(self.resolver, keywords["native"], context.scope, context.line)
+        wrappers = [] if native is False else ["PreparedToolset"]
+        toolset_id = (
+            _LOCAL_FALLBACKS[callee.last] if "id" not in keywords else self._keyword_string(call, "id", context)
+        )
+        if spec is None:
+            text = context.module.text(node)
+            return [
+                _ToolsetEntry(kind="other", label=text, opaque=True, wrappers=wrappers, expression=text, where=where)
+            ]
+        return [
+            _ToolsetEntry(
+                kind="function",
+                label="FunctionToolset" + (f" {toolset_id!r}" if toolset_id else ""),
+                opaque=False,
+                toolset_id=toolset_id,
+                wrappers=wrappers,
+                where=where,
+                tools=[spec],
+            )
+        ]
+
+    def _strategy_tool(self, callee: External, where: SourceLocation) -> _ToolSpec | None:
+        """The tool that ``local=True`` stands for, read from the installed source of the capability: what the one
+        ``return`` of its method that resolves a strategy makes."""
+        cls = self.extractor.installed_class(callee.name)
+        method = None if cls is None else self.resolver.method(cls, _compat.LOCAL_STRATEGY_METHOD)
+        if method is None or len(method.body.returns) != 1 or not isinstance(method.body.returns[0], ast.Call):
+            return None
+        made = self.resolver.callee(method.body.returns[0], method.body, END_OF_MODULE)
+        return self.extractor.installed_tool(made, where) if isinstance(made, External) else None
+
+    def _harness_toolset(self, last: str, call: ast.Call, context: Expression) -> _ToolsetEntry:
+        """The toolset a capability of the harness gives, by its class: what it holds is not read."""
+        toolset_class, toolset_id, renamed = _HARNESS_TOOLSETS[last]
+        given = next((keyword.value for keyword in call.keywords if keyword.arg == "id"), None)
+        if renamed and given is not None and not (isinstance(given, ast.Constant) and given.value is None):
+            toolset_id = string(self.resolver, given, context.scope, context.line)
+        wrappers = ["CapabilityOwnedToolset"]
+        read_only = next((keyword.value for keyword in call.keywords if keyword.arg == "read_only"), None)
+        if last == "FileSystem" and read_only is not None:
+            with contextlib.suppress(NotLiteral):  # computed: whether it filters is only known when the code runs
+                if literal(self.resolver, read_only, context.scope, context.line):
+                    wrappers.append("FilteredToolset")  # what holds back the tools that write
+        return _ToolsetEntry(
+            kind="function",
+            label=toolset_class + (f" {toolset_id!r}" if toolset_id else ""),
+            opaque=True,
+            toolset_id=toolset_id,
+            wrappers=wrappers,
+            where=location(context.module, call),
+        )
 
     def _as_assigned_to(self, entry: Expression) -> Expression:
         """What to show for a value computed at run time: for a name given it in one place, what it was given.

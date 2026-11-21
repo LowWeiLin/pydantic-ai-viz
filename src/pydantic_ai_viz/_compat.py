@@ -38,6 +38,28 @@ around a toolset a capability gives the agent."""
 CAPABILITY_OWNED_OWNER = "capability"
 """Its attribute holding the capability that gave the toolset."""
 
+HARNESS_STACK_MARKER = "RequireWorkspace"
+"""Class name of the private capability (``pydantic_ai_harness._workspace``) that the harness stacks put among the
+capabilities they hold. The stack itself does not survive the agent's flattening of its capabilities; this does."""
+HARNESS_STACK_OWNER = "owner"
+"""Its field naming the stack that put it there."""
+HARNESS_STACKS = frozenset({"Coder", "Researcher"})
+"""The stacks that put one there: ``Researcher`` only when its overflow store is the workspace's, as by default."""
+HARNESS_STACK_MODULES = ("pydantic_ai_harness.coder", "pydantic_ai_harness.researcher")
+"""Packages of the stacks, whose private helper capabilities a blueprint leaves out: the stack's entry stands for
+them."""
+HARNESS_STACK_HELPER_IDS = {"researcher_instructions": "Researcher"}
+"""``id`` of a plain ``pydantic_ai.capabilities.Capability`` a stack builds as a helper -> that stack. A blueprint
+leaves it out when the stack's marker is there too."""
+
+LOCAL_STRATEGY_METHOD = "_resolve_local_strategy"
+"""Method of ``WebSearch`` and ``WebFetch`` that makes the tool ``local=True`` stands for. Static analysis reads
+it from the installed source to learn which tool that is."""
+
+DEFERRED_NATIVE_TOOL_ARG = "native_tool"
+"""Keyword default of the function ``CombinedCapability.get_native_tools`` puts in place of the native tool of a
+capability loaded on demand: it holds that native tool."""
+
 MERMAID_MODULE = "pydantic_graph.graph_builder"
 MERMAID_FUNCTION = "build_mermaid_graph"
 """Importable, but not in ``pydantic_graph.graph_builder.__all__``."""

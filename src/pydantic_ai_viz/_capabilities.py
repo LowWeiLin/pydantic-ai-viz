@@ -12,7 +12,7 @@ Package = Literal["pydantic_ai", "pydantic_ai_harness"]
 _PACKAGES: frozenset[str] = frozenset(get_args(Package))
 
 _GROUPS: dict[CapabilityCategory, tuple[str, ...]] = {
-    "harness": ("Coder", "Researcher"),
+    "harness": ("Coder", "Researcher", "BenchmarkInstructions"),
     "environment": (
         "LocalWorkspace",
         "WindowsWorkspace",
@@ -33,6 +33,7 @@ _GROUPS: dict[CapabilityCategory, tuple[str, ...]] = {
         "DockerSandbox",
         "SSHWorkspace",
         "BubblewrappedWorkspace",
+        "BubblewrapSandbox",  # the deprecated name of BubblewrappedWorkspace
     ),
     "tools": ("MCP", "ImageGeneration", "FileUnderstanding", "NativeTool", "Toolset"),
     "integration": (
@@ -104,7 +105,9 @@ _GROUPS: dict[CapabilityCategory, tuple[str, ...]] = {
         "HandleDeferredToolCalls",
         "RequestInput",
         "InputGuardrail",
+        "InputGuard",  # the deprecated name of InputGuardrail
         "OutputGuardrail",
+        "OutputGuard",  # the deprecated name of OutputGuardrail
         "StreamGuardrail",
         "ToolGuardrail",
         "Goal",
@@ -131,6 +134,7 @@ _GROUPS: dict[CapabilityCategory, tuple[str, ...]] = {
         "UseThreadExecutor",
         "BatchModelRequests",
         "PendingMessageDrainCapability",
+        "BaseDurabilityCapability",
         "TemporalDurability",
         "DBOSDurability",
         "PrefectDurability",
