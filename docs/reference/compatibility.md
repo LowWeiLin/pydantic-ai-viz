@@ -88,9 +88,10 @@ So the failure mode of a Pydantic AI upgrade is a less detailed blueprint with a
 | `output.mode`, `output.allows_text` | `agent._output_schema` | `"text"` when the output schema is a plain string, else `"unknown"`. Filled in from the first observed run. |
 | `output.tool_names` | `agent._output_toolset`, then its `_tool_defs` | Empty list and a warning. Filled in from observed runs. |
 | `native_tools` | `agent._cap_native_tools` | Empty list. |
+| `capabilities[].toolsets` | `CapabilityOwnedToolset.capability` (`pydantic_ai.toolsets._capability_owned`) | Empty list. |
 | Graph `nodes` and `edges` | `pydantic_graph.graph_builder.build_mermaid_graph` (importable, but not exported) | The graph is walked through its public `nodes` and `edges_by_source` instead. |
 
-Everything else in a blueprint comes from public API: `agent.name`, `.description`, `.model`, `.deps_type`, `.output_type`, `.model_settings`, `.end_strategy`, `.toolsets`, `.root_capability`, `agent.output_json_schema()`, the public fields of toolsets and tools, and `graph.render()`.
+Everything else in a blueprint comes from public API: `agent.name`, `.description`, `.model`, `.deps_type`, `.output_type`, `.model_settings`, `.end_strategy`, `.toolsets`, `.root_capability`, `capability.get_native_tools()`, the public dataclass fields of capabilities, `agent.output_json_schema()`, the public fields of toolsets and tools, and `graph.render()`.
 
 Outside the blueprint, one more private attribute is read: the class attribute `Agent._instrument_default`, which holds what `Agent.instrument_all` was last given. A session reads it so that closing can put the previous instrumentation setting back. If it cannot be read, closing a session switches instrumentation off instead.
 

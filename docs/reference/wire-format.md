@@ -111,7 +111,7 @@ type AgentBlueprint = {
     tool_names: string[];      // for example ["final_result"]; may be filled from observed runs
     location: SourceLocation | null;  // where the output type is defined
   };
-  capabilities: { name: string; builtin: boolean }[];
+  capabilities: Capability[];
   settings: {
     model_settings: { [k: string]: Json } | null;
     end_strategy: string | null;
@@ -127,6 +127,23 @@ type AgentBlueprint = {
 type EnvironmentValue = {
   variable: string;            // the environment variable, for example "APP_MODEL"
   default: string | null;      // the default the source gives, used only when the variable is not set; never the value
+};
+
+type CapabilityCategory =
+  | "harness" | "environment" | "tools" | "integration" | "web" | "reasoning"
+  | "context" | "knowledge" | "safety" | "self_extension" | "runtime" | "loop"
+  | "custom";
+
+type Capability = {
+  name: string;                // class name; for one static analysis cannot name, the source text that builds it
+  builtin: boolean;            // added by Pydantic AI to every agent
+  category: CapabilityCategory;
+  package: "pydantic_ai" | "pydantic_ai_harness" | null;  // where the class is defined, when it is one of these
+  deferred: boolean;           // defer_loading=True: loaded when the model asks for it
+  details: { [k: string]: Json };       // what it was given, by parameter name; secrets and defaults left out
+  expressions: { [k: string]: string }; // parameters the source computes at run time: name -> source text (static analysis only)
+  toolsets: string[];          // Toolset.id of the toolsets it gives the agent
+  native_tools: string[];      // provider-side tool kinds it gives the agent, for example "web_search"
 };
 
 type Instruction = {
@@ -187,6 +204,34 @@ type GraphBlueprint = {
 };
 ```
 
+### Capabilities { #capabilities }
+
+A capability's `category` is the group it is listed in by the [Pydantic AI capabilities docs](https://pydantic.dev/docs/ai/capabilities/overview/). The ids, in the docs' order:
+
+| `category` | Group in the docs |
+|---|---|
+| `"harness"` | Harnesses |
+| `"environment"` | Execution environments |
+| `"tools"` | Tools & native abilities |
+| `"integration"` | Integrations |
+| `"web"` | Web & research |
+| `"reasoning"` | Reasoning, planning & delegation |
+| `"context"` | Context management |
+| `"knowledge"` | Knowledge & memory |
+| `"safety"` | Control & safety |
+| `"self_extension"` | Self-extension |
+| `"runtime"` | Execution runtime |
+| `"loop"` | Loop customization |
+| `"custom"` | Anything else: the project's own, another package's, or one this release does not know |
+
+- **Matching** is by package (`pydantic_ai` or `pydantic_ai_harness`) together with the class name. The harness is never imported, so a project class that happens to be called `Memory` or `Shell` is not taken for the harness one. A subclass takes the category of its Pydantic AI or harness base. A class of either package that is not listed is `"custom"`.
+- **`package`** names the package of the class itself, so an unlisted harness class is `"custom"` with package `"pydantic_ai_harness"`, and a project subclass of `MCP` has the category of `MCP` and no package.
+- **`details`** holds values only: strings, numbers, booleans, lists of those, or objects of those. A parameter left at its default, a `null` or empty value, `id` and `defer_loading` are left out. A parameter whose name contains `secret`, `passw`, `credential`, `cookie` or `bearer`, ends in `token`, `auth`, `authorization`, `header`, `headers` or `apikey`, ends in `key` as a word (`api_key`), or has `env`, `header`, `headers` or `authorization` as a word, is never written; `max_tokens`, `authority` and `environment` are. A positional argument of a class whose parameter names are not known is not written either, and is named in `warnings`. A URL is written without user info, query and fragment.
+- **`expressions`** is filled by static analysis only: an argument that is not a literal, as source text on one line cut at 200 characters.
+- **`toolsets`** holds ids of the blueprint's own `toolsets`. **`native_tools`** holds kinds.
+- **`deferred`** is `true` for `defer_loading=True`. From source, only a literal `True` counts; any other value is in `expressions`.
+- **The two ways of reading differ.** A live agent shows a harness stack such as `Coder` or `Researcher` as the capabilities it is made of, because Pydantic AI merges a combined capability into the agent's own; source code shows the class as written. A live `Hooks` shows no details.
+
 ### Provenance, locations and expressions { #provenance }
 
 - **Provenance** says how a fact was obtained. A blueprint's `source`, a tool's `origin` and a delegation's `evidence` all use the same three values. A blueprint made by `pydantic-ai-viz view` is `"code"`; one made from an agent passed to `serve`, `record` or `blueprint` is `"object"`; one synthesised from runs is `"observed"`. A graph is never `"observed"`.
@@ -201,7 +246,7 @@ type GraphBlueprint = {
     - A toolset with an `expression` is `opaque`; its `label` is the class name when that can be read, else the same text.
     - An instruction's `expression` is the source exactly as written, line breaks and indentation included, cut at 20,000 characters. Every other expression is put on one line and cut at 200 characters.
     - Whatever produced the value (an environment variable, a configuration file, a function of the project, of the standard library or of another package), the expression is reported the same way. No default that such a call is given is taken for the value; an environment variable's default is reported as `env.default` only.
-- **What static analysis does not know is left out, not guessed.** A `"code"` blueprint has `null` for a setting the source does not set (the library default applies), an empty `output.tool_names`, and no built-in capabilities. A model, an instruction, a toolset, a tool, an output type or a capability that could not be resolved is also named in `warnings`; a computed setting is reported in `settings.expressions` only.
+- **What static analysis does not know is left out, not guessed.** A `"code"` blueprint has `null` for a setting the source does not set (the library default applies), an empty `output.tool_names`, and no built-in capabilities. A model, an instruction, a toolset, a tool, an output type or a capability that could not be resolved is also named in `warnings`; a computed setting is reported in `settings.expressions` only. A capability's native tools are filled in from source only for `WebSearch`, `WebFetch`, `XSearch`, `ImageGeneration`, `ToolSearch`, `MCP(native=True)` and `NativeTool(...)`.
 
 - Known graph node kinds are `"start"`, `"end"`, `"step"`, `"decision"`, `"join"`, `"broadcast"` and `"map"`. A reader draws an unknown kind as a step.
 - `model.offline` is `true` when the provider is `test` or `function`.
@@ -503,3 +548,5 @@ The wire format is versioned separately from the package. Within `pviz: 1`:
 - nothing is removed or renamed, and no field changes its meaning.
 
 A change that breaks those rules gets a new `pviz` number and is called out in the [changelog](../changelog.md).
+
+Recordings made by 0.1.0 have capabilities with only `name` and `builtin`. The viewer opens them, treating the missing fields as category `"custom"` and empty. The Python models and the JSON Schema describe what this release writes, so they require the new fields and do not accept those capabilities.
