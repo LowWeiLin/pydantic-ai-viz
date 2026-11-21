@@ -7,12 +7,27 @@
  */
 import type {
   AgentBlueprint,
+  Capability,
   Envelope,
   GraphBlueprint,
   SessionStarted,
   Span,
   StreamDelta,
 } from "../wire";
+
+/** Recordings made before capabilities were grouped (pydantic-ai-viz 0.1.0) give only a name and the builtin flag. */
+const CAPABILITY_DEFAULTS = {
+  category: "custom",
+  package: null,
+  deferred: false,
+  details: {},
+  expressions: {},
+  toolsets: [],
+  native_tools: [],
+} satisfies Omit<Capability, "name" | "builtin">;
+
+const withCapabilityDefaults = (list: Capability[] | undefined): Capability[] =>
+  (list ?? []).map((c) => ({ ...CAPABILITY_DEFAULTS, ...c }));
 
 /** One stream.delta, kept with its envelope time so time travel can filter it. */
 export type DeltaRecord = {
@@ -208,7 +223,10 @@ function apply(draft: Draft, owned: Owned, env: Envelope): { draft: Draft; owned
     case "blueprint.agent": {
       if (!isObject(env.agent) || typeof env.agent.id !== "string") break;
       if (!(env.agent.id in draft.agents)) own(draft, owned, "agentOrder").push(env.agent.id);
-      own(draft, owned, "agents")[env.agent.id] = env.agent;
+      own(draft, owned, "agents")[env.agent.id] = {
+        ...env.agent,
+        capabilities: withCapabilityDefaults(env.agent.capabilities),
+      };
       break;
     }
     case "blueprint.graph": {

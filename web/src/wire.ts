@@ -154,7 +154,41 @@ export type OutputInfo = {
   location: SourceLocation | null;
 };
 
-export type Capability = { name: string; builtin: boolean };
+/** The group of the Pydantic AI capabilities docs, in the docs' order; "custom" for any other. Open set: read an unknown value as "custom". */
+export type CapabilityCategory =
+  | "harness"
+  | "environment"
+  | "tools"
+  | "integration"
+  | "web"
+  | "reasoning"
+  | "context"
+  | "knowledge"
+  | "safety"
+  | "self_extension"
+  | "runtime"
+  | "loop"
+  | "custom";
+
+export type Capability = {
+  /** Class name; for one static analysis cannot name, the source text that builds it. */
+  name: string;
+  /** Added by Pydantic AI to every agent; shown folded away. */
+  builtin: boolean;
+  category: CapabilityCategory;
+  /** Where the class is defined, when it is Pydantic AI ("Core") or the harness ("Harness"). */
+  package: "pydantic_ai" | "pydantic_ai_harness" | null;
+  /** defer_loading=True: loaded when the model asks for it. */
+  deferred: boolean;
+  /** What it was given, by parameter name; secrets and defaults are left out. */
+  details: { [k: string]: Json };
+  /** Parameters the source computes at run time: name -> source text (static analysis only). */
+  expressions: { [k: string]: string };
+  /** `Toolset.id`s of the toolsets it gives the agent. */
+  toolsets: string[];
+  /** Provider-side tool kinds it gives the agent, e.g. "web_search". */
+  native_tools: string[];
+};
 
 export type AgentSettings = {
   model_settings: { [k: string]: Json } | null;

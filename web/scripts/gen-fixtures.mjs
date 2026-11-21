@@ -350,8 +350,28 @@ const agentTools = {
 };
 
 const BUILTIN_CAPABILITIES = [
-  { name: "ToolSearch", builtin: true },
-  { name: "PendingMessageDrainCapability", builtin: true },
+  {
+    name: "ToolSearch",
+    builtin: true,
+    category: "context",
+    package: "pydantic_ai",
+    deferred: false,
+    details: {},
+    expressions: {},
+    toolsets: [],
+    native_tools: ["tool_search"],
+  },
+  {
+    name: "PendingMessageDrainCapability",
+    builtin: true,
+    category: "runtime",
+    package: "pydantic_ai",
+    deferred: false,
+    details: {},
+    expressions: {},
+    toolsets: [],
+    native_tools: [],
+  },
 ];
 
 /** Adds the fields that only static analysis fills in, so the blueprints below list what matters. */

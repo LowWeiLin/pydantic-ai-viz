@@ -3,6 +3,7 @@ import {
   agentBlueprint,
   agentRun,
   asStarted,
+  capability,
   delta,
   ended,
   graphBlueprint,
@@ -14,7 +15,7 @@ import {
   stateOf,
   TRACE,
 } from "../test/factory";
-import type { Envelope } from "../wire";
+import type { Capability, Envelope } from "../wire";
 import { initialData, reduce, reduceAll } from "./reduce";
 
 describe("reduce", () => {
@@ -40,6 +41,30 @@ describe("reduce", () => {
     expect(state.agents.a1?.name).toBe("triage");
     expect(state.graphOrder).toEqual(["g1"]);
     expect(state.graphs.g1?.nodes).toHaveLength(2);
+  });
+
+  test("capabilities from a recording made before they were grouped load as custom", () => {
+    const old = agentBlueprint({ id: "a1" });
+    old.capabilities = [{ name: "Hooks", builtin: false }] as unknown as Capability[];
+    const current = capability({
+      name: "Thinking",
+      category: "reasoning",
+      details: { effort: "high" },
+    });
+    const state = stateOf(
+      [1, { type: "blueprint.agent", agent: old }],
+      [
+        2,
+        { type: "blueprint.agent", agent: agentBlueprint({ id: "a2", capabilities: [current] }) },
+      ],
+    );
+    expect(state.agents.a1?.capabilities).toEqual([capability({ name: "Hooks" })]);
+    expect(state.agents.a1?.capabilities[0]).toMatchObject({
+      category: "custom",
+      details: {},
+      toolsets: [],
+    });
+    expect(state.agents.a2?.capabilities).toEqual([current]);
   });
 
   test("span.ended replaces span.started by span_id", () => {

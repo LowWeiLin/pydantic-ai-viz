@@ -6,6 +6,7 @@ import { type DataState, initialData, reduceAll } from "../data/reduce";
 import type {
   AgentBlueprint,
   AgentRunSpan,
+  Capability,
   Envelope,
   Event,
   GraphBlueprint,
@@ -160,6 +161,18 @@ export const delta = (
   part_kind,
   tool_name,
   delta: text,
+});
+
+export const capability = (fields: Partial<Capability> & { name: string }): Capability => ({
+  builtin: false,
+  category: "custom",
+  package: null,
+  deferred: false,
+  details: {},
+  expressions: {},
+  toolsets: [],
+  native_tools: [],
+  ...fields,
 });
 
 export function agentBlueprint(fields: Partial<AgentBlueprint> & { id: string }): AgentBlueprint {

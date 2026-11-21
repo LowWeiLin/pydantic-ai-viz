@@ -27,6 +27,8 @@ import { JsonTree } from "../ui/JsonTree";
 import { SchemaTable } from "../ui/SchemaTable";
 import type {
   AgentBlueprint,
+  Capability,
+  CapabilityCategory,
   Delegate,
   GraphBlueprint,
   GraphNode,
@@ -376,9 +378,92 @@ function AgentMermaid({ agent }: { agent: AgentBlueprint }) {
   return source === null ? null : <MermaidSource source={source} />;
 }
 
+/** The groups of the Pydantic AI capabilities docs, in the docs' order. */
+export const CAPABILITY_CATEGORIES: [CapabilityCategory, string][] = [
+  ["harness", "Harnesses"],
+  ["environment", "Execution environments"],
+  ["tools", "Tools & native abilities"],
+  ["integration", "Integrations"],
+  ["web", "Web & research"],
+  ["reasoning", "Reasoning, planning & delegation"],
+  ["context", "Context management"],
+  ["knowledge", "Knowledge & memory"],
+  ["safety", "Control & safety"],
+  ["self_extension", "Self-extension"],
+  ["runtime", "Execution runtime"],
+  ["loop", "Loop customization"],
+  ["custom", "Custom"],
+];
+const categoryIds = new Set<string>(CAPABILITY_CATEGORIES.map(([id]) => id));
+
+function DetailValue({ value }: { value: Json }) {
+  if (typeof value === "string") return <code className="break-all">{value}</code>;
+  if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
+    return (
+      <span className="flex flex-wrap gap-1.5">
+        {value.map((v, i) => (
+          <Chip key={`${v}-${i}`} mono>
+            {String(v)}
+          </Chip>
+        ))}
+      </span>
+    );
+  }
+  return <code>{JSON.stringify(value)}</code>;
+}
+
+function CapabilityItem({ agent, item }: { agent: AgentBlueprint; item: Capability }) {
+  return (
+    <li className="flex flex-col gap-1.5 text-ui">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Chip mono>{item.name}</Chip>
+        {item.package === "pydantic_ai" && <Chip>Core</Chip>}
+        {item.package === "pydantic_ai_harness" && <Chip>Harness</Chip>}
+        {item.deferred && <Chip tone="accent">on demand</Chip>}
+      </div>
+      <Facts
+        items={known([
+          ...Object.entries(item.details).map(
+            ([key, value]): Fact => [key, <DetailValue key={key} value={value} />],
+          ),
+          ...Object.entries(item.expressions).map(
+            ([key, code]): Fact => [key, <Expression key={key} code={code} hint={false} />],
+          ),
+          item.toolsets.length > 0 && [
+            "Toolsets",
+            <span key="toolsets" className="flex flex-wrap gap-x-3 gap-y-1">
+              {item.toolsets.map((id) => (
+                <PickLink key={id} target={{ kind: "toolset", agentId: agent.id, toolsetId: id }}>
+                  {agent.toolsets.find((t) => t.id === id)?.label ?? id}
+                </PickLink>
+              ))}
+            </span>,
+          ],
+          item.native_tools.length > 0 && [
+            "Provider-side tools",
+            <span key="native" className="flex flex-wrap gap-1.5">
+              {item.native_tools.map((kind) => (
+                <Chip key={kind} tone="tool" mono>
+                  {kind}
+                </Chip>
+              ))}
+            </span>,
+          ],
+        ])}
+      />
+    </li>
+  );
+}
+
 function agentSections(agent: AgentBlueprint): SectionItem[] {
-  const builtin = agent.capabilities.filter((c) => c.builtin);
-  const custom = agent.capabilities.filter((c) => !c.builtin);
+  // A built-in capability the agent configures (`ToolSearch(max_results=3)`) is listed with the rest.
+  // Native tools do not count: the default `ToolSearch` always gives one.
+  const configured = (c: Capability) =>
+    Object.keys(c.details).length > 0 ||
+    Object.keys(c.expressions).length > 0 ||
+    c.toolsets.length > 0;
+  const builtin = agent.capabilities.filter((c) => c.builtin && !configured(c));
+  const custom = agent.capabilities.filter((c) => !c.builtin || configured(c));
   return present([
     warningsSection(agent.warnings),
     modelSection(agent),
@@ -505,17 +590,28 @@ function agentSections(agent: AgentBlueprint): SectionItem[] {
     agent.capabilities.length > 0 && {
       id: "capabilities",
       title: "Capabilities",
+      aside: custom.length > 0 ? String(custom.length) : undefined,
       content: (
         <>
-          {custom.length > 0 && (
-            <p className="m-0 flex flex-wrap gap-1.5">
-              {custom.map((c) => (
-                <Chip key={c.name} mono>
-                  {c.name}
-                </Chip>
-              ))}
-            </p>
-          )}
+          {CAPABILITY_CATEGORIES.map(([id, label]) => {
+            const members = custom.filter(
+              (c) => (categoryIds.has(c.category) ? c.category : "custom") === id,
+            );
+            return (
+              members.length > 0 && (
+                <section key={id} aria-label={label} className="flex flex-col gap-2">
+                  <h5 className="m-0 font-medium text-faint text-meta">
+                    {label} <Badge>{members.length}</Badge>
+                  </h5>
+                  <ul className="m-0 flex list-none flex-col gap-3 p-0">
+                    {members.map((item, i) => (
+                      <CapabilityItem key={`${item.name}-${i}`} agent={agent} item={item} />
+                    ))}
+                  </ul>
+                </section>
+              )
+            );
+          })}
           {builtin.length > 0 && (
             <details className="text-ui">
               <summary className="text-muted">
@@ -724,6 +820,7 @@ const TOOLSET_KINDS: Record<string, string> = {
 
 export function ToolsetInspector({ agent, toolset }: { agent: AgentBlueprint; toolset: Toolset }) {
   const tools = toolsOf(agent, toolset);
+  const owners = agent.capabilities.filter((c) => c.toolsets.includes(toolset.id));
   return (
     <>
       <InspectorHeader tone="tool" icon="toolset" kind="Toolset" title={toolset.label}>
@@ -800,6 +897,16 @@ export function ToolsetInspector({ agent, toolset }: { agent: AgentBlueprint; to
                       {toolset.wrappers.map((wrapper) => (
                         <Chip key={wrapper} mono>
                           {wrapper}
+                        </Chip>
+                      ))}
+                    </span>,
+                  ],
+                  owners.length > 0 && [
+                    "Given by",
+                    <span key="owners" className="flex flex-wrap gap-1.5">
+                      {owners.map((c) => (
+                        <Chip key={c.name} mono>
+                          {c.name}
                         </Chip>
                       ))}
                     </span>,

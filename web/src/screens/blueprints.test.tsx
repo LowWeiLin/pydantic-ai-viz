@@ -12,8 +12,8 @@ import { runs } from "../data/selectors";
 import { useViewer } from "../data/store";
 import { firstLine, parameterCount, trimBlankLines } from "../inspector/BlueprintInspector";
 import { SourceRef } from "../inspector/source";
-import { agentBlueprint, fixture, log, sessionStarted } from "../test/factory";
-import type { AgentBlueprint } from "../wire";
+import { agentBlueprint, capability, fixture, log, sessionStarted } from "../test/factory";
+import type { AgentBlueprint, Toolset } from "../wire";
 
 const NEWSROOM = "blueprint/newsroom.pviz.jsonl";
 const embedded = (name: string): BootPlan => ({ kind: "embedded", events: fixture(name) });
@@ -596,5 +596,128 @@ describe("a model the code works out", () => {
       "title",
       "From environment variable MODEL at run time; no default",
     );
+  });
+});
+
+describe("the capabilities of an agent", () => {
+  const toolset: Toolset = {
+    id: "ts0",
+    toolset_id: null,
+    label: "FunctionToolset 'kb'",
+    kind: "function",
+    wrappers: [],
+    opaque: false,
+    expression: null,
+    location: null,
+  };
+
+  test("are grouped as the Pydantic AI docs group them, with what each one was given", async () => {
+    const user = userEvent.setup();
+    const agent = agentBlueprint({
+      id: "a1",
+      toolsets: [toolset],
+      capabilities: [
+        capability({ name: "AuditTrail" }),
+        capability({
+          name: "Thinking",
+          category: "reasoning",
+          package: "pydantic_ai",
+          details: { effort: "high" },
+        }),
+        capability({
+          name: "ModelFallback",
+          category: "loop",
+          package: "pydantic_ai",
+          details: { models: ["openai:gpt-5", "test"] },
+        }),
+        capability({
+          name: "Memory",
+          category: "knowledge",
+          package: "pydantic_ai_harness",
+          toolsets: ["ts0"],
+          deferred: true,
+        }),
+        capability({
+          name: "MCP",
+          category: "tools",
+          expressions: { url: "os.environ['URL']" },
+          native_tools: ["mcp_server"],
+        }),
+        capability({ name: "Future", category: "quantum" as never }),
+        capability({ name: "ToolSearch", builtin: true, category: "context" }),
+      ],
+    });
+    const events = log(
+      [0, { ...sessionStarted(), mode: "blueprint" }],
+      [1, { type: "blueprint.agent", agent }],
+    );
+    window.location.hash = "#/agents/a1";
+    render(<App plan={{ kind: "embedded", events }} />);
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    const panel = within(details).getByRole("region", { name: "Agent blueprint" });
+    expect(
+      within(panel).getByRole("heading", { level: 4, name: /^Capabilities/ }),
+    ).toHaveTextContent("Capabilities6");
+
+    const groups = within(panel).getAllByRole("heading", { level: 5 });
+    expect(groups.map((h) => h.textContent)).toEqual([
+      "Tools & native abilities 1",
+      "Reasoning, planning & delegation 1",
+      "Knowledge & memory 1",
+      "Loop customization 1",
+      "Custom 2",
+    ]);
+    const custom = within(panel).getByRole("region", { name: "Custom" });
+    expect(within(custom).getByText("AuditTrail")).toBeInTheDocument();
+    expect(within(custom).getByText("Future")).toBeInTheDocument();
+
+    expect(within(panel).getAllByText("Core")).toHaveLength(2);
+    expect(within(panel).getByText("Harness")).toBeInTheDocument();
+    expect(within(panel).getByText("on demand")).toBeInTheDocument();
+    expect(within(panel).getByText("high")).toBeInTheDocument();
+    expect(within(panel).getByText("openai:gpt-5")).toBeInTheDocument();
+    expect(within(panel).getByText("test")).toBeInTheDocument();
+    expect(within(panel).getByText("os.environ['URL']").tagName).toBe("CODE");
+    expect(within(panel).getByText("mcp_server")).toBeInTheDocument();
+    expect(within(panel).getByText("ToolSearch")).not.toBeVisible();
+
+    const link = within(panel).getAllByRole("button", { name: "FunctionToolset 'kb'" });
+    await user.click(link[link.length - 1] as HTMLElement);
+    const toolsetPanel = await screen.findByRole("region", { name: "Toolset" });
+    expect(within(toolsetPanel).getByText("Given by")).toBeInTheDocument();
+    expect(within(toolsetPanel).getByText("Memory")).toBeInTheDocument();
+  });
+
+  test("list a built-in one the agent configures under its group, and fold the plain ones", () => {
+    const agent = agentBlueprint({
+      id: "a1",
+      capabilities: [
+        capability({
+          name: "ToolSearch",
+          builtin: true,
+          category: "context",
+          details: { max_results: 3 },
+          native_tools: ["tool_search"],
+        }),
+        capability({
+          name: "PendingMessageDrainCapability",
+          builtin: true,
+          category: "runtime",
+          native_tools: ["tool_search"],
+        }),
+      ],
+    });
+    const events = log(
+      [0, { ...sessionStarted(), mode: "blueprint" }],
+      [1, { type: "blueprint.agent", agent }],
+    );
+    window.location.hash = "#/agents/a1";
+    render(<App plan={{ kind: "embedded", events }} />);
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    const panel = within(details).getByRole("region", { name: "Agent blueprint" });
+    const context = within(panel).getByRole("region", { name: "Context management" });
+    expect(within(context).getByText("ToolSearch")).toBeVisible();
+    expect(within(context).getByText("3")).toBeVisible();
+    expect(within(panel).getByText("PendingMessageDrainCapability")).not.toBeVisible();
   });
 });
