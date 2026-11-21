@@ -61,6 +61,7 @@ dev = [
     "ruff>=0.9",
     "pyright>=1.1.390",
     "pre-commit>=4",
+    "pydantic-ai-harness>=0.71",
 ]
 docs = [
     "mkdocs-material>=9.6,<10",
