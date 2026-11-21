@@ -36,7 +36,7 @@ With `--record` or `--export`, no server is started: the scenario is played once
 
 | Argument | Description |
 |---|---|
-| `NAME` | Which demo: `support`, `research` or `pipeline`. Defaults to `support`. See [Demos](../demos.md). |
+| `NAME` | Which demo: `support`, `research`, `pipeline` or `capabilities` (which needs `pip install 'pydantic-ai-viz[demos]'`). Defaults to `support`. See [Demos](../demos.md). |
 | `--list` | Print the available demos, one `name - description` per line, and exit. |
 | `--speed X` | Playback speed multiplier for the scripted delays. Default `1.0`. `2` is twice as fast; `0` removes all delays. |
 | `--port N` | Port for the server. Default `8765`. If it is busy, a free port is used. |

@@ -1,6 +1,6 @@
 # Demos
 
-Three demos ship with the package. Each is a small but complete agent program whose "model" is a script: it returns the same responses every time, needs no API key and makes no network calls. Everything else is real. The agents are ordinary Pydantic AI agents, the tools are ordinary functions that really run, and the spans you see are the ones Pydantic AI emits.
+Four demos ship with the package. Each is a small but complete agent program whose "model" is a script: it returns the same responses every time, needs no API key and makes no network calls. Everything else is real. The agents are ordinary Pydantic AI agents, the tools are ordinary functions that really run, and the spans you see are the ones Pydantic AI emits.
 
 ```bash
 pydantic-ai-viz demo --list
@@ -10,9 +10,12 @@ pydantic-ai-viz demo --list
 support - A triage agent resolves a damaged-order ticket: parallel tools, a retry, a delegated refund.
 research - A planner fans out to three parallel searchers, then a writer drafts the report.
 pipeline - A step graph writes, reviews and publishes a post, looping back once for a rewrite.
+capabilities - One agent plans, searches, reads, loads a skill and keeps a note, all through capabilities.
 ```
 
-You can also watch all three in the [hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/), which replays recordings of these same scenarios in your browser. The hosted demo also shows [the demos' source code as `view` reads it](https://lowweilin.github.io/pydantic-ai-viz/demo/?src=recordings/source.pviz.jsonl): seven agents and a graph in three files, drawn without running any of them.
+The `capabilities` demo uses capabilities of `pydantic-ai-harness`, which is not a dependency of the package. Install it with `pip install 'pydantic-ai-viz[demos]'`, which brings `pydantic-ai-harness[skills]` (its `Skills` capability needs PyYAML); without it, `demo --list` leaves the demo out and `demo capabilities` says what to install.
+
+You can also watch all four in the [hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/), which replays recordings of these same scenarios in your browser. The hosted demo also shows [the demos' source code as `view` reads it](https://lowweilin.github.io/pydantic-ai-viz/demo/?src=recordings/source.pviz.jsonl): eight agents and a graph in four files, drawn without running any of them.
 
 ## support { #support }
 
@@ -95,6 +98,36 @@ What to watch for:
 
 The scenario is driven by [`run_graph`](guides/graphs.md), which is what makes the graph's own nodes show up.
 
+## capabilities { #capabilities }
+
+```bash
+pydantic-ai-viz demo capabilities   # needs: pip install 'pydantic-ai-viz[demos]'
+```
+
+[Open the recording in the hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/?src=recordings/capabilities.pviz.jsonl)
+
+A `briefing` agent is asked to brief a reader on the Apollo 13 accident. It thinks, writes a plan, searches and reads a small archive bundled with the demo, loads a skill, saves a note to memory and answers. All of it is given to the agent as `capabilities=`:
+
+| Capability | Category | What it gives |
+|---|---|---|
+| `Thinking(effort="high")` | Reasoning, planning & delegation | Reasoning effort |
+| `Planning()` | Reasoning, planning & delegation | `write_plan` and the other planning tools |
+| `WebSearch`, `WebFetch` | Web & research | `search_archive` and `fetch_page`, local functions that read the bundled archive |
+| `MCP(url=...)` | Tools & native abilities | A provider-side MCP tool; the address is illustrative and never contacted |
+| `Skills` | Knowledge & memory | `load_capability` and the bundled `house-style` skill |
+| `Memory` | Knowledge & memory | `write_memory` and the other memory tools, over a store that lives in memory |
+| `InputGuardrail` | Control & safety | A check on the prompt |
+| `ModelFallback` | Loop customization | A second scripted model |
+
+What to watch for:
+
+1. **Capabilities on the canvas.** Under the agent card is a "Capabilities" box with one row per capability, in the docs' category order. Select a row for its panel.
+2. **Capabilities linked to toolsets.** A dashed line runs from a capability to the toolset it gives, for example from `WebSearch` to the `web_search` toolset. Select the toolset to see which capability gave it.
+3. **Capabilities that Pydantic AI adds to every agent** (`ToolSearch` and others) are folded away in the inspector and left off the canvas.
+4. **The same agent from source.** The [source view](https://lowweilin.github.io/pydantic-ai-viz/demo/?src=recordings/source.pviz.jsonl) shows the same capabilities read from the code. Its `Memory` and `Planning` toolsets are marked "decided at run time" and list no tools; a run lists them.
+
+The demo reads a skill bundled with the package and never writes one.
+
 ## Options
 
 ```bash
@@ -114,11 +147,11 @@ The demos are meant to be read. They are 180 to 300 lines each, in [`src/pydanti
 
 | File | Contents |
 |---|---|
-| `support.py`, `research.py`, `pipeline.py` | The agents, tools and graph of each demo |
+| `support.py`, `research.py`, `pipeline.py`, `capabilities.py` | The agents, tools and graph of each demo |
 | `_script.py` | The helper that turns a list of scripted turns into a `FunctionModel` that can also stream |
 
 Shorter starting points are in [`examples/`](https://github.com/LowWeiLin/pydantic-ai-viz/tree/main/examples).
 
 ## About the model names
 
-The demo models are called `scripted-support`, `scripted-research` and `scripted-pipeline`, and the viewer marks them **offline**. They are Pydantic AI `FunctionModel`s. The names are deliberately honest: nothing in a demo recording was produced by a real language model.
+The demo models are called `scripted-support`, `scripted-research`, `scripted-pipeline` and `scripted-capabilities`, and the viewer marks them **offline**. They are Pydantic AI `FunctionModel`s. The names are deliberately honest: nothing in a demo recording was produced by a real language model.

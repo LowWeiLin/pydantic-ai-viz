@@ -17,7 +17,7 @@ See what your [Pydantic AI](https://ai.pydantic.dev/) agents are (the blueprint)
 uvx pydantic-ai-viz demo
 ```
 
-This opens a browser tab and plays a scripted support-triage agent: streamed tokens, three parallel tool calls, a retry, a delegation to a second agent and a structured result. The demo model is scripted, so it needs no API key and makes no network calls. `pydantic-ai-viz demo --list` shows the other demos.
+This opens a browser tab and plays a scripted support-triage agent: streamed tokens, three parallel tool calls, a retry, a delegation to a second agent and a structured result. The demo model is scripted, so it needs no API key and makes no network calls. `pydantic-ai-viz demo --list` shows the other demos; the capabilities demo needs `pip install 'pydantic-ai-viz[demos]'`.
 
 [![An agent run in pydantic-ai-viz: blueprint canvas, span timeline and inspector](https://raw.githubusercontent.com/LowWeiLin/pydantic-ai-viz/main/docs/assets/screenshots/hero-dark.png)](https://lowweilin.github.io/pydantic-ai-viz/demo/)
 

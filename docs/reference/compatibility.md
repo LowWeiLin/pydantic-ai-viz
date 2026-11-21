@@ -87,8 +87,10 @@ So the failure mode of a Pydantic AI upgrade is a less detailed blueprint with a
 | `settings.tool_timeout` | `agent._tool_timeout` | `null` and a warning. |
 | `output.mode`, `output.allows_text` | `agent._output_schema` | `"text"` when the output schema is a plain string, else `"unknown"`. Filled in from the first observed run. |
 | `output.tool_names` | `agent._output_toolset`, then its `_tool_defs` | Empty list and a warning. Filled in from observed runs. |
-| `native_tools` | `agent._cap_native_tools` | Empty list. |
+| `native_tools` | `agent._cap_native_tools` | Empty list. For a capability loaded on demand, the native tool is read from a keyword default (`native_tool`) of the function `CombinedCapability.get_native_tools` puts in its place; a function without one is left out. |
 | `capabilities[].toolsets` | `CapabilityOwnedToolset.capability` (`pydantic_ai.toolsets._capability_owned`) | Empty list. |
+| A harness `Coder` or `Researcher` | The `owner` field of the private `RequireWorkspace` capability (`pydantic_ai_harness._workspace`), which the stack puts among its capabilities | The stack is not listed; its members are. |
+| `local=True` of `WebSearch` and `WebFetch`, from source | The method `_resolve_local_strategy` of those classes, read from the installed `pydantic_ai` source without importing it | No toolset is drawn for it. |
 | Graph `nodes` and `edges` | `pydantic_graph.graph_builder.build_mermaid_graph` (importable, but not exported) | The graph is walked through its public `nodes` and `edges_by_source` instead. |
 
 Everything else in a blueprint comes from public API: `agent.name`, `.description`, `.model`, `.deps_type`, `.output_type`, `.model_settings`, `.end_strategy`, `.toolsets`, `.root_capability`, `capability.get_native_tools()`, the public dataclass fields of capabilities, `agent.output_json_schema()`, the public fields of toolsets and tools, and `graph.render()`.

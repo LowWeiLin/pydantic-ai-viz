@@ -11,7 +11,17 @@ The wire format has its own version number (`pviz`, currently `1`), recorded in 
 ### Added
 
 - Capabilities are recognised and grouped like the Pydantic AI capabilities docs (harnesses, execution environments, tools, integrations, web, reasoning, context, knowledge, safety, self-extension, runtime, loop, and custom for the rest), with what each was given, the toolsets it gives the agent and its provider-side tools, from source and from live agents.
+- Capabilities are drawn on the canvas, in a box under the agent card in the docs' category order, with a dashed line to each toolset they give. A capability can be picked on the canvas and has its own panel; the capabilities in an agent's panel and in a toolset's panel are links. A pick is in the page's address (`?part=capability:<index>`).
+- A live `Coder` or `Researcher` of `pydantic-ai-harness` is listed as itself, with category `harness`; its private helper capabilities are left out. A `Researcher` with an overflow store of its own cannot be recognised and is not listed.
+- Static analysis opens `CombinedCapability([...])` into the capabilities in it (except one with a literal `defer_loading=True`), gives `WebSearch` and `WebFetch` the toolset of their `local=` function, and gives each harness capability that has a toolset one opaque toolset.
+- The capabilities demo (`pydantic-ai-viz demo capabilities`): one agent that uses most categories of capability, offline. It needs `pip install 'pydantic-ai-viz[demos]'`, which installs `pydantic-ai-harness` with its `skills` extra.
+- `BenchmarkInstructions`, `BaseDurabilityCapability` and the deprecated harness aliases `InputGuard`, `OutputGuard` and `BubblewrapSandbox` are categorised.
 - Wire format: `CapabilityInfo` gains `category`, `package`, `deferred`, `details`, `expressions`, `toolsets` and `native_tools`. The change is additive within `pviz` 1. The viewer still opens recordings made by 0.1.0, treating their capabilities as custom with nothing more known; the Python models and the JSON Schema require the new fields.
+
+### Fixed
+
+- A live agent's `native_tools` no longer lists the function `CombinedCapability` puts in place of the native tool of a capability loaded on demand; it lists the tool's kind.
+- Static analysis no longer lists `pydantic_ai_slim` among the libraries it knows by name; it is not importable.
 
 ## [0.1.0] - 2026-11-19
 
