@@ -309,6 +309,17 @@ def test_demo_usage_errors(capsys: pytest.CaptureFixture[str], demos: dict[str, 
     assert active_session() is None
 
 
+def test_a_demo_that_needs_a_missing_package_says_what_to_install(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], demos: dict[str, StubDemo]
+) -> None:
+    monkeypatch.setattr(cli, "_load_unavailable", lambda: {"gamma": "needs the gamma package"})
+    code, out, err = run_cli(capsys, "demo", "gamma")
+    assert (code, out) == (2, "")
+    assert err == "pydantic-ai-viz: error: demo 'gamma' needs the gamma package\n"
+    code, _, err = run_cli(capsys, "demo", "delta")
+    assert (code, err) == (2, "pydantic-ai-viz: error: unknown demo 'delta' (available: alpha, beta)\n")
+
+
 def test_demo_runtime_errors_exit_with_1_and_close_the_session(
     capsys: pytest.CaptureFixture[str], demos: dict[str, StubDemo], tmp_path: Path
 ) -> None:

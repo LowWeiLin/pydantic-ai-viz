@@ -77,7 +77,7 @@ def build(out: Path, speed: float) -> list[Path]:
         {
             "id": "source",
             "title": SOURCE_TITLE,
-            "description": "Seven agents and a graph, drawn from the demos' code by pydantic-ai-viz view "
+            "description": "Eight agents and a graph, drawn from the demos' code by pydantic-ai-viz view "
             "without running any of it.",
             "src": "source.pviz.jsonl",
             "kind": "blueprint",

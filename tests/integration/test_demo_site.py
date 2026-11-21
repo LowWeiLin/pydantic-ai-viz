@@ -80,10 +80,16 @@ def test_the_demo_site_is_the_viewer_a_gallery_index_and_one_recording_per_demo(
     agents = [event["agent"] for event in events if event["type"] == "blueprint.agent"]
     modules = (demos.support, demos.research, demos.pipeline)
     live = [str(value.name) for module in modules for value in vars(module).values() if isinstance(value, Agent)]
-    assert sorted(agent["label"] for agent in agents) == sorted(live)
+    # The capabilities demo is read from source even when pydantic-ai-harness (needed to import it) is missing.
+    assert sorted(agent["label"] for agent in agents) == sorted([*live, "briefing"])
     assert {agent["source"] for agent in agents} == {"code"}
     # Where each one is defined, relative to the demos: no path of the machine that built the site.
-    assert {agent["location"]["file"] for agent in agents} == {f"{name}.py" for name in DEMOS}
+    assert {agent["location"]["file"] for agent in agents} == {
+        "support.py",
+        "research.py",
+        "pipeline.py",
+        "capabilities.py",
+    }
     assert [event["graph"]["label"] for event in events if event["type"] == "blueprint.graph"] == ["pipeline"]
 
 

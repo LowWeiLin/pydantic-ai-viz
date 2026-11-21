@@ -9,6 +9,7 @@ spells out.
 from __future__ import annotations
 
 from importlib import import_module
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,13 @@ from static_support import without_titles
 from pydantic_ai_viz import AgentBlueprint, Analysis, GraphBlueprint, analyze, record
 
 DEMOS = ["support", "research", "pipeline"]
+ALL_DEMOS = [
+    *DEMOS,
+    pytest.param(
+        "capabilities",
+        marks=pytest.mark.skipif(find_spec("pydantic_ai_harness") is None, reason="needs pydantic-ai-harness"),
+    ),
+]
 
 
 def live_and_static(name: str) -> tuple[list[AgentBlueprint | GraphBlueprint], Analysis]:
@@ -37,7 +45,7 @@ def live_and_static(name: str) -> tuple[list[AgentBlueprint | GraphBlueprint], A
     return live, analyze(Path(module.__file__))
 
 
-@pytest.mark.parametrize("name", DEMOS)
+@pytest.mark.parametrize("name", ALL_DEMOS)
 def test_the_same_agents_and_graphs_are_found(name: str) -> None:
     live, static = live_and_static(name)
     assert static.notices == []
@@ -83,7 +91,7 @@ def test_agents_read_from_source_match_the_live_agents(name: str) -> None:
         ]
 
 
-@pytest.mark.parametrize("name", DEMOS)
+@pytest.mark.parametrize("name", ALL_DEMOS)
 def test_a_helper_in_another_file_is_followed_and_defaults_are_not_made_up(name: str) -> None:
     _, static = live_and_static(name)
     for found in static.agents:
@@ -97,7 +105,38 @@ def test_a_helper_in_another_file_is_followed_and_defaults_are_not_made_up(name:
         assert found.warnings == []
         # Pydantic AI's defaults are not passed off as something the source says.
         assert found.settings.end_strategy is None
-        assert (found.capabilities, found.native_tools) == ([], [])
+        if name in DEMOS:
+            assert (found.capabilities, found.native_tools) == ([], [])
+
+
+def test_the_capabilities_read_from_source_match_the_live_agent() -> None:
+    pytest.importorskip("pydantic_ai_harness")
+    live, static = live_and_static("capabilities")
+    (expected,) = (b for b in live if isinstance(b, AgentBlueprint))
+    (found,) = static.agents
+    # Pydantic AI adds some capabilities to every agent and the source never names them. The order of
+    # the others is the library's (a guardrail wraps the run, so it may come last), so compare by name.
+    own = [c for c in expected.capabilities if not c.builtin]
+    assert sorted(
+        (c.name, c.category, c.package, c.deferred, c.native_tools, c.toolsets) for c in found.capabilities
+    ) == sorted((c.name, c.category, c.package, c.deferred, c.native_tools, c.toolsets) for c in own)
+    assert not any(c.builtin for c in found.capabilities)
+    # Native tools of the agent: those of the capabilities it was given.
+    kinds = {kind for c in expected.capabilities if c.builtin for kind in c.native_tools}
+    assert found.native_tools == [kind for kind in expected.native_tools if kind not in kinds]
+    # A harness toolset has the tools its arguments decide, so the source can only say it is there.
+    assert [(t.toolset_id, t.label, t.kind, t.wrappers) for t in found.toolsets] == [
+        (t.toolset_id, t.label, t.kind, t.wrappers) for t in expected.toolsets
+    ]
+    harness = {c.name for c in found.capabilities if c.package == "pydantic_ai_harness"}
+    owners = {id_: c.name for c in found.capabilities for id_ in c.toolsets}
+    for toolset in found.toolsets:
+        assert toolset.opaque == (owners[toolset.id] in harness)
+    ignored = {"origin", "location"}
+    drawn = {t.id for t in found.toolsets if not t.opaque}
+    assert [t.model_dump(exclude=ignored) for t in found.tools if t.toolset in drawn] == [
+        t.model_dump(exclude=ignored) for t in expected.tools if t.toolset in drawn
+    ]
 
 
 def test_the_graph_read_from_source_matches_the_live_graph() -> None:

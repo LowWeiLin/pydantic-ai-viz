@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +30,8 @@ from .support import (
     read_recording,
 )
 
-NAMES = ["support", "research", "pipeline"]
+# The capabilities demo needs pydantic-ai-harness; without it the demo is not listed.
+NAMES = ["support", "research", "pipeline", *(["capabilities"] if find_spec("pydantic_ai_harness") else [])]
 
 
 @pytest.fixture(scope="module")
@@ -94,8 +96,8 @@ def test_a_demo_recording_is_a_complete_valid_session_log(recorded: dict[str, tu
     # Introspection understood every agent and graph of the demo: nothing degraded.
     assert all(e["agent"]["warnings"] == [] and e["agent"]["source"] == "object" for e in events if "agent" in e)
     assert all(e["graph"]["warnings"] == [] for e in events if "graph" in e)
-    # No span fell through the normaliser as an unknown kind.
-    assert "other" not in {span["kind"] for span in spans.values()}
+    # No span fell through the normaliser as an unknown kind, but the harness's own memory spans.
+    assert {span["name"] for span in spans.values() if span["kind"] == "other"} <= {"memory.inject", "memory.write"}
 
 
 @pytest.mark.parametrize("name", NAMES)
