@@ -43,7 +43,7 @@ import { Button } from "../ui/Button";
 import { CopyButton } from "../ui/CopyButton";
 import { EmptyState } from "../ui/EmptyState";
 import { kindMeta } from "../ui/tone";
-import { ScreenBar, Segmented } from "./parts";
+import { DefaultsToggle, ScreenBar, Segmented } from "./parts";
 
 const LIVE = Number.POSITIVE_INFINITY;
 const subjectKey = (subject: RunSubject): string => `${subject.kind}:${subject.id}`;
@@ -145,6 +145,14 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
   const [chosenSubject, setChosenSubject] = useState<string | null>(null);
   const subject = subjects.find((s) => subjectKey(s) === chosenSubject) ?? subjects[0] ?? null;
   const [picked, setPicked] = useState<CanvasTarget | null>(null);
+  // The blueprints on an agent canvas, for the count of what Pydantic AI added to them.
+  const drawn = useMemo(
+    () =>
+      subject?.kind === "agent"
+        ? (canvasModel(data, subject.id, null)?.agents.map((entry) => entry.blueprint) ?? [])
+        : [],
+    [data, subject?.kind, subject?.id],
+  );
 
   const select = (id: string | null): void =>
     navigate({ name: "run", traceId, spanId: id }, { replace: true });
@@ -271,8 +279,16 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
               </>
             }
             aside={
-              hasMermaid ? (
-                <CopyButton text={() => subjectMermaid(data, subject) ?? ""} label="Copy Mermaid" />
+              drawn.length > 0 || hasMermaid ? (
+                <>
+                  <DefaultsToggle agents={drawn} />
+                  {hasMermaid && (
+                    <CopyButton
+                      text={() => subjectMermaid(data, subject) ?? ""}
+                      label="Copy Mermaid"
+                    />
+                  )}
+                </>
               ) : undefined
             }
           />

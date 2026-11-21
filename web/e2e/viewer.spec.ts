@@ -471,6 +471,15 @@ test.describe("navigation", () => {
 
     await test.step("f fits the canvas after a zoom", async () => {
       const viewport = page.locator(".react-flow__viewport");
+      // The run's figures can wrap the bar above the canvas when it ends, which resizes the
+      // canvas and fits it again: wait until the fit holds still.
+      await expect
+        .poll(async () => {
+          const before = await viewport.getAttribute("style");
+          await page.waitForTimeout(300);
+          return before === (await viewport.getAttribute("style"));
+        })
+        .toBe(true);
       const fitted = await viewport.getAttribute("style");
       await page.getByRole("button", { name: "Zoom in" }).click();
       await expect(viewport).not.toHaveAttribute("style", fitted ?? "");

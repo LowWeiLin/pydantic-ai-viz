@@ -72,7 +72,7 @@ function source(): { url: string; hash: string } {
 }
 
 /**
- * The capabilities demo's agent, its web search capability picked: the real recording, or the
+ * The capabilities demo's agent, its house-style skill picked: the real recording, or the
  * blueprint-only fixture, which the server keeps apart.
  */
 function capabilities(): string {
@@ -84,8 +84,8 @@ function capabilities(): string {
         spans: [],
       };
   const agent = blueprint(recording, "briefing");
-  const index = agent.capabilities.findIndex((capability) => capability.name === "WebSearch");
-  const hash = `#/agents/${agent.id}?part=capability%3A${index}`;
+  const index = agent.capabilities.findIndex((capability) => capability.name === "Skills");
+  const hash = `#/agents/${agent.id}?part=skill%3A${index}%3Ahouse-style`;
   return real ? src(recording, hash) : `/fx/?src=recordings/${recording.file}${hash}`;
 }
 
@@ -203,12 +203,13 @@ for (const scheme of ["dark", "light"] as const) {
   test.describe(`capabilities, ${scheme}`, () => {
     test.use({ colorScheme: scheme });
     // An agent built from capabilities: grouped by kind under its card, the toolsets they give
-    // linked to them, and the picked one explained in the inspector.
+    // linked to them, the skills under the capability that offers them, and the picked skill's
+    // instructions in the inspector.
     test(`capabilities-${scheme}.png`, async ({ page }) => {
       await page.goto(capabilities());
-      await expect(canvasNode(page, /^Capability WebSearch, /)).toBeVisible();
+      await expect(canvasNode(page, /^Skill house-style of Skills/)).toBeVisible();
       const inspector = page.getByRole("complementary", { name: /details/ });
-      await expect(inspector.getByRole("heading", { name: "WebSearch" })).toBeVisible();
+      await expect(inspector.getByRole("heading", { name: "house-style" })).toBeVisible();
       await shoot(page, `capabilities-${scheme}.png`);
     });
   });

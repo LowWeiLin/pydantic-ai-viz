@@ -204,7 +204,27 @@ const SCREENS: { name: string; open: (page: Page) => Promise<void> }[] = [
     open: async (page) => {
       await page.goto(`${FX}?src=recordings/blueprint/capabilities.pviz.jsonl#/agents/a1`);
       await canvasNode(page, /^Capability Skills, /).click();
-      await expect(page.getByRole("complementary", { name: /details/ })).toContainText("On demand");
+      await expect(
+        page.getByRole("complementary", { name: /details/ }).getByRole("list", {
+          name: "Skills of Skills",
+        }),
+      ).toBeVisible();
+    },
+  },
+  {
+    name: "blueprint-only view: a skill picked on the canvas",
+    open: async (page) => {
+      await page.goto(`${FX}?src=recordings/blueprint/capabilities.pviz.jsonl#/agents/a1`);
+      await canvasNode(page, /^Skill house-style of Skills/).click();
+      await expect(page.getByRole("heading", { level: 3, name: "house-style" })).toBeVisible();
+    },
+  },
+  {
+    name: "blueprint-only view: what Pydantic AI adds by default, shown",
+    open: async (page) => {
+      await page.goto(`${FX}?src=recordings/blueprint/capabilities.pviz.jsonl#/agents/a1`);
+      await page.getByRole("button", { name: /^Pydantic AI defaults/ }).click();
+      await expect(canvasNode(page, /, a Pydantic AI default$/).first()).toBeVisible();
     },
   },
   {

@@ -15,7 +15,10 @@ import type {
   StreamDelta,
 } from "../wire";
 
-/** Recordings made before capabilities were grouped (pydantic-ai-viz 0.1.0) give only a name and the builtin flag. */
+/**
+ * Recordings made before capabilities were grouped (pydantic-ai-viz 0.1.0) give only a name and
+ * the builtin flag; those made before skills and harness stacks were read lack the last three.
+ */
 const CAPABILITY_DEFAULTS = {
   category: "custom",
   package: null,
@@ -24,10 +27,17 @@ const CAPABILITY_DEFAULTS = {
   expressions: {},
   toolsets: [],
   native_tools: [],
+  capability_id: null,
+  stack: null,
+  skills: [],
 } satisfies Omit<Capability, "name" | "builtin">;
 
 const withCapabilityDefaults = (list: Capability[] | undefined): Capability[] =>
   (list ?? []).map((c) => ({ ...CAPABILITY_DEFAULTS, ...c }));
+
+/** Recordings made before default settings were told apart name none. */
+const withSettingsDefaults = (settings: AgentBlueprint["settings"]): AgentBlueprint["settings"] =>
+  isObject(settings) ? { ...settings, defaults: settings.defaults ?? [] } : settings;
 
 /** One stream.delta, kept with its envelope time so time travel can filter it. */
 export type DeltaRecord = {
@@ -226,6 +236,7 @@ function apply(draft: Draft, owned: Owned, env: Envelope): { draft: Draft; owned
       own(draft, owned, "agents")[env.agent.id] = {
         ...env.agent,
         capabilities: withCapabilityDefaults(env.agent.capabilities),
+        settings: withSettingsDefaults(env.agent.settings),
       };
       break;
     }

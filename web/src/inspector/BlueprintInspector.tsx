@@ -6,11 +6,14 @@
  *               Capabilities · Mermaid
  *   toolset     Tools · Definition
  *   tool        Parameters · Returns · Definition
- *   capability  Definition
+ *   capability  Definition · Skills
+ *   skill       When to use · Instructions · Definition
  *   graph       Warnings · Types · Nodes · Mermaid
  *   graph node  Node · Comes from · Leads to
  *
  * A section with nothing to say is left out, and so is a setting the blueprint does not set.
+ * What Pydantic AI added by default is folded under "From Pydantic AI", open while defaults
+ * are shown, and every such part keeps its panel.
  * Every part a panel names (a tool, its toolset, its agent, a node an edge leads to) can be
  * picked from the panel, as it can on the canvas (see `pick.tsx`).
  */
@@ -21,18 +24,23 @@ import {
   CAPABILITY_CATEGORIES,
   capabilityCategory,
   categoryNames,
-  foldedAway,
+  defaultCapability,
+  LOAD_CAPABILITY,
+  libraryToolsets,
   type ShownCapability,
   shownCapabilities,
 } from "../data/model";
 import { canvasModel, fileName } from "../data/selectors";
 import { useViewer } from "../data/store";
 import { Facts } from "../screens/parts";
+import { useShowDefaults } from "../shell/defaults";
 import { plural } from "../shell/format";
 import { formatRoute } from "../shell/router";
 import { Badge, Chip } from "../ui/Badge";
+import { CopyButton } from "../ui/CopyButton";
 import { Icon } from "../ui/Icon";
 import { JsonTree } from "../ui/JsonTree";
+import { PathText } from "../ui/PathText";
 import { SchemaTable } from "../ui/SchemaTable";
 import type {
   AgentBlueprint,
@@ -42,6 +50,7 @@ import type {
   GraphNode,
   Instruction,
   Json,
+  Skill,
   Tool,
   Toolset,
 } from "../wire";
@@ -256,7 +265,42 @@ function EnvironmentName({ variable }: { variable: string }) {
   );
 }
 
-function settingsSection(agent: AgentBlueprint): SectionItem {
+/**
+ * What Pydantic AI added by default, folded away: open while defaults are shown, so that what
+ * the author wrote comes first either way.
+ */
+function FromPydanticAI({
+  title = "From Pydantic AI",
+  count,
+  open,
+  children,
+}: {
+  title?: string;
+  count: number;
+  open: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details open={open} className="text-ui">
+      <summary className="text-muted">
+        {title} <Badge>{count}</Badge>
+      </summary>
+      <div className="mt-2 flex flex-col gap-3">{children}</div>
+    </details>
+  );
+}
+
+/** A value Pydantic AI set by default, where defaults are shown. */
+function DefaultValue({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      {children}
+      <Chip>default</Chip>
+    </span>
+  );
+}
+
+function settingsSection(agent: AgentBlueprint, showDefaults: boolean): SectionItem {
   const { settings } = agent;
   const computed = (key: string): ReactNode | null => {
     const code = settings.expressions[key];
@@ -277,22 +321,36 @@ function settingsSection(agent: AgentBlueprint): SectionItem {
     if (name) modelRows.push([name, <Expression key={key} code={code} hint={false} />]);
   }
 
-  const facts = known([
-    row("Dependencies", agent.deps_type && <code className="break-all">{agent.deps_type}</code>),
-    row("End strategy", value("end_strategy", settings.end_strategy)),
-    row("Tool retries", value("tool_retries", settings.tool_retries)),
-    row("Output retries", value("output_retries", settings.output_retries)),
-    row(
+  // A setting whose value is the one Pydantic AI gives every agent is folded away with the
+  // other defaults, or marked as one where they are shown.
+  const fields: [key: string, label: string, shown: ReactNode | null][] = [
+    ["end_strategy", "End strategy", value("end_strategy", settings.end_strategy)],
+    ["tool_retries", "Tool retries", value("tool_retries", settings.tool_retries)],
+    ["output_retries", "Output retries", value("output_retries", settings.output_retries)],
+    [
+      "tool_timeout",
       "Tool timeout",
       value("tool_timeout", settings.tool_timeout === null ? null : `${settings.tool_timeout} s`),
-    ),
+    ],
+  ];
+  const byDefault = (key: string): boolean => settings.defaults.includes(key);
+  const facts = known([
+    row("Dependencies", agent.deps_type && <code className="break-all">{agent.deps_type}</code>),
+    ...fields
+      .filter(([key]) => showDefaults || !byDefault(key))
+      .map(([key, label, shown]) =>
+        row(label, shown !== null && byDefault(key) ? <DefaultValue>{shown}</DefaultValue> : shown),
+      ),
     row("Model settings", computed("model_settings")),
   ]);
+  const folded = showDefaults
+    ? []
+    : known(fields.filter(([key]) => byDefault(key)).map(([, label, shown]) => row(label, shown)));
   return {
     id: "settings",
     title: "Settings",
     content:
-      facts.length === 0 && modelRows.length === 0 ? (
+      facts.length === 0 && modelRows.length === 0 && folded.length === 0 ? (
         <Note>
           {agent.source === "code"
             ? "The code sets none, so the defaults of the installed Pydantic AI apply."
@@ -306,6 +364,11 @@ function settingsSection(agent: AgentBlueprint): SectionItem {
               <span className="text-faint text-ui">Model settings</span>
               <Facts items={modelRows} />
             </div>
+          )}
+          {folded.length > 0 && (
+            <FromPydanticAI title="Pydantic AI defaults" count={folded.length} open={false}>
+              <Facts items={folded} />
+            </FromPydanticAI>
           )}
         </>
       ),
@@ -446,6 +509,23 @@ const capabilityFacts = (agent: AgentBlueprint, item: Capability): Fact[] =>
 
 function CapabilityItem({ agent, entry }: { agent: AgentBlueprint; entry: ShownCapability }) {
   const { capability: item, index } = entry;
+  const facts = known([
+    ...capabilityFacts(agent, item),
+    item.skills.length > 0 && [
+      "Skills",
+      <span key="skills" className="flex flex-wrap gap-x-3 gap-y-1">
+        {item.skills.map((skill) => (
+          <PickLink
+            key={skill.name}
+            target={{ kind: "skill", agentId: agent.id, index, name: skill.name }}
+            className="break-all font-mono text-data"
+          >
+            {skill.name}
+          </PickLink>
+        ))}
+      </span>,
+    ],
+  ]);
   return (
     <li className="flex flex-col gap-1.5 text-ui">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -457,14 +537,84 @@ function CapabilityItem({ agent, entry }: { agent: AgentBlueprint; entry: ShownC
         </PickLink>
         <CapabilityChips item={item} />
       </div>
-      <Facts items={capabilityFacts(agent, item)} />
+      <Facts items={facts} />
     </li>
   );
 }
 
-function agentSections(agent: AgentBlueprint): SectionItem[] {
+function ToolsetItem({ agent, toolset }: { agent: AgentBlueprint; toolset: Toolset }) {
+  const tools = toolsOf(agent, toolset);
+  return (
+    <li className="flex flex-col gap-1 text-ui">
+      <div className="flex items-baseline gap-2">
+        <Icon name="toolset" size={13} className="shrink-0 self-center text-faint" />
+        <span className="min-w-0 flex-1 break-words font-medium">
+          <PickLink target={{ kind: "toolset", agentId: agent.id, toolsetId: toolset.id }}>
+            {toolset.label}
+          </PickLink>
+        </span>
+        <span className="shrink-0 text-faint text-meta">{toolsetMeta(toolset, tools.length)}</span>
+      </div>
+      {tools.length > 0 && (
+        <ul
+          aria-label={`Tools of ${toolset.label}`}
+          className="m-0 flex list-none flex-wrap gap-x-3 gap-y-1 p-0 pl-[21px]"
+        >
+          {tools.map((tool) => (
+            <li key={tool.name} className="min-w-0 max-w-full">
+              <PickLink
+                target={{ kind: "tool", agentId: agent.id, name: tool.name }}
+                className="break-all font-mono text-data text-tool"
+              >
+                {tool.name}
+              </PickLink>
+            </li>
+          ))}
+        </ul>
+      )}
+      {toolset.wrappers.length > 0 && (
+        <p className="m-0 flex flex-wrap items-center gap-1.5 text-faint text-meta">
+          wrapped by
+          {toolset.wrappers.map((wrapper) => (
+            <Chip key={wrapper} mono>
+              {wrapper}
+            </Chip>
+          ))}
+        </p>
+      )}
+      {toolset.expression !== null && <Expression code={toolset.expression} hint={false} />}
+      <SourceRef location={toolset.location} />
+    </li>
+  );
+}
+
+function NativeTools({ kinds }: { kinds: readonly string[] }) {
+  return (
+    <p className="m-0 flex flex-wrap items-center gap-1.5 text-muted text-ui">
+      Provider-side tools:
+      {kinds.map((name) => (
+        <Chip key={name} tone="tool" mono>
+          {name}
+        </Chip>
+      ))}
+    </p>
+  );
+}
+
+function agentSections(agent: AgentBlueprint, showDefaults: boolean): SectionItem[] {
   const shown = shownCapabilities(agent);
-  const builtin = agent.capabilities.filter(foldedAway);
+  const added = agent.capabilities.flatMap((capability, index) =>
+    defaultCapability(capability) ? [{ capability, index }] : [],
+  );
+  const library = libraryToolsets(agent);
+  const ownToolsets = agent.toolsets.filter((toolset) => !library.has(toolset.id));
+  const givenToolsets = agent.toolsets.filter((toolset) => library.has(toolset.id));
+  // A provider-side tool only capabilities Pydantic AI added give is one of its defaults too.
+  const addedNative = agent.native_tools.filter((kind) => {
+    const givers = agent.capabilities.filter((item) => item.native_tools.includes(kind));
+    return givers.length > 0 && givers.every(defaultCapability);
+  });
+  const ownNative = agent.native_tools.filter((kind) => !addedNative.includes(kind));
   return present([
     warningsSection(agent.warnings),
     modelSection(agent),
@@ -492,72 +642,26 @@ function agentSections(agent: AgentBlueprint): SectionItem[] {
       title: "Toolsets",
       content: (
         <>
-          {agent.toolsets.length === 0 ? (
-            <Note>This agent has no tools.</Note>
-          ) : (
+          {agent.toolsets.length === 0 && <Note>This agent has no tools.</Note>}
+          {ownToolsets.length > 0 && (
             <ul className="m-0 flex list-none flex-col gap-3 p-0">
-              {agent.toolsets.map((toolset) => {
-                const tools = toolsOf(agent, toolset);
-                return (
-                  <li key={toolset.id} className="flex flex-col gap-1 text-ui">
-                    <div className="flex items-baseline gap-2">
-                      <Icon name="toolset" size={13} className="shrink-0 self-center text-faint" />
-                      <span className="min-w-0 flex-1 break-words font-medium">
-                        <PickLink
-                          target={{ kind: "toolset", agentId: agent.id, toolsetId: toolset.id }}
-                        >
-                          {toolset.label}
-                        </PickLink>
-                      </span>
-                      <span className="shrink-0 text-faint text-meta">
-                        {toolsetMeta(toolset, tools.length)}
-                      </span>
-                    </div>
-                    {tools.length > 0 && (
-                      <ul
-                        aria-label={`Tools of ${toolset.label}`}
-                        className="m-0 flex list-none flex-wrap gap-x-3 gap-y-1 p-0 pl-[21px]"
-                      >
-                        {tools.map((tool) => (
-                          <li key={tool.name} className="min-w-0 max-w-full">
-                            <PickLink
-                              target={{ kind: "tool", agentId: agent.id, name: tool.name }}
-                              className="break-all font-mono text-data text-tool"
-                            >
-                              {tool.name}
-                            </PickLink>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {toolset.wrappers.length > 0 && (
-                      <p className="m-0 flex flex-wrap items-center gap-1.5 text-faint text-meta">
-                        wrapped by
-                        {toolset.wrappers.map((wrapper) => (
-                          <Chip key={wrapper} mono>
-                            {wrapper}
-                          </Chip>
-                        ))}
-                      </p>
-                    )}
-                    {toolset.expression !== null && (
-                      <Expression code={toolset.expression} hint={false} />
-                    )}
-                    <SourceRef location={toolset.location} />
-                  </li>
-                );
-              })}
+              {ownToolsets.map((toolset) => (
+                <ToolsetItem key={toolset.id} agent={agent} toolset={toolset} />
+              ))}
             </ul>
           )}
-          {agent.native_tools.length > 0 && (
-            <p className="m-0 flex flex-wrap items-center gap-1.5 text-muted text-ui">
-              Provider-side tools:
-              {agent.native_tools.map((name) => (
-                <Chip key={name} tone="tool" mono>
-                  {name}
-                </Chip>
-              ))}
-            </p>
+          {ownNative.length > 0 && <NativeTools kinds={ownNative} />}
+          {givenToolsets.length + addedNative.length > 0 && (
+            <FromPydanticAI count={givenToolsets.length + addedNative.length} open={showDefaults}>
+              {givenToolsets.length > 0 && (
+                <ul className="m-0 flex list-none flex-col gap-3 p-0">
+                  {givenToolsets.map((toolset) => (
+                    <ToolsetItem key={toolset.id} agent={agent} toolset={toolset} />
+                  ))}
+                </ul>
+              )}
+              {addedNative.length > 0 && <NativeTools kinds={addedNative} />}
+            </FromPydanticAI>
           )}
         </>
       ),
@@ -587,7 +691,7 @@ function agentSections(agent: AgentBlueprint): SectionItem[] {
         </ul>
       ),
     },
-    settingsSection(agent),
+    settingsSection(agent, showDefaults),
     agent.capabilities.length > 0 && {
       id: "capabilities",
       title: "Capabilities",
@@ -611,19 +715,24 @@ function agentSections(agent: AgentBlueprint): SectionItem[] {
               )
             );
           })}
-          {builtin.length > 0 && (
-            <details className="text-ui">
-              <summary className="text-muted">
-                Built-in <Badge>{builtin.length}</Badge>
-              </summary>
-              <p className="m-0 mt-1.5 flex flex-wrap gap-1.5">
-                {builtin.map((c) => (
-                  <Chip key={c.name} mono>
-                    {c.name}
-                  </Chip>
+          {added.length > 0 && (
+            <FromPydanticAI count={added.length} open={showDefaults}>
+              <ul className="m-0 flex list-none flex-wrap gap-x-3 gap-y-1 p-0">
+                {added.map(({ capability, index }) => (
+                  <li key={index} className="flex min-w-0 max-w-full items-baseline gap-1.5">
+                    <PickLink
+                      target={{ kind: "capability", agentId: agent.id, index }}
+                      className="break-all font-mono text-data"
+                    >
+                      {capability.name}
+                    </PickLink>
+                    {capability.stack && (
+                      <span className="shrink-0 text-faint text-meta">via {capability.stack}</span>
+                    )}
+                  </li>
                 ))}
-              </p>
-            </details>
+              </ul>
+            </FromPydanticAI>
           )}
         </>
       ),
@@ -639,6 +748,7 @@ export function AgentInspector({
   agent: AgentBlueprint;
   reveal?: Reveal | null;
 }) {
+  const showDefaults = useShowDefaults();
   return (
     <>
       <InspectorHeader tone="agent" icon="agent" kind="Agent blueprint" title={agent.label}>
@@ -648,7 +758,11 @@ export function AgentInspector({
           <SourceRef location={agent.location} />
         </div>
       </InspectorHeader>
-      <Sections label="Agent blueprint" items={agentSections(agent)} reveal={reveal} />
+      <Sections
+        label="Agent blueprint"
+        items={agentSections(agent, showDefaults)}
+        reveal={reveal}
+      />
     </>
   );
 }
@@ -680,11 +794,13 @@ export function ToolInspector({ agent, tool }: { agent: AgentBlueprint; tool: To
             The blueprint did not list this tool, so only what the model was told about it is known.
           </Note>
         )}
-        {tool.library_version !== null && (
+        {tool.library_version !== null ? (
           <Note>
             Defined by Pydantic AI, and read from the source of the installed Pydantic AI{" "}
             {tool.library_version}. The project may use another version, in which it can differ.
           </Note>
+        ) : (
+          libraryToolsets(agent).has(tool.toolset) && <Note>Added by Pydantic AI by default.</Note>
         )}
       </InspectorHeader>
       <Sections
@@ -790,8 +906,62 @@ function OfAgent({ agent, toolset }: { agent: AgentBlueprint; toolset?: Toolset 
   );
 }
 
+/** What `load_capability` can load on this agent: its skills and its on-demand capabilities. */
+function Loadable({ agent }: { agent: AgentBlueprint }) {
+  const items = agent.capabilities.flatMap((capability, index) => [
+    ...capability.skills.map((skill) => ({
+      key: `skill:${index}:${skill.name}`,
+      target: { kind: "skill", agentId: agent.id, index, name: skill.name } as const,
+      name: skill.name,
+      what: `skill of ${capability.name}`,
+    })),
+    ...(capability.deferred
+      ? [
+          {
+            key: `capability:${index}`,
+            target: { kind: "capability", agentId: agent.id, index } as const,
+            name: capability.capability_id ?? capability.name,
+            what: "capability",
+          },
+        ]
+      : []),
+  ]);
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5 text-ui">
+      <span className="text-faint">It can load</span>
+      <ul aria-label="What it can load" className="m-0 flex list-none flex-col gap-1 p-0">
+        {items.map((item) => (
+          <li key={item.key} className="flex flex-wrap items-baseline gap-1.5">
+            <PickLink target={item.target} className="break-all font-mono text-data">
+              {item.name}
+            </PickLink>
+            <span className="text-faint text-meta">{item.what}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** A tool a run called that no blueprint lists: there is nothing static to show. */
 export function UnlistedToolInspector({ agent, name }: { agent: AgentBlueprint; name: string }) {
+  if (name === LOAD_CAPABILITY) {
+    return (
+      <>
+        <InspectorHeader tone="tool" icon="tool" kind="Tool" title={name} mono>
+          <OfAgent agent={agent} />
+        </InspectorHeader>
+        <div className="flex flex-col gap-3 p-3">
+          <Note>
+            Pydantic AI adds this tool to an agent with on-demand capabilities or skills; the model
+            calls it with an id. Select one of its calls in the timeline to see what it loaded.
+          </Note>
+          <Loadable agent={agent} />
+        </div>
+      </>
+    );
+  }
   return (
     <>
       <InspectorHeader tone="tool" icon="tool" kind="Tool" title={name} mono>
@@ -827,6 +997,7 @@ export function ToolsetInspector({ agent, toolset }: { agent: AgentBlueprint; to
       <InspectorHeader tone="tool" icon="toolset" kind="Toolset" title={toolset.label}>
         <OfAgent agent={agent} />
         <SourceRef location={toolset.location} />
+        {libraryToolsets(agent).has(toolset.id) && <Note>Added by Pydantic AI by default.</Note>}
       </InspectorHeader>
       <Sections
         label="Toolset"
@@ -934,9 +1105,12 @@ export function ToolsetInspector({ agent, toolset }: { agent: AgentBlueprint; to
 
 export function CapabilityInspector({
   agent,
+  index,
   capability,
 }: {
   agent: AgentBlueprint;
+  /** Its index in `blueprint.capabilities`. */
+  index: number;
   capability: Capability;
 }) {
   const facts = known([
@@ -958,10 +1132,11 @@ export function CapabilityInspector({
           <span className="text-muted text-ui">{categoryNames(capability).label}</span>
         </div>
         {capability.builtin && <Note>Added by Pydantic AI to every agent.</Note>}
+        {capability.stack && <Note>Added by {capability.stack}.</Note>}
       </InspectorHeader>
       <Sections
         label="Capability"
-        items={[
+        items={present([
           {
             id: "definition",
             title: "Definition",
@@ -975,7 +1150,136 @@ export function CapabilityInspector({
                 </Note>
               ),
           },
-        ]}
+          capability.skills.length > 0 && {
+            id: "skills",
+            title: "Skills",
+            aside: String(capability.skills.length),
+            content: (
+              // -mx-2: the rows' own padding lines their text up with the rest of the panel.
+              <ul aria-label={`Skills of ${capability.name}`} className="-mx-2 m-0 list-none p-0">
+                {capability.skills.map((skill) => (
+                  <li key={skill.name}>
+                    <PickRow target={{ kind: "skill", agentId: agent.id, index, name: skill.name }}>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Icon name="instructions" size={13} className="shrink-0 text-faint" />
+                        <code className="min-w-0 flex-1 break-all text-data text-fg">
+                          {skill.name}
+                        </code>
+                        {!skill.model_invocable && <Chip className="shrink-0">hidden</Chip>}
+                      </span>
+                      <span className="truncate pl-[21px] text-meta text-muted">
+                        {firstLine(skill.description)}
+                      </span>
+                    </PickRow>
+                  </li>
+                ))}
+              </ul>
+            ),
+          },
+        ])}
+      />
+    </>
+  );
+}
+
+// ---------- skill ----------
+
+export function SkillInspector({
+  agent,
+  index,
+  capability,
+  skill,
+}: {
+  agent: AgentBlueprint;
+  /** The index of the capability that offers it in `blueprint.capabilities`. */
+  index: number;
+  capability: Capability;
+  skill: Skill;
+}) {
+  const body = trimBlankLines(skill.body);
+  return (
+    <>
+      <InspectorHeader tone="neutral" icon="instructions" kind="Skill" title={skill.name} mono>
+        <p className="m-0 text-muted text-ui">
+          of{" "}
+          <PickLink
+            target={{ kind: "capability", agentId: agent.id, index }}
+            className="font-medium font-mono text-data text-fg"
+          >
+            {capability.name}
+          </PickLink>{" "}
+          ·{" "}
+          <PickLink target={{ kind: "agent", agentId: agent.id }} className="font-medium text-fg">
+            {agent.label}
+          </PickLink>
+        </p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {skill.model_invocable ? (
+            <Chip tone="accent">on demand</Chip>
+          ) : (
+            <Chip>hidden from the model</Chip>
+          )}
+        </div>
+        <p className="m-0 text-muted text-ui">{skill.description}</p>
+      </InspectorHeader>
+      <Sections
+        label="Skill"
+        items={present([
+          skill.when_to_use !== null && {
+            id: "when",
+            title: "When to use",
+            content: <p className="m-0 text-fg text-ui">{skill.when_to_use}</p>,
+          },
+          {
+            id: "instructions",
+            title: "Instructions",
+            content:
+              body === "" ? (
+                <Note>Its SKILL.md has nothing after the frontmatter.</Note>
+              ) : (
+                <>
+                  <TextBlock
+                    text={body}
+                    className="rounded-control border border-line bg-bg px-2.5 py-2"
+                  />
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Note>The Markdown the model gets when it loads the skill.</Note>
+                    <CopyButton text={body} label="Copy the instructions" />
+                  </div>
+                </>
+              ),
+          },
+          {
+            id: "definition",
+            title: "Definition",
+            content: (
+              <>
+                <Facts
+                  items={[
+                    [
+                      "Path",
+                      <code key="path" className="flex min-w-0 text-data" title={skill.path}>
+                        <PathText path={skill.path} />
+                      </code>,
+                    ],
+                    [
+                      "Loaded with",
+                      <span key="id">
+                        <code>{LOAD_CAPABILITY}</code> id <code>{skill.name}</code>
+                      </span>,
+                    ],
+                  ]}
+                />
+                {!skill.model_invocable && (
+                  <Note>
+                    Its SKILL.md asks that the model not be told of it, so it is left out of the
+                    catalog the model sees.
+                  </Note>
+                )}
+              </>
+            ),
+          },
+        ])}
       />
     </>
   );

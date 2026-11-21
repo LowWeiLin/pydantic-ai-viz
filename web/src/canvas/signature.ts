@@ -19,6 +19,7 @@ export function agentModelSignature(model: CanvasModel): string {
       agent.outputReady,
       agent.toolsets.map((group) => group.tools.map((tool) => act(tool.activity))),
       agent.unlisted.map((tool) => [tool.name, act(tool.activity)]),
+      Object.entries(agent.loads).map(([id, activity]) => [id, act(activity)]),
     ]),
     model.delegations.map((d) => [d.evidence, d.active]),
   ]);

@@ -12,7 +12,19 @@ import { runs } from "../data/selectors";
 import { useViewer } from "../data/store";
 import { firstLine, parameterCount, trimBlankLines } from "../inspector/BlueprintInspector";
 import { SourceRef } from "../inspector/source";
-import { agentBlueprint, capability, fixture, log, sessionStarted } from "../test/factory";
+import {
+  agentBlueprint,
+  agentRun,
+  capability,
+  fixture,
+  lifecycle,
+  log,
+  sessionStarted,
+  sid,
+  skill,
+  TRACE,
+  toolCall,
+} from "../test/factory";
 import type { AgentBlueprint, Toolset } from "../wire";
 
 const NEWSROOM = "blueprint/newsroom.pviz.jsonl";
@@ -873,5 +885,209 @@ describe("the capabilities of an agent", () => {
         "pviz-selected",
       );
     });
+  });
+});
+
+describe("skills, and what Pydantic AI adds by default", () => {
+  const houseStyle = skill({
+    name: "house-style",
+    description: "How the newsroom formats a short briefing.\nIn three bullets.",
+    when_to_use: "Before writing the final briefing for a reader.",
+    path: "_skills/house-style/SKILL.md",
+    body: "\n# House style for briefings\n\nWrite every briefing in this shape.\n",
+  });
+  const secret = skill({ name: "secret", model_invocable: false, body: "" });
+  const agent = agentBlueprint({
+    id: "a1",
+    capabilities: [
+      capability({ name: "ToolSearch", builtin: true, category: "context" }),
+      capability({
+        name: "Skills",
+        category: "knowledge",
+        package: "pydantic_ai_harness",
+        skills: [houseStyle, secret],
+      }),
+    ],
+    settings: {
+      ...agentBlueprint({ id: "x" }).settings,
+      end_strategy: "early",
+      tool_retries: 3,
+      defaults: ["end_strategy"],
+    },
+  });
+  const open = (hash: string) => {
+    window.location.hash = hash;
+    return render(
+      <App
+        plan={{
+          kind: "embedded",
+          events: log(
+            [0, { ...sessionStarted(), mode: "blueprint" }],
+            [1, { type: "blueprint.agent", agent }],
+          ),
+        }}
+      />,
+    );
+  };
+  const details = (): HTMLElement =>
+    screen.getByRole("complementary", { name: "Blueprint details" });
+  const title = (): string | null =>
+    within(details()).getByRole("heading", { level: 3 }).textContent;
+
+  test("a skill picked on the canvas shows when to use it and the instructions the model gets", async () => {
+    const user = userEvent.setup();
+    open("#/agents/a1");
+    await user.click(
+      screen.getByRole("button", { name: "Skill house-style of Skills, loaded on demand" }),
+    );
+    expect(window.location.hash).toBe("#/agents/a1?part=skill%3A1%3Ahouse-style");
+    expect(title()).toBe("house-style");
+    const panel = within(details()).getByRole("region", { name: "Skill" });
+    expect(within(details()).getByText("Skill")).toBeInTheDocument();
+    expect(within(details()).getByText("on demand")).toBeInTheDocument();
+    expect(within(panel).getByText(houseStyle.when_to_use ?? "")).toBeInTheDocument();
+    // The body without the blank lines around it, and a way to copy it.
+    expect(within(panel).getByText(/^# House style for briefings/).textContent).toBe(
+      "# House style for briefings\n\nWrite every briefing in this shape.",
+    );
+    expect(within(panel).getByRole("button", { name: "Copy the instructions" })).toBeVisible();
+    expect(within(panel).getByText("_skills/house-style/")).toBeInTheDocument();
+    expect(within(panel).getByText("load_capability")).toBeInTheDocument();
+    // Up to the capability that offers it, which lists its skills.
+    await user.click(within(details()).getByRole("button", { name: "Skills" }));
+    expect(title()).toBe("Skills");
+    const skills = within(details()).getByRole("list", { name: "Skills of Skills" });
+    expect(
+      within(skills)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual([
+      "house-styleHow the newsroom formats a short briefing.",
+      `secrethidden${secret.description}`,
+    ]);
+    await user.click(within(skills).getByRole("button", { name: /^secret/ }));
+    expect(title()).toBe("secret");
+    expect(within(details()).getByText("hidden from the model")).toBeInTheDocument();
+    expect(within(details()).queryByText("When to use")).toBeNull();
+    expect(within(details()).getByText(/nothing after the frontmatter/)).toBeInTheDocument();
+    // The agent's list of capabilities names its skills too.
+    await user.click(within(details()).getByRole("button", { name: "a1" }));
+    await user.click(within(details()).getByRole("button", { name: "house-style" }));
+    expect(title()).toBe("house-style");
+  });
+
+  test("a skill a link names that the agent does not have shows the agent", () => {
+    open("#/agents/a1?part=skill%3A1%3Aghost");
+    expect(title()).toBe("a1");
+  });
+
+  test("the defaults toggle draws them, says so, and is remembered", async () => {
+    const user = userEvent.setup();
+    const first = open("#/agents/a1");
+    const toggle = screen.getByRole("button", { name: "Pydantic AI defaults +1" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(toggle).toHaveAttribute("title", "Show the 1 part Pydantic AI adds by default");
+    expect(toggle).not.toHaveClass("text-accent!");
+    expect(screen.queryByRole("button", { name: /^Capability ToolSearch/ })).toBeNull();
+    // Hidden, a default setting is folded away under its own heading.
+    const panel = within(details()).getByRole("region", { name: "Agent blueprint" });
+    expect(within(panel).getByText("Pydantic AI defaults")).toBeVisible();
+    expect(within(panel).getByText("End strategy")).not.toBeVisible();
+    expect(within(panel).getByText("Tool retries")).toBeVisible();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).toHaveAttribute("title", "Hide the 1 part Pydantic AI adds by default");
+    // Pressed looks it, apart from a hover: in the accent colour.
+    expect(toggle).toHaveClass("text-accent!");
+    expect(within(toggle).getByText("+1")).toHaveClass("tone-accent");
+    expect(screen.getByText("Showing 1 part from Pydantic AI")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Capability ToolSearch, .*a Pydantic AI default$/ }),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText("End strategy")).toBeVisible();
+    expect(within(panel).getByText("default")).toBeVisible();
+    first.unmount();
+
+    open("#/agents/a1");
+    expect(screen.getByRole("button", { name: "Pydantic AI defaults +1" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  test("the toggle still works when storage refuses to keep the choice", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    try {
+      open("#/agents/a1");
+      const toggle = screen.getByRole("button", { name: "Pydantic AI defaults +1" });
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute("aria-pressed", "true");
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("in a run, a load_capability call says which skill it loaded, and outlines it", async () => {
+    const user = userEvent.setup();
+    const named = { ...agent, name: "briefing", label: "briefing" };
+    const root = agentRun({ id: "root", start: 0, end: 50, agent: "briefing" });
+    const loadSpan = toolCall({
+      id: "load",
+      parent: "root",
+      start: 5,
+      end: 7,
+      tool: "load_capability",
+      agent: "briefing",
+    });
+    const load = { ...loadSpan, data: { ...loadSpan.data, arguments: { id: "house-style" } } };
+    window.location.hash = `#/runs/${TRACE}`;
+    render(
+      <App
+        plan={{
+          kind: "embedded",
+          events: log([1, { type: "blueprint.agent", agent: named }], ...lifecycle(root, load)),
+        }}
+      />,
+    );
+    await screen.findByRole("heading", { level: 2, name: "briefing" });
+    await user.click(await screen.findByRole("button", { name: "Skip to end" }));
+    const row = within(screen.getByRole("tree"))
+      .getAllByRole("treeitem")
+      .find((item) => item.getAttribute("data-span") === sid("load"));
+    if (!row) throw new Error("expected the load_capability row");
+    await user.click(row);
+    const span = screen.getByRole("complementary", { name: "Span details" });
+    expect(within(span).getByText(/^Loads skill/).textContent).toBe(
+      "Loads skill house-style of Skills",
+    );
+    expect(
+      screen.getByRole("button", { name: /^Skill house-style of Skills/ }).parentElement,
+    ).toHaveClass("pviz-selected");
+  });
+
+  test("is not offered for an agent Pydantic AI added nothing to", () => {
+    const plain = agentBlueprint({ id: "a1" });
+    window.location.hash = "#/agents/a1";
+    render(
+      <App
+        plan={{
+          kind: "embedded",
+          events: log(
+            [0, { ...sessionStarted(), mode: "blueprint" }],
+            [1, { type: "blueprint.agent", agent: plain }],
+          ),
+        }}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /^Pydantic AI defaults/ })).toBeNull();
   });
 });

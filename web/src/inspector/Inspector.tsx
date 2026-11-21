@@ -11,6 +11,7 @@ import {
   CapabilityInspector,
   GraphInspector,
   GraphNodeInspector,
+  SkillInspector,
   ToolInspector,
   ToolsetInspector,
   UnlistedToolInspector,
@@ -66,7 +67,23 @@ export function BlueprintInspector({
     }
     if (agent && target.kind === "capability") {
       const capability = agent.capabilities[target.index];
-      if (capability) return <CapabilityInspector agent={agent} capability={capability} />;
+      if (capability) {
+        return <CapabilityInspector agent={agent} index={target.index} capability={capability} />;
+      }
+    }
+    if (agent && target.kind === "skill") {
+      const capability = agent.capabilities[target.index];
+      const skill = capability?.skills.find((s) => s.name === target.name);
+      if (capability && skill) {
+        return (
+          <SkillInspector
+            agent={agent}
+            index={target.index}
+            capability={capability}
+            skill={skill}
+          />
+        );
+      }
     }
     if (agent) return <AgentInspector agent={agent} reveal={reveal} />;
   }

@@ -15,7 +15,7 @@ import {
   stateOf,
   TRACE,
 } from "../test/factory";
-import type { Capability, Envelope } from "../wire";
+import type { AgentBlueprint, Capability, Envelope } from "../wire";
 import { initialData, reduce, reduceAll } from "./reduce";
 
 describe("reduce", () => {
@@ -65,6 +65,33 @@ describe("reduce", () => {
       toolsets: [],
     });
     expect(state.agents.a2?.capabilities).toEqual([current]);
+  });
+
+  test("a recording made before skills, stacks and default settings were read has none", () => {
+    const { settings, ...rest } = agentBlueprint({ id: "a1" });
+    const { defaults: _defaults, ...olderSettings } = settings;
+    const {
+      capability_id: _id,
+      stack: _stack,
+      skills: _skills,
+      ...olderCapability
+    } = capability({
+      name: "Skills",
+      package: "pydantic_ai_harness",
+    });
+    const old = { ...rest, settings: olderSettings, capabilities: [olderCapability] };
+    const state = stateOf([1, { type: "blueprint.agent", agent: old as AgentBlueprint }]);
+    expect(state.agents.a1?.capabilities[0]).toMatchObject({
+      capability_id: null,
+      stack: null,
+      skills: [],
+    });
+    expect(state.agents.a1?.settings.defaults).toEqual([]);
+    // What a newer recording says is kept.
+    const newer = agentBlueprint({ id: "a2" });
+    newer.settings.defaults = ["end_strategy"];
+    const kept = stateOf([1, { type: "blueprint.agent", agent: newer }]);
+    expect(kept.agents.a2?.settings.defaults).toEqual(["end_strategy"]);
   });
 
   test("span.ended replaces span.started by span_id", () => {

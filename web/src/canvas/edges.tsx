@@ -15,6 +15,7 @@ import {
   MarkerType,
 } from "@xyflow/react";
 import { cx } from "../ui/tone";
+import { ARC_CLEARANCE } from "./layout";
 
 export type EdgeState = "idle" | "active" | "done";
 
@@ -28,18 +29,34 @@ export type FlowEdgeData = {
   dashed: boolean;
   /** Delegation to a row underneath: the x of the vertical lane the edge runs down. */
   lane?: number | null;
+  /** A delegation arc: the bottom of the blocks it runs under (see `LayoutEdge.floor`). */
+  floor?: number | null;
 };
 
 /** How far below the lower endpoint a loop arc dips. */
 const ARC_DEPTH = 72;
 
-/** A loop edge: out of the bottom of the source, under everything, into the bottom of the target. */
+/**
+ * A loop edge: out of the bottom of the source, under everything, into the bottom of the target.
+ * Given the `floor` of the blocks between its ends, it runs square under them instead of
+ * curving, so it never passes behind a card.
+ */
 export function arcPath(
   sourceX: number,
   sourceY: number,
   targetX: number,
   targetY: number,
+  floor?: number,
 ): [path: string, labelX: number, labelY: number] {
+  if (floor !== undefined) {
+    const low = Math.max(floor, sourceY, targetY) + ARC_CLEARANCE;
+    const side = targetX < sourceX ? -1 : 1;
+    const r = Math.min(CORNER, Math.abs(targetX - sourceX) / 2);
+    const path =
+      `M ${sourceX},${sourceY} V ${low - r} Q ${sourceX},${low} ${sourceX + side * r},${low} ` +
+      `H ${targetX - side * r} Q ${targetX},${low} ${targetX},${low - r} V ${targetY}`;
+    return [path, (sourceX + targetX) / 2, low];
+  }
   const low = Math.max(sourceY, targetY) + ARC_DEPTH;
   const path = `M ${sourceX},${sourceY} C ${sourceX},${low} ${targetX},${low} ${targetX},${targetY}`;
   // The curve's midpoint (t = 0.5) of a cubic with both control points at `low`.
@@ -126,7 +143,7 @@ function PathEdge(props: EdgeProps<Edge<FlowEdgeData>>) {
   const tone = data?.tone ?? "var(--accent)";
   const lane = data?.lane ?? null;
   const [path, labelX, labelY] = data?.back
-    ? arcPath(props.sourceX, props.sourceY, props.targetX, props.targetY)
+    ? arcPath(props.sourceX, props.sourceY, props.targetX, props.targetY, data.floor ?? undefined)
     : lane !== null
       ? lanePath(props.sourceX, props.sourceY, props.targetX, props.targetY, lane)
       : getBezierPath({

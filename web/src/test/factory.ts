@@ -13,6 +13,7 @@ import type {
   Json,
   ModelRequestSpan,
   SessionStarted,
+  Skill,
   Span,
   StreamDelta,
   ToolCallSpan,
@@ -172,6 +173,18 @@ export const capability = (fields: Partial<Capability> & { name: string }): Capa
   expressions: {},
   toolsets: [],
   native_tools: [],
+  capability_id: null,
+  stack: null,
+  skills: [],
+  ...fields,
+});
+
+export const skill = (fields: Partial<Skill> & { name: string }): Skill => ({
+  description: `What ${fields.name} is for.`,
+  when_to_use: null,
+  model_invocable: true,
+  path: `skills/${fields.name}/SKILL.md`,
+  body: `# ${fields.name}\n\nDo it this way.`,
   ...fields,
 });
 
@@ -213,6 +226,7 @@ export function agentBlueprint(fields: Partial<AgentBlueprint> & { id: string })
       output_retries: null,
       tool_timeout: null,
       expressions: {},
+      defaults: [],
     },
     delegates: [],
     warnings: [],

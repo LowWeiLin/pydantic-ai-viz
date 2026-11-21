@@ -12,7 +12,15 @@
  * The span is the projection at the replay position: fields that only exist once a span has
  * ended are null before that, and each part says so instead of showing a blank.
  */
-import { conversationSoFar, displayStatus, type RunView, type StreamPart } from "../data/selectors";
+import {
+  blueprintForAgentName,
+  conversationSoFar,
+  displayStatus,
+  loadedId,
+  type RunView,
+  type StreamPart,
+} from "../data/selectors";
+import { useViewer } from "../data/store";
 import { Facts, orDash } from "../screens/parts";
 import { formatCount, formatDuration } from "../shell/format";
 import { StatusDot } from "../ui/Badge";
@@ -484,6 +492,32 @@ function kindTabs(span: Span, ctx: Ctx, stream: readonly StreamPart[] | undefine
   }
 }
 
+/**
+ * What a `load_capability` call loads, from the blueprint of its agent: "Loads skill house-style
+ * of Skills". Without content capture its arguments, and so its id, are not known.
+ */
+function Loads({ span }: { span: Span }) {
+  const id = loadedId(span);
+  const agent = useViewer((state) => blueprintForAgentName(state.data, span.agent_name));
+  if (id === null) return null;
+  const owner = agent?.capabilities.find((item) => item.skills.some((s) => s.name === id));
+  const deferred = agent?.capabilities.find((item) => item.deferred && item.capability_id === id);
+  const name = (text: string) => <code className="font-medium text-fg">{text}</code>;
+  return (
+    <p className="m-0 break-words text-muted text-ui">
+      {owner ? (
+        <>
+          Loads skill {name(id)} of {name(owner.name)}
+        </>
+      ) : deferred ? (
+        <>Loads capability {name(deferred.name)}</>
+      ) : (
+        <>Loads {name(id)}</>
+      )}
+    </p>
+  );
+}
+
 export function SpanInspector({
   span,
   view,
@@ -519,6 +553,7 @@ export function SpanInspector({
             in agent <span className="font-medium text-fg">{owner}</span>
           </p>
         )}
+        <Loads span={span} />
         {/* The header does not scroll, so an error in it is capped: a message of thousands of
             characters would otherwise push the tabs out of the panel. */}
         {showError && span.error && (

@@ -13,7 +13,7 @@ import {
   TRACE,
   toolCall,
 } from "../test/factory";
-import type { Event, Span } from "../wire";
+import type { Event, Json, Span } from "../wire";
 import {
   assembleStream,
   BLUEPRINT_FILTER_FROM,
@@ -24,6 +24,7 @@ import {
   displayStatus,
   fileName,
   graphCanvasModel,
+  loadedId,
   projectSpan,
   runBoundaries,
   runBounds,
@@ -483,6 +484,42 @@ describe("blueprints and canvas models", () => {
         activity: { state: "ok", calls: 1, retries: 0, errors: 0, spanIds: [sid("t")] },
       },
     ]);
+  });
+
+  test("load_capability calls are counted by the id they load, when their arguments are known", () => {
+    const root = agentRun({ id: "root", start: 0, end: 50 });
+    const load = (id: string, start: number, args: Json) => {
+      const span = toolCall({ id, parent: "root", start, end: start + 2, tool: "load_capability" });
+      return { ...span, data: { ...span.data, arguments: args } } as Span;
+    };
+    const state = stateOf(
+      [0, { type: "blueprint.agent", agent: agentBlueprint({ id: "a1", name: "triage" }) }],
+      ...lifecycle(
+        root,
+        load("l1", 5, { id: "house-style" }),
+        load("l2", 10, { id: "house-style" }),
+        load("l3", 15, { id: "memory" }),
+        // Captured without content, or with arguments that name no id: nothing is linked.
+        load("l4", 20, null),
+        load("l5", 25, { name: "x" }),
+      ),
+    );
+    const model = canvasModel(state, "a1", runView(state, TRACE, LIVE));
+    const loads = model?.agents[0]?.loads ?? {};
+    expect(Object.keys(loads)).toEqual(["house-style", "memory"]);
+    expect(loads["house-style"]).toEqual({
+      state: "ok",
+      calls: 2,
+      retries: 0,
+      errors: 0,
+      spanIds: [sid("l1"), sid("l2")],
+    });
+    expect(loadedId(state.spans[sid("l3")] as Span)).toBe("memory");
+    expect(loadedId(state.spans[sid("l4")] as Span)).toBeNull();
+    expect(loadedId(root)).toBeNull();
+    // Before the run they are not there; without a run, neither.
+    expect(canvasModel(state, "a1", runView(state, TRACE, 4))?.agents[0]?.loads).toEqual({});
+    expect(canvasModel(state, "a1", null)?.agents[0]?.loads).toEqual({});
   });
 
   test("delegation cycles terminate and depth is capped", () => {

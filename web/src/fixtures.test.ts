@@ -292,7 +292,7 @@ describe("what each fixture is for", () => {
     const items = agents[0]?.capabilities ?? [];
     expect(new Set(items.map((c) => c.category)).size).toBeGreaterThanOrEqual(8);
     expect(items.some((c) => c.builtin)).toBe(true);
-    expect(items.some((c) => c.deferred)).toBe(true);
+    expect(items.some((c) => c.skills.length > 1)).toBe(true);
     expect(items.some((c) => c.toolsets.length > 0)).toBe(true);
     expect(items.some((c) => c.toolsets.length === 0 && c.native_tools.length > 0)).toBe(true);
     // Every toolset a capability names is one the blueprint lists.

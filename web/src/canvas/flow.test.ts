@@ -1,12 +1,31 @@
 /** What the canvases hand to React Flow, and how spans map onto canvas nodes. */
 import { describe, expect, test } from "vitest";
 import { canvasModel, graphCanvasModel, type RunView, runs, runView } from "../data/selectors";
-import { agentBlueprint, capability, fixtureState, stateOf } from "../test/factory";
-import type { Span } from "../wire";
+import {
+  agentBlueprint,
+  agentRun,
+  capability,
+  fixtureState,
+  lifecycle,
+  sid,
+  skill,
+  stateOf,
+  TRACE,
+  toolCall,
+} from "../test/factory";
+import type { Json, Span } from "../wire";
 import { buildAgentFlow } from "./AgentCanvas";
 import { arcPath, type FlowEdgeData, lanePath } from "./edges";
 import { buildGraphFlow } from "./GraphCanvas";
-import { activityPhrase, capabilityName, graphNodeState, modelIsComputed } from "./nodes";
+import {
+  activityPhrase,
+  capabilityName,
+  capabilityRollup,
+  graphNodeState,
+  modelIsComputed,
+  type SkillNodeData,
+  skillName,
+} from "./nodes";
 import { agentModelSignature, graphModelSignature } from "./signature";
 import {
   agentHas,
@@ -19,6 +38,7 @@ import {
   parsePart,
   partOf,
   sameTarget,
+  skillNodeId,
   spanTargets,
   targetNodeId,
   toolNodeId,
@@ -309,6 +329,180 @@ describe("capabilities on the agent canvas", () => {
     ).toBe("Capability X, Custom, gives toolsets a, b");
     // No span is a capability's own: a pick in a run shows its blueprint.
     expect(latestSpanFor(model, picked)).toBeNull();
+  });
+});
+
+describe("skills and what Pydantic AI adds, on the agent canvas", () => {
+  const harness = { package: "pydantic_ai_harness" } as const;
+  const memoryTool = (name: string) => ({
+    name,
+    toolset: "mem",
+    description: null,
+    parameters_schema: {},
+    return_schema: null,
+    kind: "function" as const,
+    takes_ctx: null,
+    is_async: null,
+    max_retries: null,
+    function: `pydantic_ai_harness.memory.${name}`,
+    origin: "object" as const,
+    location: null,
+    library_version: null,
+  });
+  const blueprint = agentBlueprint({
+    id: "a1",
+    name: "briefing",
+    toolsets: [
+      {
+        id: "mem",
+        toolset_id: "memory",
+        label: "MemoryToolset 'memory'",
+        kind: "function",
+        wrappers: [],
+        opaque: false,
+        expression: null,
+        location: null,
+      },
+      {
+        id: "sh",
+        toolset_id: "shell",
+        label: "FunctionToolset 'shell'",
+        kind: "function",
+        wrappers: [],
+        opaque: false,
+        expression: null,
+        location: null,
+      },
+    ],
+    tools: [
+      memoryTool("read_memory"),
+      memoryTool("write_memory"),
+      {
+        ...memoryTool("run_shell"),
+        toolset: "sh",
+        function: "pydantic_ai_harness.shell.run_shell",
+      },
+    ],
+    capabilities: [
+      capability({ name: "ToolSearch", builtin: true, category: "context" }),
+      capability({
+        name: "Skills",
+        category: "knowledge",
+        ...harness,
+        skills: [skill({ name: "house-style" }), skill({ name: "secret", model_invocable: false })],
+      }),
+      capability({ name: "Memory", category: "knowledge", ...harness, toolsets: ["mem"] }),
+      capability({ name: "Coder", category: "tools", ...harness }),
+      capability({
+        name: "Shell",
+        category: "tools",
+        ...harness,
+        stack: "Coder",
+        toolsets: ["sh"],
+      }),
+      capability({ name: "Files", category: "tools", ...harness, stack: "Coder" }),
+    ],
+  });
+  const root = agentRun({ id: "root", start: 0, end: 50, agent: "briefing" });
+  const call = (id: string, start: number, tool: string, args: Json, failed = false): Span => {
+    const span = toolCall({ id, parent: "root", start, end: start + 2, tool, agent: "briefing" });
+    return {
+      ...span,
+      status: failed ? "error" : span.status,
+      data: { ...span.data, arguments: args },
+    };
+  };
+  const state = stateOf(
+    [0, { type: "blueprint.agent", agent: blueprint }],
+    ...lifecycle(
+      root,
+      call("load", 5, "load_capability", { id: "house-style" }),
+      call("read", 10, "read_memory", {}),
+      call("write", 15, "write_memory", {}, true),
+      call("shell", 20, "run_shell", {}),
+    ),
+  );
+  const model = (t: number | null) => {
+    const view = t === null ? null : runView(state, TRACE, t);
+    const found = canvasModel(state, "a1", view);
+    if (!found) throw new Error("expected a model");
+    return found;
+  };
+  const node = (nodes: ReturnType<typeof buildAgentFlow>["nodes"], id: string) => {
+    const found = nodes.find((n) => n.id === id);
+    if (!found) throw new Error(`no node ${id}`);
+    return found;
+  };
+
+  test("a skill is a row with its owner and, in a run, whether it was loaded", () => {
+    const blueprintOnly = buildAgentFlow(model(null), false, []).nodes;
+    expect(node(blueprintOnly, skillNodeId("a1", 1, "house-style"))).toMatchObject({
+      type: "skill",
+      parentId: "capabilities:a1",
+      data: { agentId: "a1", index: 1, owner: "Skills", overlay: false, selected: false },
+    });
+    const run = buildAgentFlow(model(LIVE), true, []).nodes;
+    const loaded = node(run, skillNodeId("a1", 1, "house-style")).data as SkillNodeData;
+    expect(loaded.activity).toMatchObject({ state: "ok", calls: 1, spanIds: [sid("load")] });
+    const [houseStyle, secret] = blueprint.capabilities[1]?.skills ?? [];
+    if (!houseStyle || !secret) throw new Error("expected skills");
+    expect(skillName(houseStyle, "Skills", loaded.activity, true)).toBe(
+      "Skill house-style of Skills, loaded on demand, loaded once, OK",
+    );
+    expect(skillName(secret, "Skills", loaded.activity, false)).toBe(
+      "Skill secret of Skills, loaded on demand, hidden from the model",
+    );
+  });
+
+  test("with defaults hidden a row rolls up what it hides, and lights with it", () => {
+    const { nodes } = buildAgentFlow(model(LIVE), true, []);
+    expect(nodes.map((n) => n.id)).not.toContain(toolsetNodeId("a1", "mem"));
+    expect(nodes.map((n) => n.id)).not.toContain(capabilityNodeId("a1", 4));
+    const memory = node(nodes, capabilityNodeId("a1", 2)).data;
+    expect(memory).toMatchObject({ toolsets: [], hiddenTools: "2 tools", inside: 0 });
+    // The most urgent state of its tools, with their calls summed.
+    expect(memory.activity).toMatchObject({ state: "error", calls: 2, errors: 1 });
+    // A stack's entry stands for its hidden members, and for the toolsets they give.
+    expect(nodes.map((n) => n.id)).not.toContain(toolsetNodeId("a1", "sh"));
+    const coder = node(nodes, capabilityNodeId("a1", 3)).data;
+    expect(coder).toMatchObject({ inside: 2, hiddenTools: "1 tool", default: false });
+    expect(coder.activity).toMatchObject({ state: "ok", calls: 1, spanIds: [sid("shell")] });
+    const [, skills, memoryCap, coderCap] = blueprint.capabilities;
+    if (!skills || !memoryCap || !coderCap) throw new Error("expected capabilities");
+    expect(capabilityRollup(skills, null, 0)).toBe("2 skills");
+    expect(capabilityRollup(memoryCap, "2 tools", 0)).toBe("2 tools");
+    expect(capabilityRollup(coderCap, null, 2)).toBe("2 inside");
+    const many = capability({
+      name: "Many",
+      skills: Array.from({ length: 10 }, (_, i) => skill({ name: `s${i}` })),
+    });
+    expect(capabilityRollup(many, "tools at run time", 0)).toBe(
+      "10 skills · 8 shown · tools at run time",
+    );
+    expect(capabilityName(memoryCap, [], { hiddenTools: "2 tools" })).toBe(
+      "Capability Memory, Knowledge & memory, gives 2 tools from Pydantic AI, hidden",
+    );
+    expect(capabilityName(coderCap, [], { inside: 2 })).toBe(
+      "Capability Coder, Tools & native abilities, 2 capabilities inside",
+    );
+  });
+
+  test("with defaults shown they are drawn and marked, and a stack's members say whose they are", () => {
+    const { nodes } = buildAgentFlow(model(LIVE), true, [], true);
+    expect(node(nodes, toolsetNodeId("a1", "mem")).data).toMatchObject({ default: true });
+    expect(node(nodes, capabilityNodeId("a1", 0)).data).toMatchObject({ default: true });
+    expect(node(nodes, capabilityNodeId("a1", 4)).data).toMatchObject({ default: true, inside: 0 });
+    expect(node(nodes, capabilityNodeId("a1", 3)).data).toMatchObject({ inside: 0 });
+    expect(node(nodes, capabilityNodeId("a1", 2)).data).toMatchObject({
+      toolsets: ["MemoryToolset 'memory'"],
+      hiddenTools: null,
+      activity: null,
+    });
+    const shell = blueprint.capabilities[4];
+    if (!shell) throw new Error("expected Shell");
+    expect(capabilityName(shell, [], { default: true })).toBe(
+      "Capability Shell, via Coder, a Pydantic AI default",
+    );
   });
 });
 

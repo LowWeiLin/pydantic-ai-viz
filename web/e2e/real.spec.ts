@@ -11,7 +11,7 @@
  */
 import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
-import { foldedAway } from "../src/data/model";
+import { defaultsOf, LOAD_CAPABILITY, libraryToolsets, shownCapabilities } from "../src/data/model";
 import type { AgentBlueprint, Envelope, Span } from "../src/wire";
 import {
   canvasNode,
@@ -194,11 +194,8 @@ test.describe("real demo recordings", () => {
     expect(errors).toEqual([]);
   });
 
-  test("capabilities: drawn under the agent and linked to the toolsets they give", async ({
-    page,
-  }) => {
-    const errors = trackErrors(page);
-    const recording = load("capabilities");
+  /** The blueprint of the capabilities demo's agent, as the viewer keeps it: the last one. */
+  function briefing(recording: Recording): AgentBlueprint {
     let agent: AgentBlueprint | null = null;
     for (const event of recording.events) {
       if (event.type === "blueprint.agent" && event.agent.name === recording.root.agent_name) {
@@ -206,9 +203,18 @@ test.describe("real demo recordings", () => {
       }
     }
     if (!agent) throw new Error("the capabilities recording has no blueprint for its agent");
+    return agent;
+  }
+
+  test("capabilities: drawn under the agent and linked to the toolsets they give", async ({
+    page,
+  }) => {
+    const errors = trackErrors(page);
+    const recording = load("capabilities");
+    const agent = briefing(recording);
     await page.goto(src(recording, `#/agents/${agent.id}`));
-    // A builtin the user did not configure is folded away; every other capability has a row.
-    const shown = agent.capabilities.filter((capability) => !foldedAway(capability));
+    // What Pydantic AI added on its own is hidden until asked for; every other one has a row.
+    const shown = shownCapabilities(agent).map((entry) => entry.capability);
     expect(shown.length).toBeGreaterThan(0);
     expect(shown.length).toBeLessThan(agent.capabilities.length);
     await expect(canvasNode(page, /^Capability /)).toHaveCount(shown.length);
@@ -218,13 +224,79 @@ test.describe("real demo recordings", () => {
     await expect(page.getByText("capability gives toolset")).toBeVisible();
 
     // The toolset a capability gives is one link away from it.
-    const giver = shown.find((capability) => capability.toolsets.length > 0);
+    const library = libraryToolsets(agent);
+    const giver = shown.find((capability) => capability.toolsets.some((id) => !library.has(id)));
     const toolset = agent.toolsets.find((candidate) => candidate.id === giver?.toolsets[0]);
     if (!giver || !toolset) throw new Error("no capability in the recording gives a toolset");
     await canvasNode(page, new RegExp(`^Capability ${giver.name}, `)).click();
     const inspector = page.getByRole("complementary", { name: /details/ });
     await inspector.getByRole("button", { name: toolset.label }).click();
     await expect(inspector.getByRole("list", { name: `Tools of ${toolset.label}` })).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test("capabilities: its skills are rows, and a picked one shows its instructions", async ({
+    page,
+  }) => {
+    const errors = trackErrors(page);
+    const recording = load("capabilities");
+    const agent = briefing(recording);
+    const owner = agent.capabilities.find((capability) => capability.skills.length > 0);
+    if (!owner) throw new Error("no capability in the recording offers skills");
+    await page.goto(src(recording, `#/agents/${agent.id}`));
+    for (const skill of owner.skills) {
+      await expect(
+        canvasNode(page, `Skill ${skill.name} of ${owner.name}, loaded on demand`),
+      ).toBeVisible();
+    }
+    await canvasNode(page, /^Skill house-style of /).click();
+    const inspector = page.getByRole("complementary", { name: /details/ });
+    await expect(inspector.getByRole("heading", { level: 3, name: "house-style" })).toBeVisible();
+    await expect(inspector).toContainText("House style for briefings");
+    expect(errors).toEqual([]);
+  });
+
+  test("capabilities: what Pydantic AI added is hidden, and the toggle shows it", async ({
+    page,
+  }) => {
+    const errors = trackErrors(page);
+    const recording = load("capabilities");
+    const agent = briefing(recording);
+    const { count } = defaultsOf(agent);
+    // Two built-ins, the ten tools of Memory and Planning, and the load_capability the run called.
+    expect(count).toBe(13);
+    await page.goto(src(recording, `#/agents/${agent.id}`));
+    const toggle = page.getByRole("button", { name: `Pydantic AI defaults +${count}` });
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await expect(canvasNode(page, /^Capability Memory, .*from Pydantic AI, hidden/)).toBeVisible();
+    await expect(canvasNode(page, /^Toolset MemoryToolset/)).toHaveCount(0);
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expect(canvasNode(page, /^Toolset MemoryToolset/)).toBeVisible();
+    await expect(canvasNode(page, /^Toolset PlanningToolset/)).toBeVisible();
+    await expect(
+      canvasNode(page, /^Capability ToolSearch, .*a Pydantic AI default$/),
+    ).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test("capabilities: the load_capability call outlines the skill it loaded", async ({ page }) => {
+    const errors = trackErrors(page);
+    const recording = load("capabilities");
+    const call = recording.spans.find(
+      (span) =>
+        span.kind === "tool_call" &&
+        span.data.tool_name === LOAD_CAPABILITY &&
+        JSON.stringify(span.data.arguments).includes("house-style"),
+    );
+    if (!call) throw new Error("the recording has no load_capability call for house-style");
+    await openRun(page, recording, call.span_id);
+    await skipToEnd(page);
+    await expect(page.locator(".react-flow .pviz-selected")).toHaveCount(1);
+    await expect(page.locator(".react-flow .pviz-selected")).toContainText("house-style");
+    await expect(page.getByRole("complementary", { name: /details/ })).toContainText(
+      "Loads skill house-style of",
+    );
     expect(errors).toEqual([]);
   });
 

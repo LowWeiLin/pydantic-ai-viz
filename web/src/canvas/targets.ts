@@ -8,6 +8,7 @@ import {
   blueprintForAgentName,
   type CanvasModel,
   type GraphCanvasModel,
+  loadedId,
   type RunView,
 } from "../data/selectors";
 import type { AgentBlueprint } from "../wire";
@@ -22,6 +23,8 @@ export type CanvasTarget =
   | { kind: "output"; agentId: string }
   /** A capability the canvas lists under its agent; `index` is into `blueprint.capabilities`. */
   | { kind: "capability"; agentId: string; index: number }
+  /** A skill of the capability at `index`, by its name. */
+  | { kind: "skill"; agentId: string; index: number; name: string }
   | { kind: "graphNode"; nodeId: string };
 
 export const agentNodeId = (agentId: string): string => `agent:${agentId}`;
@@ -31,6 +34,8 @@ export const toolsetNodeId = (agentId: string, toolsetId: string): string =>
 export const outputNodeId = (agentId: string): string => `output:${agentId}`;
 export const capabilityNodeId = (agentId: string, index: number): string =>
   `capability:${agentId}:${index}`;
+export const skillNodeId = (agentId: string, index: number, name: string): string =>
+  `skill:${agentId}:${index}:${name}`;
 export const graphNodeId = (nodeId: string): string => `node:${nodeId}`;
 
 /** The canvas node a target lives on. The model chip is part of its agent's card. */
@@ -47,6 +52,8 @@ export function targetNodeId(target: CanvasTarget): string {
       return outputNodeId(target.agentId);
     case "capability":
       return capabilityNodeId(target.agentId, target.index);
+    case "skill":
+      return skillNodeId(target.agentId, target.index, target.name);
     case "graphNode":
       return graphNodeId(target.nodeId);
   }
@@ -57,7 +64,8 @@ export const sameTarget = (a: CanvasTarget | null, b: CanvasTarget | null): bool
 
 /**
  * A part of an agent as the `?part=` of the agent's link: "tool:<name>", "toolset:<id>",
- * "capability:<index>", "model" or "output". The agent itself, and a graph node, have none.
+ * "capability:<index>", "skill:<index>:<name>", "model" or "output". The agent itself, and a
+ * graph node, have none.
  */
 export function partOf(target: CanvasTarget): string | undefined {
   switch (target.kind) {
@@ -67,6 +75,8 @@ export function partOf(target: CanvasTarget): string | undefined {
       return `toolset:${target.toolsetId}`;
     case "capability":
       return `capability:${target.index}`;
+    case "skill":
+      return `skill:${target.index}:${target.name}`;
     case "model":
     case "output":
       return target.kind;
@@ -90,11 +100,16 @@ export function parsePart(agentId: string, part: string | undefined): CanvasTarg
     const index = Number(name);
     return Number.isSafeInteger(index) ? { kind: "capability", agentId, index } : null;
   }
+  const skill = kind === "skill" ? /^(\d+):(.+)$/.exec(name) : null;
+  if (skill?.[1] && skill[2]) {
+    const index = Number(skill[1]);
+    return Number.isSafeInteger(index) ? { kind: "skill", agentId, index, name: skill[2] } : null;
+  }
   return null;
 }
 
 /**
- * Whether the agent has the tool, toolset or capability a target names. A link from another
+ * Whether the agent has the tool, toolset, capability or skill a target names. A link from another
  * session, or one edited by hand, may name one that is not there; the agent itself is shown
  * instead.
  */
@@ -106,6 +121,11 @@ export function agentHas(agent: AgentBlueprint, target: CanvasTarget): boolean {
       return agent.toolsets.some((toolset) => toolset.id === target.toolsetId);
     case "capability":
       return target.agentId === agent.id && target.index < agent.capabilities.length;
+    case "skill":
+      return (
+        target.agentId === agent.id &&
+        (agent.capabilities[target.index]?.skills.some((s) => s.name === target.name) ?? false)
+      );
     case "graphNode":
       return false;
     default:
@@ -117,6 +137,11 @@ export function agentHas(agent: AgentBlueprint, target: CanvasTarget): boolean {
  * Where a span shows on a canvas: its own node first, then the nodes of its ancestors. A canvas
  * highlights the first target it actually draws, so a span of a sub-agent that is not on the
  * canvas still lights the tool or graph node it ran under.
+ *
+ * A tool call is its tool, then the capability that gives the tool's toolset, which stands for
+ * it while its toolset is hidden among the defaults, then the entry of the harness stack that
+ * capability is part of, which stands for both while they are hidden. A `load_capability` call
+ * is first the skill or the on-demand capability it loads.
  */
 export function spanTargets(data: DataState, view: RunView, spanId: string): CanvasTarget[] {
   const targets: CanvasTarget[] = [];
@@ -132,7 +157,21 @@ export function spanTargets(data: DataState, view: RunView, spanId: string): Can
         if (span.kind === "agent_run") targets.push({ kind: "agent", agentId: agent.id });
         else if (span.kind === "model_request") targets.push({ kind: "model", agentId: agent.id });
         else if (span.kind === "tool_call") {
-          targets.push({ kind: "tool", agentId: agent.id, name: span.data.tool_name });
+          const loaded = loadTarget(agent, loadedId(span));
+          if (loaded) targets.push(loaded);
+          const name = span.data.tool_name;
+          targets.push({ kind: "tool", agentId: agent.id, name });
+          const toolset = agent.tools.find((tool) => tool.name === name)?.toolset;
+          const giver = agent.capabilities.findIndex(
+            (item) => toolset !== undefined && item.toolsets.includes(toolset),
+          );
+          if (giver !== -1) targets.push({ kind: "capability", agentId: agent.id, index: giver });
+          // A member of a harness stack stands behind the stack's entry while it is hidden.
+          const stack = agent.capabilities[giver]?.stack ?? null;
+          const entry = agent.capabilities.findLastIndex(
+            (item, index) => index < giver && item.stack === null && item.name === stack,
+          );
+          if (entry !== -1) targets.push({ kind: "capability", agentId: agent.id, index: entry });
         }
       }
     }
@@ -141,15 +180,27 @@ export function spanTargets(data: DataState, view: RunView, spanId: string): Can
   return targets;
 }
 
+/** What a `load_capability` call with this id loads: a skill, or a deferred capability. */
+function loadTarget(agent: AgentBlueprint, id: string | null): CanvasTarget | null {
+  if (id === null) return null;
+  const owner = agent.capabilities.findIndex((item) => item.skills.some((s) => s.name === id));
+  if (owner !== -1) return { kind: "skill", agentId: agent.id, index: owner, name: id };
+  const deferred = agent.capabilities.findIndex(
+    (item) => item.deferred && item.capability_id === id,
+  );
+  return deferred === -1 ? null : { kind: "capability", agentId: agent.id, index: deferred };
+}
+
 function agentActivity(model: CanvasModel, target: CanvasTarget): Activity | null {
   if (target.kind === "graphNode") return null;
   const agent = model.agents.find((a) => a.blueprint.id === target.agentId);
   if (!agent) return null;
   switch (target.kind) {
-    // A toolset or a capability is never a span of its own: picking one shows its blueprint,
-    // also in a run.
+    // A toolset, a capability or a skill is never a span of its own: picking one shows its
+    // blueprint, also in a run.
     case "toolset":
     case "capability":
+    case "skill":
       return null;
     case "agent":
     case "output":

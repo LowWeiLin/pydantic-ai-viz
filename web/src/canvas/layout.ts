@@ -5,17 +5,19 @@
  * DOM measurement.
  *
  * Layout depends on structure only (which nodes and edges exist), never on run activity:
- * `agentLayoutKey` and `graphLayoutKey` say when it has to be computed again.
+ * `agentLayoutKey` and `graphLayoutKey` say when it has to be computed again. What Pydantic AI
+ * adds by default is part of the structure only with `showDefaults`.
  */
 import dagre from "@dagrejs/dagre";
-import { shownCapabilities } from "../data/model";
+import { LIBRARY_TOOL_NAMES, libraryToolsets, shownCapabilities } from "../data/model";
 import type { CanvasAgent, CanvasModel } from "../data/selectors";
-import type { GraphBlueprint } from "../wire";
+import type { AgentBlueprint, Capability, GraphBlueprint } from "../wire";
 import {
   agentNodeId,
   capabilityNodeId,
   graphNodeId,
   outputNodeId,
+  skillNodeId,
   toolNodeId,
   toolsetNodeId,
 } from "./targets";
@@ -33,7 +35,15 @@ export const SIZE = {
   rowGap: 6,
   outputWidth: 224,
   outputHeight: 58,
+  /** A skill's row, under its capability's and set in from it. */
+  skillHeight: 28,
+  skillInset: 16,
 } as const;
+
+/** A capability lists this many of its skills on the canvas at most; its panel lists them all. */
+export const MAX_SKILL_ROWS = 8;
+/** How far under every block in its way a delegation arc runs. */
+export const ARC_CLEARANCE = 16;
 
 const RANK_GAP = 64;
 const NODE_GAP = 24;
@@ -62,7 +72,8 @@ export type AgentNodeKind =
   | "placeholder"
   | "output"
   | "capabilities"
-  | "capability";
+  | "capability"
+  | "skill";
 
 export type LayoutNode = {
   id: string;
@@ -70,7 +81,7 @@ export type LayoutNode = {
   agentId: string;
   /**
    * Toolset id for `toolset` and `placeholder`, tool name for `tool`, the index into
-   * `blueprint.capabilities` for `capability`, else "".
+   * `blueprint.capabilities` for `capability`, "<index>:<name>" for `skill`, else "".
    */
   ref: string;
   /** Top-left corner; relative to the parent when `parentId` is set. */
@@ -106,6 +117,11 @@ export type LayoutEdge = {
    * not the x where the edge enters the card, the edge jogs left just above the card.
    */
   lane: number | null;
+  /**
+   * A `back` delegation: the lowest bottom of the blocks between its ends, which the arc runs
+   * under. Null for every other edge.
+   */
+  floor: number | null;
 };
 
 export type AgentLayout = { nodes: LayoutNode[]; edges: LayoutEdge[] };
@@ -122,13 +138,20 @@ type Group = { toolsetId: string; tools: string[]; placeholder: boolean };
  * The rows of each toolset box. Tools a run used but the blueprint does not list are shown in
  * the opaque toolset when there is exactly one (that is where they came from), otherwise in a
  * group of their own. Empty toolsets that are not opaque are left out.
+ *
+ * Without `showDefaults` the toolsets Pydantic AI gives on its own are left out, and so is a
+ * tool it adds that a run used (`load_capability`).
  */
-export function toolGroups(agent: CanvasAgent): Group[] {
-  const opaque = agent.toolsets.filter((group) => group.toolset.opaque);
+export function toolGroups(agent: CanvasAgent, showDefaults = false): Group[] {
+  const hidden = showDefaults ? new Set<string>() : libraryToolsets(agent.blueprint);
+  const visible = agent.toolsets.filter((group) => !hidden.has(group.toolset.id));
+  const opaque = visible.filter((group) => group.toolset.opaque);
   const home = opaque.length === 1 ? opaque[0]?.toolset.id : undefined;
-  const unlisted = agent.unlisted.map((tool) => tool.name);
+  const unlisted = agent.unlisted
+    .map((tool) => tool.name)
+    .filter((name) => showDefaults || !LIBRARY_TOOL_NAMES.has(name));
   const groups: Group[] = [];
-  for (const { toolset, tools } of agent.toolsets) {
+  for (const { toolset, tools } of visible) {
     const names = tools.map((entry) => entry.tool.name);
     if (toolset.id === home) names.push(...unlisted);
     if (names.length > 0) groups.push({ toolsetId: toolset.id, tools: names, placeholder: false });
@@ -143,21 +166,48 @@ export function toolGroups(agent: CanvasAgent): Group[] {
 const agentHeight = (agent: CanvasAgent): number =>
   SIZE.agentHeight + (agent.blueprint.description ? SIZE.agentDescription : 0);
 
+/** A box with a header over rows of these heights. */
+const boxHeight = (heights: readonly number[]): number =>
+  SIZE.groupHeader +
+  heights.reduce((sum, height) => sum + height, 0) +
+  (heights.length - 1) * SIZE.rowGap +
+  SIZE.groupPadding;
+
 const groupHeight = (rows: number): number =>
-  SIZE.groupHeader + rows * SIZE.rowHeight + (rows - 1) * SIZE.rowGap + SIZE.groupPadding;
+  boxHeight(Array.from({ length: rows }, () => SIZE.rowHeight));
+
+/** A row of the box of capabilities under an agent's card. */
+export type CapabilityRow =
+  | { kind: "capability"; index: number; capability: Capability }
+  /** One of the skills of the capability at `index`, right under its row. */
+  | { kind: "skill"; index: number; name: string };
+
+/** The rows of the box of capabilities: each capability drawn, the skills it offers under it. */
+export function capabilityRows(agent: AgentBlueprint, showDefaults = false): CapabilityRow[] {
+  return shownCapabilities(agent, showDefaults).flatMap(({ index, capability }) => [
+    { kind: "capability" as const, index, capability },
+    ...capability.skills
+      .slice(0, MAX_SKILL_ROWS)
+      .map((skill) => ({ kind: "skill" as const, index, name: skill.name })),
+  ]);
+}
+
+const rowHeightOf = (row: CapabilityRow): number =>
+  row.kind === "skill" ? SIZE.skillHeight : SIZE.rowHeight;
 
 /** Changes exactly when `layoutAgentCanvas` would return something different. */
-export function agentLayoutKey(model: CanvasModel): string {
+export function agentLayoutKey(model: CanvasModel, showDefaults = false): string {
   return JSON.stringify([
+    showDefaults,
     model.agents.map((agent) => [
       agent.blueprint.id,
       agent.blueprint.description ? 1 : 0,
-      toolGroups(agent).map((group) => [group.toolsetId, group.tools]),
-      shownCapabilities(agent.blueprint).map(({ index, capability }) => [
-        index,
-        capability.category,
-        capability.toolsets,
-      ]),
+      toolGroups(agent, showDefaults).map((group) => [group.toolsetId, group.tools]),
+      capabilityRows(agent.blueprint, showDefaults).map((row) =>
+        row.kind === "skill"
+          ? [row.index, row.name]
+          : [row.index, row.capability.category, row.capability.toolsets],
+      ),
     ]),
     model.delegations.map((d) => [d.fromAgentId, d.toolName, d.toAgentId]),
   ]);
@@ -225,16 +275,42 @@ function newGraph() {
  * The height of an agent's row: its card with the box of its capabilities underneath, or its
  * column (toolsets, then its output), whichever is taller.
  */
-function clusterHeight(agent: CanvasAgent): number {
-  const groups = toolGroups(agent);
+function clusterHeight(agent: CanvasAgent, showDefaults: boolean): number {
+  const groups = toolGroups(agent, showDefaults);
   const column =
     groups.reduce(
       (sum, group) => sum + groupHeight(group.placeholder ? 1 : group.tools.length) + COLUMN_GAP,
       0,
     ) + SIZE.outputHeight;
-  const capabilities = shownCapabilities(agent.blueprint).length;
-  const card = agentHeight(agent) + (capabilities > 0 ? COLUMN_GAP + groupHeight(capabilities) : 0);
+  const rows = capabilityRows(agent.blueprint, showDefaults);
+  const card =
+    agentHeight(agent) + (rows.length > 0 ? COLUMN_GAP + boxHeight(rows.map(rowHeightOf)) : 0);
   return Math.max(card, column);
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+
+/**
+ * How low an arc between two boxes has to run: under the lower one, and under every block in
+ * its way that reaches down past where it would run, so that it never passes behind a card
+ * between its ends.
+ */
+function arcFloor(a: Box, b: Box, blocks: readonly Box[]): number {
+  const left = Math.min(a.x, b.x);
+  const right = Math.max(a.x + a.width, b.x + b.width);
+  let floor = Math.max(a.y + a.height, b.y + b.height);
+  for (let moved = true; moved; ) {
+    moved = false;
+    for (const block of blocks) {
+      const bottom = block.y + block.height;
+      const across = block.x < right && block.x + block.width > left;
+      if (across && block.y < floor + ARC_CLEARANCE && bottom > floor) {
+        floor = bottom;
+        moved = true;
+      }
+    }
+  }
+  return floor;
 }
 
 /**
@@ -252,9 +328,10 @@ function clusterHeight(agent: CanvasAgent): number {
  *
  * The rows are a depth-first walk from the subject, so each agent appears once, under the
  * first agent that reaches it, and all sub-agents of one agent share an indent. A delegation to an agent that is already placed somewhere else
- * (a cycle, or a second path) is marked `back` and drawn as an arc.
+ * (a cycle, or a second path) is marked `back` and drawn as an arc, under every block between
+ * its ends.
  */
-export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
+export function layoutAgentCanvas(model: CanvasModel, showDefaults = false): AgentLayout {
   const nodes: LayoutNode[] = [];
   const edges: LayoutEdge[] = [];
   const agents = new Map(model.agents.map((agent) => [agent.blueprint.id, agent]));
@@ -293,7 +370,8 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
 
     const columnX = x + SIZE.agentWidth + RANK_GAP;
     let y = top;
-    for (const group of toolGroups(agent)) {
+    const groups = toolGroups(agent, showDefaults);
+    for (const group of groups) {
       const box = toolsetNodeId(agentId, group.toolsetId);
       const rows = group.placeholder ? 1 : group.tools.length;
       nodes.push({
@@ -337,6 +415,7 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
           toAgentId: null,
           back: false,
           lane: null,
+          floor: null,
         });
       }
     }
@@ -363,15 +442,17 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
       toAgentId: null,
       back: false,
       lane: null,
+      floor: null,
     });
 
-    // Capabilities go in a box under the card, which the column never reaches into. A dashed
-    // edge leads from a capability to each toolset it gives the agent that is drawn.
-    const capabilities = shownCapabilities(agent.blueprint);
-    if (capabilities.length > 0) {
+    // Capabilities go in a box under the card, which the column never reaches into, each with
+    // the skills it offers in rows under it. A dashed edge leads from a capability to each
+    // toolset it gives the agent that is drawn.
+    const rows = capabilityRows(agent.blueprint, showDefaults);
+    if (rows.length > 0) {
       const box = `capabilities:${agentId}`;
       bottom.set(agentId, box);
-      const drawn = new Set(toolGroups(agent).map((group) => group.toolsetId));
+      const drawn = new Set(groups.map((group) => group.toolsetId));
       const inset = (SIZE.groupWidth - SIZE.rowWidth) / 2;
       nodes.push({
         id: box,
@@ -381,10 +462,30 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
         x,
         y: top + agentHeight(agent) + COLUMN_GAP,
         width: SIZE.agentWidth,
-        height: groupHeight(capabilities.length),
+        height: boxHeight(rows.map(rowHeightOf)),
         parentId: null,
       });
-      for (const [row, { index, capability }] of capabilities.entries()) {
+      let rowY = SIZE.groupHeader;
+      for (const row of rows) {
+        const height = rowHeightOf(row);
+        const at = rowY;
+        rowY += height + SIZE.rowGap;
+        if (row.kind === "skill") {
+          const indent = inset + SIZE.skillInset;
+          nodes.push({
+            id: skillNodeId(agentId, row.index, row.name),
+            kind: "skill",
+            agentId,
+            ref: `${row.index}:${row.name}`,
+            x: indent,
+            y: at,
+            width: SIZE.agentWidth - inset - indent,
+            height,
+            parentId: box,
+          });
+          continue;
+        }
+        const { index, capability } = row;
         const id = capabilityNodeId(agentId, index);
         nodes.push({
           id,
@@ -392,9 +493,9 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
           agentId,
           ref: String(index),
           x: inset,
-          y: SIZE.groupHeader + row * (SIZE.rowHeight + SIZE.rowGap),
+          y: at,
           width: SIZE.agentWidth - 2 * inset,
-          height: SIZE.rowHeight,
+          height,
           parentId: box,
         });
         for (const toolsetId of capability.toolsets) {
@@ -409,11 +510,12 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
             toAgentId: null,
             back: false,
             lane: null,
+            floor: null,
           });
         }
       }
     }
-    cursor = top + clusterHeight(agent) + CLUSTER_GAP;
+    cursor = top + clusterHeight(agent, showDefaults) + CLUSTER_GAP;
 
     // Sub-agents share one indent. The lane to the first runs straight into its card; the
     // lanes to the others pass the rows above between their cards and columns.
@@ -441,23 +543,35 @@ export function layoutAgentCanvas(model: CanvasModel): AgentLayout {
   }
 
   const hasTool = new Set(nodes.filter((node) => node.kind === "tool").map((node) => node.id));
+  // Rows are placed in their box; an arc is measured on the page.
+  const boxes = new Map<string, Box>();
+  for (const node of nodes) {
+    const box = node.parentId ? boxes.get(node.parentId) : undefined;
+    boxes.set(node.id, box ? { ...node, x: box.x + node.x, y: box.y + node.y } : node);
+  }
+  const blocks = nodes.filter((node) => node.parentId === null);
   for (const delegation of shown) {
     const tool = toolNodeId(delegation.fromAgentId, delegation.toolName);
     const back = parent.get(delegation.toAgentId) !== delegation.fromAgentId;
     // An arc runs under the card; with capabilities listed there, it runs under their box.
     const end = (agentId: string): string =>
       (back ? bottom.get(agentId) : undefined) ?? agentNodeId(agentId);
+    // A delegation through a tool the canvas does not show starts at the agent card.
+    const source = hasTool.has(tool) ? tool : end(delegation.fromAgentId);
+    const target = end(delegation.toAgentId);
+    const from = boxes.get(source);
+    const to = boxes.get(target);
     edges.push({
       id: `delegation:${delegation.fromAgentId}:${delegation.toolName}:${delegation.toAgentId}`,
       kind: "delegation",
-      // A delegation through a tool the canvas does not show starts at the agent card.
-      source: hasTool.has(tool) ? tool : end(delegation.fromAgentId),
-      target: end(delegation.toAgentId),
+      source,
+      target,
       agentId: delegation.fromAgentId,
       ref: delegation.toolName,
       toAgentId: delegation.toAgentId,
       back,
       lane: back ? null : (lanes.get(delegation.toAgentId) ?? null),
+      floor: back && from && to ? arcFloor(from, to, blocks) : null,
     });
   }
   return { nodes, edges };

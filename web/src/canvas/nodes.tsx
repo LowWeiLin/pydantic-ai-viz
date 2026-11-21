@@ -12,8 +12,8 @@ import { Badge, Chip, StatusDot } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { cx, statusMeta, toneClass } from "../ui/tone";
-import type { Capability, ModelInfo, Toolset } from "../wire";
-import { DELEGATION_INLET, graphNodeLabel, nodeKind, SIZE } from "./layout";
+import type { Capability, ModelInfo, Skill, Toolset } from "../wire";
+import { DELEGATION_INLET, graphNodeLabel, MAX_SKILL_ROWS, nodeKind, SIZE } from "./layout";
 import type { CanvasTarget } from "./targets";
 
 /** How nodes report clicks. Provided by the canvas frame. */
@@ -77,17 +77,18 @@ export function activityPhrase(activity: Activity, overlay: boolean): string {
   const parts: string[] = [];
   if (activity.retries > 0) parts.push(`retried ${times(activity.retries)}`);
   parts.push(plural(activity.calls, "call"));
-  parts.push(
-    activity.state === "running"
-      ? "running"
-      : activity.state === "error"
-        ? "failed"
-        : activity.state === "retry"
-          ? "waiting for a retry"
-          : "OK",
-  );
+  parts.push(stateWords(activity.state));
   return `, ${parts.join(", ")}`;
 }
+
+const stateWords = (state: Activity["state"]): string =>
+  state === "running"
+    ? "running"
+    : state === "error"
+      ? "failed"
+      : state === "retry"
+        ? "waiting for a retry"
+        : "OK";
 
 /** Border and ring for a node in a given run state. */
 function stateFrame(state: Activity["state"]): string {
@@ -243,12 +244,22 @@ export function AgentNode({ data }: NodeProps<Node<AgentNodeData, "agent">>) {
   );
 }
 
+/** Said of a part Pydantic AI added by default, where defaults are shown. */
+const DEFAULT_WORDS = ", a Pydantic AI default";
+
+/** The faint word that marks a part Pydantic AI added by default; the border is dashed too. */
+function DefaultTag() {
+  return <span className="shrink-0 text-faint text-meta">default</span>;
+}
+
 export type ToolsetNodeData = {
   agentId: string;
   /** Null for the group of tools a run used that the blueprint does not list. */
   toolset: Toolset | null;
   count: number;
   selected: boolean;
+  /** Given by Pydantic AI on its own; only drawn when defaults are shown. */
+  default: boolean;
 };
 
 /** Null for a toolset whose tools are not known: its placeholder row below says why. */
@@ -267,6 +278,7 @@ export function ToolsetHeader({ data }: NodeProps<Node<ToolsetNodeData, "toolset
     <div
       className={cx(
         "relative size-full rounded-card border border-line bg-surface-2/70",
+        data.default && "border-dashed",
         data.selected && "pviz-selected",
       )}
     >
@@ -280,7 +292,7 @@ export function ToolsetHeader({ data }: NodeProps<Node<ToolsetNodeData, "toolset
       />
       {toolset && (
         <Cover
-          label={`Toolset ${toolset.label}${count === null ? "" : `, ${count}`}`}
+          label={`Toolset ${toolset.label}${count === null ? "" : `, ${count}`}${data.default ? DEFAULT_WORDS : ""}`}
           target={{ kind: "toolset", agentId: data.agentId, toolsetId: toolset.id }}
         />
       )}
@@ -289,6 +301,7 @@ export function ToolsetHeader({ data }: NodeProps<Node<ToolsetNodeData, "toolset
         <span className="min-w-0 flex-1 truncate font-medium text-muted">
           {toolset ? toolset.label : "Seen in this run"}
         </span>
+        {data.default && <DefaultTag />}
         {count !== null && <span className="shrink-0 text-faint">{count}</span>}
       </div>
     </div>
@@ -305,6 +318,11 @@ export type ToolNodeData = {
   overlay: boolean;
   /** This tool hands over to another agent. */
   delegates: boolean;
+  /**
+   * A tool Pydantic AI adds that a run used outside any toolset drawn as a default
+   * (`load_capability`); only drawn when defaults are shown.
+   */
+  default: boolean;
 };
 
 export function ToolNode({ data }: NodeProps<Node<ToolNodeData, "tool">>) {
@@ -315,17 +333,19 @@ export function ToolNode({ data }: NodeProps<Node<ToolNodeData, "tool">>) {
         "tone-tool relative size-full rounded-control border bg-surface",
         overlay ? stateFrame(activity.state) : "border-line-strong",
         overlay && activity.state === "error" && "bg-error/8",
+        data.default && "border-dashed",
         data.selected && "pviz-selected",
       )}
     >
       <Ports loop />
       <Cover
-        label={`Tool ${data.name}${activityPhrase(activity, overlay)}`}
+        label={`Tool ${data.name}${activityPhrase(activity, overlay)}${data.default ? DEFAULT_WORDS : ""}`}
         target={{ kind: "tool", agentId: data.agentId, name: data.name }}
       />
       <div className="pointer-events-none relative flex h-full items-center gap-2 px-2.5">
         <Icon name={data.delegates ? "agent" : "tool"} size={14} className="tone-text" />
         <MiddleTruncate text={data.name} className="min-w-0 flex-1 font-mono text-data text-fg" />
+        {data.default && <DefaultTag />}
         {overlay && activity.retries > 0 && (
           <span className="tone-retry tone-text inline-flex shrink-0 items-center gap-0.5 font-medium text-meta">
             <Icon name="retry" size={12} />
@@ -425,36 +445,97 @@ export type CapabilityNodeData = {
   /** Index into `blueprint.capabilities`. */
   index: number;
   capability: Capability;
-  /** Labels of the toolsets it gives the agent. */
+  /** Labels of the toolsets it gives the agent that are drawn. */
   toolsets: string[];
+  /**
+   * What it gives that is hidden among the defaults: "4 tools", or "tools at run time" for a
+   * toolset that lists them only then. Null when nothing is.
+   */
+  hiddenTools: string | null;
+  /** How many capabilities of its harness stack are hidden among the defaults. */
+  inside: number;
+  /**
+   * In a run: the calls that loaded it on demand and those to the tools it gives that have no
+   * row of their own. Null when it has neither.
+   */
+  activity: Activity | null;
+  overlay: boolean;
+  /** Added by Pydantic AI or a harness stack; only drawn when defaults are shown. */
+  default: boolean;
   selected: boolean;
 };
 
 const listed = (one: string, many: string, items: readonly string[]): string =>
   `${items.length === 1 ? one : many} ${items.join(", ")}`;
 
-/** "Capability WebSearch, Web & research, gives toolset ..., provider-side tool web_search". */
-export function capabilityName(capability: Capability, toolsets: readonly string[]): string {
-  const parts = [`Capability ${capability.name}`, categoryNames(capability).label];
+/** What a capability row has in it that is drawn elsewhere or hidden: "2 skills · 4 tools". */
+export function capabilityRollup(
+  capability: Capability,
+  hiddenTools: string | null,
+  inside: number,
+): string | null {
+  const count = capability.skills.length;
+  const parts = [
+    count > MAX_SKILL_ROWS
+      ? `${plural(count, "skill")} · ${MAX_SKILL_ROWS} shown`
+      : count > 0 && plural(count, "skill"),
+    inside > 0 && `${inside} inside`,
+    hiddenTools,
+  ].filter((part): part is string => typeof part === "string");
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/**
+ * "Capability WebSearch, Web & research, gives toolset ..., provider-side tool web_search". A
+ * member of a harness stack says which one put it there instead of its group.
+ */
+export function capabilityName(
+  capability: Capability,
+  toolsets: readonly string[],
+  hidden: { hiddenTools?: string | null; inside?: number; default?: boolean } = {},
+): string {
+  const parts = [
+    `Capability ${capability.name}`,
+    capability.stack ? `via ${capability.stack}` : categoryNames(capability).label,
+  ];
   if (toolsets.length > 0) parts.push(listed("gives toolset", "gives toolsets", toolsets));
+  if (hidden.hiddenTools) parts.push(`gives ${hidden.hiddenTools} from Pydantic AI, hidden`);
   if (capability.native_tools.length > 0) {
     parts.push(listed("provider-side tool", "provider-side tools", capability.native_tools));
   }
+  if (capability.skills.length > 0) parts.push(plural(capability.skills.length, "skill"));
+  if (hidden.inside) parts.push(`${plural(hidden.inside, "capability", "capabilities")} inside`);
   if (capability.deferred) parts.push("on demand");
-  return parts.join(", ");
+  return `${parts.join(", ")}${hidden.default ? DEFAULT_WORDS : ""}`;
+}
+
+/** A call count and a state icon, for a row that stands for spans of its own in a run. */
+function RowActivity({ activity }: { activity: Activity }) {
+  return (
+    <>
+      {activity.calls > 1 && <Badge className="shrink-0">{activity.calls}x</Badge>}
+      <StateIcon state={activity.state} />
+    </>
+  );
 }
 
 /**
  * A capability of the agent: its name, and on the right its group in the Pydantic AI docs. A
- * sparkle in the model's colour marks one that gives the model a provider-side tool.
+ * sparkle in the model's colour marks one that gives the model a provider-side tool. What it
+ * holds that is not drawn (its skills past the first few, tools hidden among the defaults) is
+ * counted in faint text.
  */
 export function CapabilityNode({ data }: NodeProps<Node<CapabilityNodeData, "capability">>) {
-  const { capability } = data;
-  const name = capabilityName(capability, data.toolsets);
+  const { capability, activity, overlay } = data;
+  const name = `${capabilityName(capability, data.toolsets, data)}${
+    activity ? activityPhrase(activity, overlay) : ""
+  }`;
+  const rollup = capabilityRollup(capability, data.hiddenTools, data.inside);
   return (
     <div
       className={cx(
         "tone-capability relative size-full rounded-control border border-line-strong bg-surface",
+        data.default && "border-dashed",
         data.selected && "pviz-selected",
       )}
     >
@@ -477,9 +558,73 @@ export function CapabilityNode({ data }: NodeProps<Node<CapabilityNodeData, "cap
         {capability.deferred && (
           <span className="shrink-0 font-medium text-accent text-meta">on demand</span>
         )}
+        {rollup && <span className="shrink-0 text-faint text-meta">{rollup}</span>}
+        {data.default && !capability.stack && <DefaultTag />}
         <span className="min-w-0 shrink-[4] truncate text-faint text-meta">
-          {categoryNames(capability).short}
+          {capability.stack ? `via ${capability.stack}` : categoryNames(capability).short}
         </span>
+        {overlay && activity && <RowActivity activity={activity} />}
+      </div>
+    </div>
+  );
+}
+
+export type SkillNodeData = {
+  agentId: string;
+  /** Index into `blueprint.capabilities` of the capability that offers it. */
+  index: number;
+  /** That capability's name. */
+  owner: string;
+  skill: Skill;
+  /** Its `load_capability` calls in a run. */
+  activity: Activity;
+  overlay: boolean;
+  selected: boolean;
+};
+
+/** "Skill house-style of Skills, loaded on demand, hidden from the model, loaded once, OK". */
+export function skillName(
+  skill: Skill,
+  owner: string,
+  activity: Activity,
+  overlay: boolean,
+): string {
+  const parts = [`Skill ${skill.name} of ${owner}`, "loaded on demand"];
+  if (!skill.model_invocable) parts.push("hidden from the model");
+  if (overlay) {
+    parts.push(
+      activity.calls === 0
+        ? "not loaded yet"
+        : `loaded ${times(activity.calls)}, ${stateWords(activity.state)}`,
+    );
+  }
+  return parts.join(", ");
+}
+
+/**
+ * A skill a capability offers, in a row under the capability's. In a run it shows whether the
+ * model loaded it. One the model is not told about says so.
+ */
+export function SkillNode({ data }: NodeProps<Node<SkillNodeData, "skill">>) {
+  const { skill, activity, overlay } = data;
+  const name = skillName(skill, data.owner, activity, overlay);
+  return (
+    <div
+      className={cx(
+        "tone-capability relative size-full rounded-control border border-line bg-surface",
+        data.selected && "pviz-selected",
+      )}
+    >
+      <Cover
+        label={name}
+        title={skill.description}
+        target={{ kind: "skill", agentId: data.agentId, index: data.index, name: skill.name }}
+      />
+      <div className="pointer-events-none relative flex h-full items-center gap-1.5 px-2">
+        <Icon name="instructions" size={12} className="shrink-0 tone-text" />
+        <MiddleTruncate text={skill.name} className="min-w-0 flex-1 font-mono text-data text-fg" />
+        {!skill.model_invocable && <span className="shrink-0 text-faint text-meta">hidden</span>}
+        {overlay && <RowActivity activity={activity} />}
       </div>
     </div>
   );
@@ -644,6 +789,7 @@ export const agentNodeTypes = {
   output: OutputNode,
   capabilities: CapabilitiesBox,
   capability: CapabilityNode,
+  skill: SkillNode,
 };
 
 export const graphNodeTypes = {

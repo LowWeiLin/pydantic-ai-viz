@@ -361,6 +361,9 @@ const BUILTIN_CAPABILITIES = [
     expressions: {},
     toolsets: [],
     native_tools: ["tool_search"],
+    capability_id: null,
+    stack: null,
+    skills: [],
   },
   {
     name: "PendingMessageDrainCapability",
@@ -372,6 +375,9 @@ const BUILTIN_CAPABILITIES = [
     expressions: {},
     toolsets: [],
     native_tools: [],
+    capability_id: null,
+    stack: null,
+    skills: [],
   },
 ];
 
@@ -384,7 +390,7 @@ const fullModel = (model) => {
   return { ...full, model_class: full.model_class ?? null, env: full.env ?? null };
 };
 
-const complete = (blueprint) => ({
+const complete = ({ settings: { defaults = [], ...settings }, ...blueprint }) => ({
   ...blueprint,
   model: blueprint.model && {
     id: blueprint.model.id,
@@ -398,7 +404,7 @@ const complete = (blueprint) => ({
   instructions: blueprint.instructions.map(unlocated),
   toolsets: blueprint.toolsets.map(unlocated),
   output: { ...blueprint.output, location: null },
-  settings: { ...blueprint.settings, expressions: {} },
+  settings: { ...settings, expressions: {}, defaults },
 });
 
 const agent = (fields) =>
@@ -419,12 +425,14 @@ const agent = (fields) =>
       tool_names: [],
     },
     capabilities: BUILTIN_CAPABILITIES,
+    // The defaults of the Pydantic AI in VERSIONS, which a live agent names as such.
     settings: {
       model_settings: null,
       end_strategy: "early",
       tool_retries: 1,
       output_retries: 1,
       tool_timeout: null,
+      defaults: ["end_strategy", "tool_retries", "output_retries"],
     },
     delegates: [],
     warnings: [],
@@ -454,6 +462,7 @@ const codeAgent = (fields) => {
       output_retries: null,
       tool_timeout: null,
       expressions: {},
+      defaults: [],
       ...fields.settings,
     },
   };
@@ -1639,9 +1648,9 @@ function newsroom() {
 
 /**
  * One agent read from source whose capabilities span eight docs categories: a configured one,
- * one that is only loaded on demand, ones that give the agent toolsets (a drawn one with a tool,
- * and harness ones whose tools are only known at run time), one that gives provider-side tools
- * only, and the built-in one that stays folded away.
+ * one that offers skills, ones that give the agent toolsets (a drawn one with a tool, and
+ * harness ones whose tools are only known at run time), one that gives provider-side tools only,
+ * and the built-in one that stays folded away. The skills are the capabilities demo's.
  */
 function capabilities() {
   const rec = new Recording({
@@ -1663,9 +1672,20 @@ function capabilities() {
     expressions: {},
     toolsets: [],
     native_tools: [],
+    capability_id: null,
+    stack: null,
+    skills: [],
     ...fields,
   });
   const harness = { package: "pydantic_ai_harness" };
+  const skill = (name, description, whenToUse, body) => ({
+    name,
+    description,
+    when_to_use: whenToUse,
+    model_invocable: true,
+    path: `_skills/${name}/SKILL.md`,
+    body,
+  });
   const toolset = (id, toolsetId, label, line, fields = {}) => ({
     id,
     toolset_id: toolsetId,
@@ -1712,14 +1732,8 @@ function capabilities() {
       toolset("ts2", "web_fetch", "FunctionToolset 'web_fetch'", 20, {
         wrappers: ["CapabilityOwnedToolset", "PreparedToolset"],
       }),
-      toolset("ts3", "memory", "MemoryToolset 'memory'", 38, {
-        opaque: true,
-        expression: "Memory(store=InMemoryMemoryStore())",
-      }),
-      toolset("ts4", "planning", "PlanningToolset 'planning'", 39, {
-        opaque: true,
-        expression: "Planning()",
-      }),
+      toolset("ts3", "memory", "MemoryToolset 'memory'", 38, { opaque: true }),
+      toolset("ts4", "planning", "PlanningToolset 'planning'", 39, { opaque: true }),
     ],
     tools: [
       fromCode(
@@ -1759,8 +1773,30 @@ function capabilities() {
       }),
       capability("Skills", "knowledge", {
         ...harness,
-        deferred: true,
-        details: { directories: ["skills"] },
+        details: { directories: ["_skills"] },
+        skills: [
+          skill(
+            "fact-check",
+            "How to check a briefing's claims against the pages it cites.",
+            "After drafting, when a claim might not be in a source.",
+            "# Fact check for briefings\n\n" +
+              "Before you answer, go through the draft one claim at a time:\n\n" +
+              "1. Find the sentence of a page you read that says it. A claim no page says is cut.\n" +
+              "2. Keep dates, numbers and names exactly as the page gives them.\n" +
+              "3. Name in the `Sources:` line only the pages a claim came from.",
+          ),
+          skill(
+            "house-style",
+            "How the newsroom formats a short briefing.",
+            "Before writing the final briefing for a reader.",
+            "# House style for briefings\n\n" +
+              "Write every briefing in this shape and no other:\n\n" +
+              "1. A one-line verdict that answers the question.\n" +
+              "2. Exactly three short bullets: what happened, why it happened, how it ended.\n" +
+              "3. A `Sources:` line naming each page you used.\n\n" +
+              "Keep it plain: no adjectives of drama, no filler, under 120 words.",
+          ),
+        ],
       }),
       capability("Memory", "knowledge", { ...harness, toolsets: ["ts3"] }),
       capability("Planning", "reasoning", { ...harness, toolsets: ["ts4"] }),

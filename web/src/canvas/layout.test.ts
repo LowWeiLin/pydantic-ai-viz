@@ -1,10 +1,18 @@
 // @vitest-environment node
 import { describe, expect, test } from "vitest";
 import { canvasModel } from "../data/selectors";
-import { agentBlueprint, capability, fixtureState, graphBlueprint, stateOf } from "../test/factory";
+import {
+  agentBlueprint,
+  capability,
+  fixtureState,
+  graphBlueprint,
+  skill,
+  stateOf,
+} from "../test/factory";
 import type { AgentBlueprint, Event, GraphBlueprint } from "../wire";
 import { arcPath } from "./edges";
 import {
+  ARC_CLEARANCE,
   agentLayoutKey,
   backEdges,
   DELEGATION_INLET,
@@ -14,6 +22,7 @@ import {
   type LayoutNode,
   layoutAgentCanvas,
   layoutGraph,
+  MAX_SKILL_ROWS,
   nodeKind,
   SEEN_GROUP,
   SIZE,
@@ -24,6 +33,7 @@ import {
   capabilityNodeId,
   graphNodeId,
   outputNodeId,
+  skillNodeId,
   toolNodeId,
   toolsetNodeId,
 } from "./targets";
@@ -370,6 +380,7 @@ describe("capabilities on the agent canvas", () => {
         toAgentId: null,
         back: false,
         lane: null,
+        floor: null,
       },
     ]);
     expectNoOverlap(layout.nodes.filter((n) => n.parentId === null));
@@ -471,6 +482,135 @@ describe("capabilities on the agent canvas", () => {
         expect(inside, `arc through ${blocked.id} at t=${step / 100}`).toBe(false);
       }
     }
+  });
+
+  test("skills are rows under the capability that offers them, eight at most", () => {
+    const skills = Array.from({ length: 10 }, (_, i) => skill({ name: `skill-${i}` }));
+    const { layout } = layoutOf(
+      agentBlueprint({
+        id: "a1",
+        capabilities: [
+          capability({ name: "Skills", category: "knowledge", skills }),
+          capability({ name: "Thinking", category: "reasoning" }),
+        ],
+      }),
+    );
+    const box = find(layout.nodes, "capabilities:a1");
+    const owner = find(layout.nodes, capabilityNodeId("a1", 0));
+    const rows = layout.nodes.filter((n) => n.kind === "skill");
+    expect(rows).toHaveLength(MAX_SKILL_ROWS);
+    expect(rows.map((n) => n.ref)).toEqual(skills.slice(0, 8).map((s) => `0:${s.name}`));
+    expect(rows[0]?.id).toBe(skillNodeId("a1", 0, "skill-0"));
+    for (const [i, row] of rows.entries()) {
+      expect(row.parentId).toBe(box.id);
+      expect(row.height).toBe(SIZE.skillHeight);
+      // Indented under their capability, and stacked straight after it.
+      expect(row.x).toBe(owner.x + SIZE.skillInset);
+      expect(row.x + row.width).toBe(owner.x + owner.width);
+      expect(row.y).toBe(owner.y + owner.height + SIZE.rowGap + i * (row.height + SIZE.rowGap));
+      expect(row.y + row.height).toBeLessThanOrEqual(box.height);
+    }
+    // Thinking (reasoning) comes before Skills (knowledge) in the docs' order.
+    const thinking = find(layout.nodes, capabilityNodeId("a1", 1));
+    expect(thinking.y + thinking.height).toBeLessThanOrEqual(owner.y);
+  });
+
+  test("what Pydantic AI added is laid out only while defaults are shown", () => {
+    const harness = { package: "pydantic_ai_harness" } as const;
+    const memory = (name: string) => ({
+      ...tool(name, "mem"),
+      function: `pydantic_ai_harness.memory.${name}`,
+    });
+    const agent = agentBlueprint({
+      id: "a1",
+      toolsets: [toolset("ts0"), { ...toolset("mem"), kind: "function" }],
+      tools: [tool("mine"), memory("read_memory"), memory("write_memory")],
+      capabilities: [
+        ...builtins,
+        capability({ name: "Memory", category: "knowledge", ...harness, toolsets: ["mem"] }),
+        capability({ name: "Shell", category: "tools", ...harness, stack: "Coder" }),
+      ],
+    });
+    const { model } = layoutOf(agent);
+    const hidden = layoutAgentCanvas(model);
+    const shown = layoutAgentCanvas(model, true);
+    const ids = (layout: typeof hidden) => layout.nodes.map((n) => n.id);
+    expect(ids(hidden)).not.toContain(toolsetNodeId("a1", "mem"));
+    expect(ids(hidden)).not.toContain(capabilityNodeId("a1", 0));
+    expect(ids(hidden)).not.toContain(capabilityNodeId("a1", 3));
+    expect(ids(hidden)).toContain(capabilityNodeId("a1", 2));
+    expect(hidden.edges.filter((e) => e.kind === "gives")).toEqual([]);
+    expect(ids(shown)).toEqual(
+      expect.arrayContaining([
+        toolsetNodeId("a1", "mem"),
+        toolNodeId("a1", "read_memory"),
+        capabilityNodeId("a1", 0),
+        capabilityNodeId("a1", 1),
+        capabilityNodeId("a1", 3),
+      ]),
+    );
+    expect(shown.edges.filter((e) => e.kind === "gives").map((e) => e.ref)).toEqual(["mem"]);
+    expect(agentLayoutKey(model, true)).not.toBe(agentLayoutKey(model));
+    // A run's load_capability is the library's: hidden with the defaults, a tool when shown.
+    const [drawn] = model.agents;
+    if (!drawn) throw new Error("expected an agent");
+    const idle = { state: "idle" as const, calls: 0, retries: 0, errors: 0, spanIds: [] };
+    const loading = { ...drawn, unlisted: [{ name: "load_capability", activity: idle }] };
+    const names = (showDefaults: boolean) =>
+      toolGroups(loading, showDefaults).flatMap((group) => group.tools);
+    expect(names(false)).not.toContain("load_capability");
+    expect(names(true)).toContain("load_capability");
+  });
+
+  test("a way back under a lower agent with capabilities runs below them, never through", () => {
+    const a = agentBlueprint({
+      id: "a1",
+      toolsets: [toolset("ts0")],
+      tools: [tool("ask_b")],
+      delegates: [{ tool_name: "ask_b", agent_id: "a2", evidence: "object" }],
+      capabilities: [capability({ name: "Thinking", category: "reasoning" })],
+    });
+    const b = agentBlueprint({
+      id: "a2",
+      toolsets: [toolset("ts0")],
+      tools: [tool("ask_a")],
+      delegates: [{ tool_name: "ask_a", agent_id: "a1", evidence: "object" }],
+      capabilities: Array.from({ length: 9 }, (_, i) =>
+        capability({ name: `Cap${i}`, category: "safety" }),
+      ),
+    });
+    const { layout } = layoutOf(a, b);
+    const loop = layout.edges.find((edge) => edge.back);
+    if (!loop || loop.floor === null) throw new Error("expected a way back with a floor");
+    const absolute = (node: LayoutNode): LayoutNode => {
+      const parent = node.parentId ? find(layout.nodes, node.parentId) : null;
+      return parent ? { ...node, x: parent.x + node.x, y: parent.y + node.y } : node;
+    };
+    const from = absolute(find(layout.nodes, loop.source));
+    const to = find(layout.nodes, loop.target);
+    const [sx, sy] = [from.x + from.width * 0.38, from.y + from.height];
+    const [tx, ty] = [to.x + to.width * 0.62, to.y + to.height];
+    // Down, a rounded turn, level along `low`, a rounded turn, and up into the box.
+    const [path, , low] = arcPath(sx, sy, tx, ty, loop.floor);
+    expect(path).toMatch(/^M \S+ V \S+ Q \S+ \S+ H \S+ Q \S+ \S+ V \S+$/);
+    expect(path).toContain(`Q ${sx},${low} `);
+    // Below every card and capabilities box its level part passes under.
+    const [left, right] = [Math.min(sx, tx), Math.max(sx, tx)];
+    const passed = layout.nodes.filter(
+      (n) =>
+        n.parentId === null &&
+        (n.kind === "agent" || n.kind === "capabilities") &&
+        n.x < right &&
+        n.x + n.width > left,
+    );
+    expect(passed.map((n) => n.id)).toContain("capabilities:a2");
+    for (const block of passed) {
+      expect(low, `level part through ${block.id}`).toBeGreaterThanOrEqual(
+        block.y + block.height + ARC_CLEARANCE,
+      );
+    }
+    // Every other edge has no floor.
+    expect(layout.edges.filter((e) => !e.back).every((e) => e.floor === null)).toBe(true);
   });
 
   test("the layout key changes when the capabilities shown change", () => {

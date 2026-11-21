@@ -1,6 +1,6 @@
 /**
  * The agent blueprint screen: the canvas in the main slot, the inspector beside it, and
- * "Copy Mermaid" in the bar. Clicking a node inspects that part; with nothing picked the
+ * the defaults toggle and "Copy Mermaid" in the bar. Clicking a node inspects that part; with nothing picked the
  * inspector shows the agent itself. The picked part is the `?part=` of the route, so a link
  * opens the screen on it.
  */
@@ -17,7 +17,7 @@ import { navigate } from "../shell/router";
 import { NotFound, WaitingForRun } from "../shell/states";
 import { Workspace } from "../shell/Workspace";
 import { CopyButton } from "../ui/CopyButton";
-import { ScreenBar, WarningsChip } from "./parts";
+import { DefaultsToggle, ScreenBar, WarningsChip } from "./parts";
 
 function AgentBlueprintView({ id, part }: { id: string; part: string | undefined }) {
   const data = useViewer((state) => state.data);
@@ -70,7 +70,12 @@ function AgentBlueprintView({ id, part }: { id: string; part: string | undefined
                 />
               ) : undefined
             }
-            aside={<CopyButton text={() => agentMermaid(model)} label="Copy Mermaid" />}
+            aside={
+              <>
+                <DefaultsToggle agents={model.agents.map((entry) => entry.blueprint)} />
+                <CopyButton text={() => agentMermaid(model)} label="Copy Mermaid" />
+              </>
+            }
           />
           {/* Under the bar, so the inspector toggle keeps its place at the bar's end. */}
           <WaitingForRun />

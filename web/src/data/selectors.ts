@@ -23,6 +23,7 @@ import type {
   Toolset,
   Usage,
 } from "../wire";
+import { LOAD_CAPABILITY } from "./model";
 import type { DataState, DeltaRecord } from "./reduce";
 
 // ---------- status ----------
@@ -552,6 +553,11 @@ export type CanvasAgent = {
   toolsets: CanvasToolset[];
   /** Calls to tools the blueprint does not list (tools of opaque toolsets, mostly). */
   unlisted: { name: string; activity: Activity }[];
+  /**
+   * `load_capability` calls by the id they load: a skill's name, or a deferred capability's
+   * `capability_id`. Without content capture the arguments are not known, so there are none.
+   */
+  loads: Record<string, Activity>;
   /** Lit once a run of this agent has ended ok. */
   outputReady: boolean;
 };
@@ -600,6 +606,14 @@ function delegationFirstSeen(data: DataState): ReadonlyMap<string, number> {
   return first;
 }
 
+/** The id a `load_capability` call loads; null for any other span, or when arguments were not captured. */
+export function loadedId(span: Span): string | null {
+  if (span.kind !== "tool_call" || span.data.tool_name !== LOAD_CAPABILITY) return null;
+  const args = span.data.arguments;
+  if (args === null || typeof args !== "object" || Array.isArray(args)) return null;
+  return typeof args.id === "string" ? args.id : null;
+}
+
 /** How far the canvas follows delegation edges from its subject. */
 export const MAX_DELEGATION_DEPTH = 3;
 
@@ -635,6 +649,7 @@ export function canvasModel(
     const run = idle();
     const model = idle();
     const byTool = new Map<string, Activity>();
+    const loads: Record<string, Activity> = {};
     let outputReady = false;
     if (blueprint.name !== null) {
       for (const span of viewSpans) {
@@ -651,6 +666,12 @@ export function canvasModel(
             byTool.set(span.data.tool_name, activity);
           }
           touch(activity, span);
+          const id = loadedId(span);
+          if (id !== null) {
+            const loaded = loads[id] ?? idle();
+            loads[id] = loaded;
+            touch(loaded, span);
+          }
         }
       }
     }
@@ -690,6 +711,7 @@ export function canvasModel(
       model,
       toolsets: [...groups.values()],
       unlisted,
+      loads,
       outputReady,
     };
   });

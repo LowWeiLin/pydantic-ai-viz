@@ -188,6 +188,32 @@ export type Capability = {
   toolsets: string[];
   /** Provider-side tool kinds it gives the agent, e.g. "web_search". */
   native_tools: string[];
+  /**
+   * The id Pydantic AI knows it by, the one `load_capability` takes for a deferred capability;
+   * from source only a literal `id=`.
+   */
+  capability_id: string | null;
+  /** The harness stack that put it on the agent ("Coder", "Researcher"); null from source. */
+  stack: string | null;
+  /** The skills a harness `Skills` capability offers, in catalog order; [] for every other one. */
+  skills: Skill[];
+};
+
+/** One skill a harness `Skills` capability offers. */
+export type Skill = {
+  /** The frontmatter name, else the directory name: the id `load_capability` takes. */
+  name: string;
+  description: string;
+  when_to_use: string | null;
+  /** False with `disable-model-invocation: true`: left out of the model's catalog. */
+  model_invocable: boolean;
+  /**
+   * Its SKILL.md, with forward slashes, relative to the workspace root it was read from (object)
+   * or to the analysed root (code); never absolute.
+   */
+  path: string;
+  /** The Markdown after the frontmatter, as written: what the model gets when it loads the skill. */
+  body: string;
 };
 
 export type AgentSettings = {
@@ -201,6 +227,11 @@ export type AgentSettings = {
    * field of this object, or `model_settings.<key>` for one model setting; the field itself is null.
    */
   expressions: { [k: string]: string };
+  /**
+   * The settings whose value is the one Pydantic AI gives an agent that sets none (field names
+   * of this object); [] from source, where a setting the code does not set is null.
+   */
+  defaults: string[];
 };
 
 export type Delegate = {
