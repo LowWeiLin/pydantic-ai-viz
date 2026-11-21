@@ -4,6 +4,8 @@
 
 You do not need this page to use `view`. It is here for when you want to know what was read, why a value shows up as code instead of a value, or whether it is safe to point `view` at a repository you have not reviewed.
 
+Besides `.py` files, `view` reads the `SKILL.md` files of the skill libraries a harness `Skills` capability names. They are read as text too, never imported or run, and only inside the folder being analysed; a GitHub target keeps its `SKILL.md` files for the same reason.
+
 Three consequences are worth knowing first:
 
 - **Nothing in the code runs.** Not the top-level code, not a decorator, not a default argument, not an `import`. Pointing `view` at a local directory is as safe as opening it in an editor. (Fetching a GitHub target runs `git`, with your git configuration.)
@@ -191,6 +193,8 @@ The analyser is written to be pointed at code nobody has reviewed, so all of its
 | Time for fetching a GitHub repository | 300 seconds | `view` stops with an error |
 
 All four can be changed through [`Limits`](../reference/python-api.md#limits) when you call `analyze`. Every other walk is bounded too: following names, opening nested types, expanding lists. Cyclic imports, aliases that refer to themselves and models that contain themselves end in a warning, and a file nested too deeply for Python's parser is skipped. None of these is ever a crash.
+
+A `Skills` capability shows at most 64 skills, with a warning for the rest, and a `SKILL.md` over the file-size limit is left out. What a capability reads only when it runs is not shown from source or from an object: the `AGENTS.md` and `CLAUDE.md` of `RepoContext`, the provider-side tools of `MCP(native=True)` and the store of a `Memory(store_resolver=...)`. `Advisor` and `Peers` draw no delegation edge, since one holds a model and the other resolves its network when it runs. Keyword arguments are not checked against the class: a keyword the class does not take, such as `SpendLimits(max_cost_usd=...)`, is shown as written, though the code would fail when it is imported.
 
 ## When to use `--import`
 

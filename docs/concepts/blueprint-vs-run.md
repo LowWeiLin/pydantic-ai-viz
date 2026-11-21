@@ -30,7 +30,9 @@ The same three values appear as a blueprint's `source`, a tool's `origin` and a 
 
 ### Read from the object
 
-When you pass an agent to `serve`, `record` or `blueprint` (or use `view --import`), the live object is introspected. No agent is run. The result has `source: "object"` and is as complete as introspection allows: every tool with its schemas, static instructions, the names of dynamic instruction functions, output type and schema, retry limits, capabilities.
+When you pass an agent to `serve`, `record` or `blueprint` (or use `view --import`), the live object is introspected. No agent is run. The result has `source: "object"` and is as complete as introspection allows: every tool with its schemas, static instructions, the names of dynamic instruction functions, output type and schema, retry limits, capabilities. A harness `Skills` capability lists its skills, read with `Skills.load()` from a host workspace without running a model.
+
+In a run, a call of `load_capability` is shown with the skill or capability it loaded.
 
 ### Observed: pieced together from runs
 

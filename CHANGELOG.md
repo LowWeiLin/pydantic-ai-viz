@@ -18,8 +18,21 @@ The wire format has its own version number (`pviz`, currently `1`), recorded in 
 - `BenchmarkInstructions`, `BaseDurabilityCapability` and the deprecated harness aliases `InputGuard`, `OutputGuard` and `BubblewrapSandbox` are categorised.
 - Wire format: `CapabilityInfo` gains `category`, `package`, `deferred`, `details`, `expressions`, `toolsets` and `native_tools`. The change is additive within `pviz` 1. The viewer still opens recordings made by 0.1.0, treating their capabilities as custom with nothing more known; the Python models and the JSON Schema require the new fields.
 
+- Skills are inspectable. Every skill of a harness `Skills` capability shows by name with its description, when to use it, whether the model may load it, its `SKILL.md` and its body, from a live agent (read with `Skills.load()` from host workspaces, without running a model), from source (`SKILL.md` files under literal `directories` inside the analysed folder) and in runs, where a `load_capability` call is linked to the skill or capability it loads. Skills are rows under the `Skills` capability on the canvas and have their own panel. A GitHub target keeps its `SKILL.md` files.
+- A "Pydantic AI defaults" toggle in the agent and run views. The default view shows what you wrote; the capabilities, tools, toolsets and settings Pydantic AI or the harness adds on its own are collapsed into counts, rolled up on the capability rows and lit by runs, and shown again by the toggle. The choice is remembered in the browser.
+- `SubAgents` of `pydantic-ai-harness` draws delegation edges, from live agents and from source.
+- Static analysis gives toolsets to `SubAgents`, `AskUser`, `Advisor` and `Skills(read_files=True)`, and reads the positional arguments of harness capabilities (`Skills`, `SubAgents`, `Advisor`, `CapabilityCreation`, `RepoContext`, `Peers`, `Memory`).
+- The capabilities demo bundles a second skill, `fact-check`, which its run does not load.
+- Wire format: `CapabilityInfo` gains `capability_id`, `stack` and `skills`, with the new `SkillInfo` type, and `AgentSettings` gains `defaults`. The change is additive within `pviz` 1. The viewer opens older recordings with `null`, `null`, `[]` and `[]`; the Python models and the JSON Schema require the fields.
+
 ### Fixed
 
+- The details of a live capability no longer list values the class fills in itself (the `denied_commands` of a `Shell()`, the method of an `Advisor`), and a plain `Capability(instructions=...)` shows its instructions.
+- Harness capabilities given arguments by position (`Skills("skills")`) are read from source instead of dropped.
+- The fixture generator's `Skills` is no longer marked deferred, and its `Memory` and `Planning` toolsets have no invented expression, as in real output.
+- `WebSearch` and `WebFetch` given native-only constraints (`allowed_domains`, `blocked_domains`, `max_uses`) no longer show a local toolset from source, as on a live agent.
+- Capabilities that Pydantic AI merges into one (the same literal `id=`, or a core class with a default id, such as two `WebSearch()`) are one capability from source, as on a live agent.
+- A delegation arc back to an agent above its own card is drawn behind the sub-agent card and its capabilities box instead of through them.
 - A live agent's `native_tools` no longer lists the function `CombinedCapability` puts in place of the native tool of a capability loaded on demand; it lists the tool's kind.
 - Static analysis no longer lists `pydantic_ai_slim` among the libraries it knows by name; it is not importable.
 

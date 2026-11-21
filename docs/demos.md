@@ -106,7 +106,7 @@ pydantic-ai-viz demo capabilities   # needs: pip install 'pydantic-ai-viz[demos]
 
 [Open the recording in the hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/?src=recordings/capabilities.pviz.jsonl)
 
-A `briefing` agent is asked to brief a reader on the Apollo 13 accident. It thinks, writes a plan, searches and reads a small archive bundled with the demo, loads a skill, saves a note to memory and answers. All of it is given to the agent as `capabilities=`:
+A `briefing` agent is asked to brief a reader on the Apollo 13 accident. It thinks, writes a plan, searches and reads a small archive bundled with the demo, loads one of two skills, saves a note to memory and answers. All of it is given to the agent as `capabilities=`:
 
 | Capability | Category | What it gives |
 |---|---|---|
@@ -114,7 +114,7 @@ A `briefing` agent is asked to brief a reader on the Apollo 13 accident. It thin
 | `Planning()` | Reasoning, planning & delegation | `write_plan` and the other planning tools |
 | `WebSearch`, `WebFetch` | Web & research | `search_archive` and `fetch_page`, local functions that read the bundled archive |
 | `MCP(url=...)` | Tools & native abilities | A provider-side MCP tool; the address is illustrative and never contacted |
-| `Skills` | Knowledge & memory | `load_capability` and the bundled `house-style` skill |
+| `Skills` | Knowledge & memory | `load_capability` and two bundled skills, `house-style` and `fact-check` |
 | `Memory` | Knowledge & memory | `write_memory` and the other memory tools, over a store that lives in memory |
 | `InputGuardrail` | Control & safety | A check on the prompt |
 | `ModelFallback` | Loop customization | A second scripted model |
@@ -123,10 +123,11 @@ What to watch for:
 
 1. **Capabilities on the canvas.** Under the agent card is a "Capabilities" box with one row per capability, in the docs' category order. Select a row for its panel.
 2. **Capabilities linked to toolsets.** A dashed line runs from a capability to the toolset it gives, for example from `WebSearch` to the `web_search` toolset. Select the toolset to see which capability gave it.
-3. **Capabilities that Pydantic AI adds to every agent** (`ToolSearch` and others) are folded away in the inspector and left off the canvas.
-4. **The same agent from source.** The [source view](https://lowweilin.github.io/pydantic-ai-viz/demo/?src=recordings/source.pviz.jsonl) shows the same capabilities read from the code. Its `Memory` and `Planning` toolsets are marked "decided at run time" and list no tools; a run lists them.
+3. **Skills you can inspect.** Two rows sit under `Skills`, one per skill. Select one for its description, when to use it and its instructions. The run loads `house-style`, not `fact-check`, so a run shows the difference between loaded and not loaded.
+4. **Pydantic AI defaults.** `ToolSearch`, the tools of `Memory` and `Planning`, the `load_capability` tool the run calls and the other parts Pydantic AI adds are collapsed into a "Pydantic AI defaults +13" button above the canvas. Press it to see them.
+5. **The same agent from source.** The [source view](https://lowweilin.github.io/pydantic-ai-viz/demo/?src=recordings/source.pviz.jsonl) shows the same capabilities read from the code. Its `Memory` and `Planning` toolsets are marked "decided at run time" and list no tools; a run lists them.
 
-The demo reads a skill bundled with the package and never writes one.
+The demo reads the skills bundled with the package and never writes one.
 
 ## Options
 

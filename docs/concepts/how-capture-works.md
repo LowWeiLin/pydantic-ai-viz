@@ -127,6 +127,10 @@ That is what the sidebar and the Usage sections of the inspector show. The usage
 
 `pydantic-graph` does not emit plain OpenTelemetry spans; it reports through Logfire only. So for graphs, pydantic-ai-viz produces the spans itself. [`run_graph`](../guides/graphs.md) drives the graph with its public `graph.iter(...)` API, opens a `graph_run` span around the whole execution and a `graph_node` span around each task, on the session's own tracer provider. From there on they travel the same pipeline as agent spans, and agent runs started inside a step nest under it as ordinary child spans.
 
+## Skills are read, not run
+
+A harness `Skills` capability reads its libraries at the start of every run, so the skills never exist on the agent object. For a blueprint, pydantic-ai-viz calls the capability's public `Skills.load()` on a host workspace, which reads the `SKILL.md` files without starting a model and writes nothing. In a run, the call of `load_capability` that loads a skill is linked to it: the viewer matches the `id` argument to the skill (or to a capability loaded on demand) by name. With `include_content=false` the arguments are not recorded, so nothing is linked.
+
 ## Token streaming takes a side channel
 
 Spans never contain single tokens. With `stream=True`, an event listener registered through `agent.on_event(...)` receives Pydantic AI's part-start and part-delta events and appends `stream.delta` events to the log. Each delta is tied to the model request that is currently open for that agent run, so the text lands on the right span. The price of this side channel is described in [Token streaming](../guides/token-streaming.md).
