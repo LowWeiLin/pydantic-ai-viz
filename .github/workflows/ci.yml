@@ -72,7 +72,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3
-      - run: uv sync
+      # Not uv sync: the lock file resolves every group together, and the harness group pins one
+      # pydantic-ai-slim, which would hold the floor up. Without that group the floor is tested.
+      - run: uv venv
+      - run: uv pip install -e . --group dev
       - name: Show resolved versions
         run: uv pip list | grep -i -E "^(pydantic|opentelemetry)"
       - run: uv run --no-sync pytest -q
@@ -85,7 +88,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3
-      - run: uv sync --upgrade-package pydantic-ai-slim
+      # The harness group pins pydantic-ai-slim to the version it was released with, and the lock file
+      # resolves every group together, so pydantic-ai-slim is upgraded outside the lock without that group.
+      - run: uv sync --no-group harness
+      - run: uv pip install --upgrade-package pydantic-ai-slim pydantic-ai-slim
       - name: Show resolved versions
         run: uv pip list | grep -i -E "^(pydantic|opentelemetry)"
       - run: uv run --no-sync pytest -q
@@ -119,6 +125,10 @@ jobs:
       - run: pnpm --dir web lint
       - run: pnpm --dir web typecheck
       - run: pnpm --dir web test
+      - name: The fixtures match their generator
+        run: |
+          pnpm --dir web fixtures
+          git diff --exit-code web/fixtures
       - run: pnpm --dir web build
       - uses: actions/upload-artifact@v7
         with:
@@ -205,3 +215,11 @@ jobs:
             pydantic-ai-viz demo support --speed 0 --record out.pviz.jsonl --export out.html
           uv run --no-project python -c "import json; e = json.loads(open('out.pviz.jsonl', encoding='utf-8').readline()); assert e['type'] == 'session.started' and e['pviz'] == 1, e"
           test "$(wc -c < out.html)" -gt 100000
+      - name: Install the wheel with the demos extra and record the capabilities demo
+        # Proves the extra brings everything that demo imports; the dev environment has more than the extra.
+        run: |
+          wheel="$(ls "$GITHUB_WORKSPACE"/dist/pydantic_ai_viz-*.whl)"
+          mkdir "$RUNNER_TEMP/smoke-demos" && cd "$RUNNER_TEMP/smoke-demos"
+          uv run --no-project --isolated --with "pydantic-ai-viz[demos] @ file://$wheel" \
+            pydantic-ai-viz demo capabilities --speed 0 --record caps.pviz.jsonl
+          test -s caps.pviz.jsonl

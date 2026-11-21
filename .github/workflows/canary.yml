@@ -28,8 +28,12 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3
 
+      # The harness group pins pydantic-ai-slim to the version it was released with, and the lock file
+      # resolves every group together, so pydantic-ai-slim is upgraded outside the lock without that group.
       - name: Upgrade pydantic-ai-slim past the lock file
-        run: uv sync --upgrade-package pydantic-ai-slim
+        run: |
+          uv sync --no-group harness
+          uv pip install --upgrade-package pydantic-ai-slim pydantic-ai-slim
 
       - name: Record the resolved version
         id: versions

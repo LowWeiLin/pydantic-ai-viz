@@ -43,6 +43,10 @@ dependencies = [
     "opentelemetry-sdk>=1.30",
 ]
 
+[project.optional-dependencies]
+# The capabilities demo uses harness capabilities; its Skills capability needs PyYAML, from the skills extra.
+demos = ["pydantic-ai-harness[skills]>=0.71"]
+
 [project.urls]
 Homepage = "https://github.com/LowWeiLin/pydantic-ai-viz"
 Documentation = "https://lowweilin.github.io/pydantic-ai-viz/"
@@ -61,12 +65,20 @@ dev = [
     "ruff>=0.9",
     "pyright>=1.1.390",
     "pre-commit>=4",
-    "pydantic-ai-harness>=0.71",
+]
+# The harness capabilities the tests build live, with the extras Coder, Researcher and Skills need to construct.
+# Left out with --no-group harness, which the lowest and latest CI jobs do: harness pins one pydantic-ai-slim.
+harness = [
+    "pydantic-ai-harness[coder,skills]>=0.71",
+    "pydantic-ai-slim[duckduckgo,web-fetch]",
 ]
 docs = [
     "mkdocs-material>=9.6,<10",
     "mkdocstrings[python]>=0.28",
 ]
+
+[tool.uv]
+default-groups = ["dev", "harness"]
 
 [tool.hatch.version]
 path = "src/pydantic_ai_viz/_version.py"
