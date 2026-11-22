@@ -1099,7 +1099,7 @@ def test_a_capability_the_author_gives_after_a_stack_is_not_one_the_stack_put_th
 
 def test_an_author_tool_output_limits_merged_into_a_researcher_is_the_authors() -> None:
     harness = pytest.importorskip("pydantic_ai_harness")
-    from pydantic_ai_harness.tool_output_limits import Band, Truncate
+    from pydantic_ai_harness.tool_output_limits import Band, LocalFileOverflowStore, Truncate
 
     bands = [Band(over=10, action=Truncate(max_chars=5))]
     for given, stack in [
@@ -1107,6 +1107,8 @@ def test_an_author_tool_output_limits_merged_into_a_researcher_is_the_authors() 
         ([harness.Researcher(), harness.ToolOutputLimits()], "Researcher"),  # states nothing the stack's does not
         ([harness.Researcher(), harness.ToolOutputLimits(strip_ansi=True)], None),
         ([harness.ToolOutputLimits(bands=bands), harness.Researcher()], None),  # merged in, at the stack's place
+        ([harness.ToolOutputLimits(store=LocalFileOverflowStore()), harness.Researcher()], None),  # another store
+        ([harness.ToolOutputLimits(strip_ansi=True), harness.Researcher()], "Researcher"),  # the stack's value wins
     ]:
         result = _agent_blueprint(Agent(TestModel(), capabilities=given))
         limits = [c for c in result.capabilities if c.name == "ToolOutputLimits"]

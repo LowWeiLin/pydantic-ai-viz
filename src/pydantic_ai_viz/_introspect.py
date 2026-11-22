@@ -601,6 +601,10 @@ def _stack_built(capability: Any, stack: str) -> bool:
     fields = _compat.HARNESS_STACK_MEMBER_FIELDS.get((stack, cls.__name__))
     if fields is None or not dataclasses.is_dataclass(capability):
         return True
+    if (stack, cls.__name__) == ("Researcher", "ToolOutputLimits"):
+        store: Any = _safe_getattr(capability, "store")
+        if store is not None and type(store).__name__ != _compat.HARNESS_WORKSPACE_STORE:
+            return False  # the stack keeps its marker only with the workspace's store
 
     def stated(c: Any) -> dict[str, Any]:
         return {f.name: getattr(c, f.name) for f in dataclasses.fields(c) if f.init and f.compare and f.name != "id"}

@@ -63,11 +63,15 @@ the agent moves a capability merged with a later one of the same id to that one'
 otherwise, and so are those after it.
 
 A capability given before the stack with the id of one it puts there is merged into the stack's own and, if the
-member's class is in ``HARNESS_STACK_MEMBER_FIELDS``, told apart by what it states; otherwise (``WebSearch``,
-``WebFetch``, ``SubAgents``, and the ``SubAgents`` that ``Coder`` and ``Researcher`` share) it reads as the stack's."""
+member's class is in ``HARNESS_STACK_MEMBER_FIELDS``, told apart by what it states that survives the merge (a value
+the stack's own overrides is lost); otherwise (``WebSearch``, ``WebFetch``, ``SubAgents``, and the ``SubAgents``
+that ``Coder`` and ``Researcher`` share) it reads as the stack's."""
 HARNESS_STACK_MEMBER_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {("Researcher", "ToolOutputLimits"): ("store",)}
 """(stack, member class) -> the fields the stack sets on that member. A member stating more than a member built
 with only these (its ``id`` aside) had a capability of the author's merged in, so it is the author's."""
+HARNESS_WORKSPACE_STORE = "WorkspaceOverflowStore"
+"""Class name of the overflow store a ``Researcher`` keeps its marker with (or none). Its ``ToolOutputLimits`` with
+another store had the author's merged in, so it is the author's."""
 
 HARNESS_SKILLS_MODULE = "pydantic_ai_harness.skills"
 """Package of the harness ``Skills`` capability, whose skills a blueprint lists."""
