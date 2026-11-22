@@ -74,11 +74,21 @@ function capabilityData(
   agent: CanvasAgent,
   index: number,
   showDefaults: boolean,
-): Pick<CapabilityNodeData, "toolsets" | "hiddenTools" | "inside" | "activity" | "default"> {
+): Pick<
+  CapabilityNodeData,
+  "toolsets" | "hiddenTools" | "inside" | "activity" | "events" | "default"
+> {
   const { blueprint } = agent;
   const capability = blueprint.capabilities[index];
   if (!capability)
-    return { toolsets: [], hiddenTools: null, inside: 0, activity: null, default: false };
+    return {
+      toolsets: [],
+      hiddenTools: null,
+      inside: 0,
+      activity: null,
+      events: 0,
+      default: false,
+    };
   const library = showDefaults ? new Set<string>() : libraryToolsets(blueprint);
   // A stack's members follow its entry, which stands for them and the toolsets they give.
   const after = blueprint.capabilities.slice(index + 1);
@@ -111,6 +121,8 @@ function capabilityData(
       loaded !== null || hidden.length > 0
         ? mergedActivity([...(loaded ? [loaded] : []), ...tools])
         : null,
+    events:
+      capability.capability_id === null ? 0 : (agent.events[capability.capability_id]?.calls ?? 0),
     default: showDefaults && defaultCapability(capability),
   };
 }

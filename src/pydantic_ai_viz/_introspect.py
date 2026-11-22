@@ -46,6 +46,7 @@ from pydantic_graph import Decision, EndNode, Fork, Graph, Join, StartNode, Step
 
 from . import _compat
 from ._capabilities import category_of, is_secret, package_of, without_credentials
+from ._events import CaptureEvents
 from ._models import (
     AgentBlueprint,
     AgentSettings,
@@ -531,6 +532,8 @@ def _capabilities(agent: AnyAgent, walk: _ToolsetWalk, warnings: list[str]) -> l
                 left = left[left.index(cls.__name__) + 1 :]
             else:
                 within = None  # the first capability the stack does not put there: the agent was given it otherwise
+        if isinstance(capability, CaptureEvents):
+            continue  # the viewer's own, which records events and is no part of what the agent is
         try:
             found.append(_capability(capability, walk, warnings, capabilities, within))
         except Exception as exc:

@@ -194,6 +194,12 @@ describe("reduce", () => {
     expect(call?.kind === "tool_call" && call.data.deferral).toBeNull();
   });
 
+  test("spans from a recording made before events were recorded get none", () => {
+    const { events: _events, ...old } = toolCall({ id: "t1", start: 1, end: 2, tool: "lookup" });
+    const state = stateOf([2, { type: "span.ended", span: old as unknown as Span }]);
+    expect(state.spans[sid("t1")]?.events).toEqual([]);
+  });
+
   test("reduce one at a time equals reduceAll", () => {
     const events = log(
       [1, { type: "blueprint.agent", agent: agentBlueprint({ id: "a1" }) }],

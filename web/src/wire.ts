@@ -364,6 +364,22 @@ export type SpanBase = {
   error: SpanError | null;
   /** Leftover raw OTel attributes; `{}` on span.started. */
   attributes: { [k: string]: Json };
+  /** Events `pydantic_ai_viz.CaptureEvents` recorded in this span, in order; `[]` until it ends. */
+  events: RunEvent[];
+};
+
+/** A `CapabilityEvent` or `CustomEvent` of a run. */
+export type RunEvent = {
+  /** The event's kind (`"planning.plan_updated"`); for a custom event, its name. */
+  kind: string;
+  event_kind: "capability" | "custom";
+  /** The id of the capability that emitted it, when one did. */
+  capability_id: string | null;
+  tool_call_id: string | null;
+  tool_name: string | null;
+  ts_ms: number;
+  /** The event's own fields; `null` when content is not captured. */
+  data: Json | null;
 };
 
 export type AgentRunSpan = SpanBase & { kind: "agent_run"; data: AgentRunData };

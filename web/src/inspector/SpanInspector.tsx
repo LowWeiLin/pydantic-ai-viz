@@ -9,6 +9,8 @@
  *   graph run/node Details (Inputs · Output) | Raw
  *   anything else  the raw attributes, with no tab strip
  *
+ * A span with events recorded by `CaptureEvents` has an Events tab before Raw.
+ *
  * The span is the projection at the replay position: fields that only exist once a span has
  * ended are null before that, and each part says so instead of showing a blank.
  */
@@ -547,6 +549,38 @@ function graphTabs(span: GraphRunSpan | GraphNodeSpan): TabItem[] {
   ];
 }
 
+/** The capability and custom events recorded in the span, each with who emitted it and its data. */
+function eventsTab(span: Span, view: RunView): TabItem[] {
+  if (span.events.length === 0) return [];
+  return [
+    sectionsTab(
+      "events",
+      "Events",
+      span.events.map((event, i) => ({
+        id: `event-${i}`,
+        title: event.kind,
+        aside: `+${formatDuration(Math.max(0, event.ts_ms - view.startMs))}`,
+        content: (
+          <>
+            <Facts
+              items={[
+                ["Type", event.event_kind === "custom" ? "Custom event" : "Capability event"],
+                ["Capability", orDash(event.capability_id)],
+                ["Tool", orDash(event.tool_name)],
+              ]}
+            />
+            {event.data === null ? (
+              <Note>The event's fields are content, which this session does not capture.</Note>
+            ) : (
+              <Value value={event.data} label={`data of ${event.kind}`} />
+            )}
+          </>
+        ),
+      })),
+    ),
+  ];
+}
+
 function kindTabs(span: Span, ctx: Ctx, stream: readonly StreamPart[] | undefined): TabItem[] {
   switch (span.kind) {
     case "agent_run":
@@ -603,6 +637,7 @@ export function SpanInspector({
   const status = displayStatus(span);
   const tabs = [
     ...kindTabs(span, { view, now }, view.streams[span.span_id]),
+    ...eventsTab(span, view),
     { id: "raw", label: "Raw", content: <RawAttributes span={span} view={view} /> },
   ];
   // A tool call's error is the first section of its details; every other kind shows it here.

@@ -483,6 +483,8 @@ export type CapabilityNodeData = {
    * row of their own. Null when it has neither.
    */
   activity: Activity | null;
+  /** In a run: how many events it emitted (recorded by `CaptureEvents`) up to the view's time. */
+  events: number;
   overlay: boolean;
   /** Added by Pydantic AI or a harness stack; only drawn when defaults are shown. */
   default: boolean;
@@ -569,9 +571,10 @@ function RowActivity({ activity }: { activity: Activity }) {
  */
 export function CapabilityNode({ data }: NodeProps<Node<CapabilityNodeData, "capability">>) {
   const { capability, activity, overlay } = data;
+  const emitted = overlay && data.events > 0 ? plural(data.events, "event") : null;
   const name = `${capabilityName(capability, data.toolsets, data)}${
     activity ? activityPhrase(activity, overlay) : ""
-  }`;
+  }${emitted ? `, ${emitted}` : ""}`;
   const rollup = capabilityRollup(capability, data.hiddenTools, data.inside);
   return (
     <div
@@ -605,6 +608,7 @@ export function CapabilityNode({ data }: NodeProps<Node<CapabilityNodeData, "cap
         <span className="min-w-0 shrink-[4] truncate text-faint text-meta">
           {capability.stack ? `via ${capability.stack}` : categoryNames(capability).short}
         </span>
+        {emitted && <Badge className="shrink-0">{emitted}</Badge>}
         {overlay && activity && <RowActivity activity={activity} />}
       </div>
     </div>

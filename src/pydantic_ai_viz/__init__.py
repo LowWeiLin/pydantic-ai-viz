@@ -10,12 +10,14 @@ The whole public API is importable from here:
 - `blueprint` describes a live agent or graph as data, without running it.
 - `export_html` writes a single-file HTML export.
 - `run_graph` runs a pydantic-graph `Graph` so its nodes are captured.
+- `CaptureEvents` is a capability that records an agent's capability and custom events on its runs.
 - `Session` is what `serve` and `record` return.
 - `AgentBlueprint` and `GraphBlueprint` are the models `blueprint` returns.
 - `Analysis` is what `analyze` returns; `Limits` bounds its work.
 """
 
 from ._analyze import Analysis, Limits, analyze
+from ._events import CaptureEvents
 from ._export import export_html
 from ._graph import run_graph
 from ._introspect import blueprint
@@ -27,6 +29,7 @@ from ._version import __version__
 __all__ = [
     "AgentBlueprint",
     "Analysis",
+    "CaptureEvents",
     "GraphBlueprint",
     "Limits",
     "Session",

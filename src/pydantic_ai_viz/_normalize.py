@@ -36,6 +36,7 @@ from ._models import (
     OtherPart,
     OtherSpan,
     RetryInfo,
+    RunEvent,
     SpanError,
     TextPart,
     ThinkingPart,
@@ -59,6 +60,8 @@ ATTR_GRAPH_NAME = "pydantic_ai_viz.graph.name"
 ATTR_GRAPH_NODE_ID = "pydantic_ai_viz.graph.node_id"
 ATTR_GRAPH_INPUTS = "pydantic_ai_viz.graph.inputs"
 ATTR_GRAPH_OUTPUT = "pydantic_ai_viz.graph.output"
+EVENT_NAME = "pydantic_ai_viz.event"
+"""Name of the span events ``CaptureEvents`` adds, one per capability or custom event."""
 
 # Attributes written by Pydantic AI.
 ATTR_OPERATION = "gen_ai.operation.name"
@@ -277,6 +280,27 @@ def _error(span: ReadableSpan, status: Status) -> SpanError | None:
     return None
 
 
+def _events(span: ReadableSpan) -> list[RunEvent]:
+    found: list[RunEvent] = []
+    for event in span.events:
+        details: Mapping[str, Any] = event.attributes or {}
+        kind = details.get("kind")
+        if event.name != EVENT_NAME or not isinstance(kind, str):
+            continue
+        found.append(
+            RunEvent(
+                kind=cast("str", _text(kind)),
+                event_kind="custom" if details.get("event_kind") == "custom" else "capability",
+                capability_id=_text(details.get("capability_id")),
+                tool_call_id=_text(details.get("tool_call_id")),
+                tool_name=_text(details.get("tool_name")),
+                ts_ms=_milliseconds(event.timestamp) or 0.0,
+                data=parse_jsonish(details.get("data")),
+            )
+        )
+    return found
+
+
 def _retry(attributes: _Attributes) -> RetryInfo | None:
     cause = attributes.take("pydantic_ai.tool.retry.cause")
     attempt = _int(attributes.take("pydantic_ai.tool.retry.attempt"))
@@ -385,6 +409,7 @@ def normalize(span: ReadableSpan, *, ended: bool) -> Normalized:
             "agent_name": agent_name,
             "run_id": run_id if isinstance(run_id, str) else None,
             "error": _error(span, status) if ended else None,
+            "events": _events(span) if ended else [],
             # Taken last, so every key read above has been consumed.
             "attributes": attributes.rest() if ended else {},
         }

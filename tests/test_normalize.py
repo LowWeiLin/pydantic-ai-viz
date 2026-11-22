@@ -106,6 +106,7 @@ async def test_golden_spans_v5() -> None:
                 "logfire.msg": "main run",
                 "gen_ai.agent.description": "Main demo agent",
             },
+            "events": [],
             "kind": "agent_run",
             "data": {
                 "model_name": "scripted-fn",
@@ -206,6 +207,7 @@ User is ann.\
             "run_id": "<id 3>",
             "error": None,
             "attributes": {"gen_ai.operation.name": "chat", "gen_ai.conversation.id": "<id 4>"},
+            "events": [],
             "kind": "model_request",
             "data": {
                 "model_name": "scripted-fn",
@@ -258,6 +260,7 @@ User is ann.\
                 "gen_ai.conversation.id": "<id 4>",
                 "logfire.msg": "running tool: get_weather",
             },
+            "events": [],
             "kind": "tool_call",
             "data": {
                 "tool_name": "get_weather",
@@ -290,6 +293,7 @@ User is ann.\
                 "gen_ai.conversation.id": "<id 4>",
                 "logfire.msg": "running tool: flaky",
             },
+            "events": [],
             "kind": "tool_call",
             "data": {
                 "tool_name": "flaky",
@@ -318,6 +322,7 @@ User is ann.\
                 "logfire.msg": "researcher run",
                 "gen_ai.agent.description": "Looks things up",
             },
+            "events": [],
             "kind": "agent_run",
             "data": {
                 "model_name": "test",
@@ -374,6 +379,7 @@ async def test_span_started_carries_only_what_is_known_at_start() -> None:
                 "run_id": "<id 3>",
                 "error": None,
                 "attributes": {},
+                "events": [],
                 "kind": "agent_run",
                 "data": {
                     "model_name": "scripted-fn",
@@ -397,6 +403,7 @@ async def test_span_started_carries_only_what_is_known_at_start() -> None:
                 "run_id": "<id 3>",
                 "error": None,
                 "attributes": {},
+                "events": [],
                 "kind": "model_request",
                 "data": {
                     "model_name": "scripted-fn",
@@ -421,6 +428,7 @@ async def test_span_started_carries_only_what_is_known_at_start() -> None:
                 "run_id": "<id 3>",
                 "error": None,
                 "attributes": {},
+                "events": [],
                 "kind": "tool_call",
                 "data": {
                     "tool_name": "get_weather",

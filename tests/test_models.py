@@ -101,7 +101,8 @@ def _paths(value: Any, prefix: tuple[str | int, ...] = ()) -> list[tuple[str | i
     if isinstance(value, dict):
         for key, child in value.items():
             found.append((*prefix, key))
-            if key not in free_form or prefix == ("agent",):
+            event_data = key == "data" and prefix[-2:-1] == ("events",)  # a span's own ``data`` is not
+            if (key not in free_form and not event_data) or prefix == ("agent",):
                 found.extend(_paths(child, (*prefix, key)))
     elif isinstance(value, list):
         for index, child in enumerate(value):

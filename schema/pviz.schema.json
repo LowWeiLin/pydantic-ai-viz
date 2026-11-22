@@ -311,6 +311,13 @@
             }
           ]
         },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/RunEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
         "kind": {
           "const": "agent_run",
           "title": "Kind",
@@ -379,6 +386,7 @@
         "run_id",
         "error",
         "attributes",
+        "events",
         "kind",
         "data"
       ],
@@ -1005,6 +1013,13 @@
             }
           ]
         },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/RunEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
         "kind": {
           "const": "graph_node",
           "title": "Kind",
@@ -1073,6 +1088,7 @@
         "run_id",
         "error",
         "attributes",
+        "events",
         "kind",
         "data"
       ],
@@ -1151,6 +1167,13 @@
             }
           ]
         },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/RunEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
         "kind": {
           "const": "graph_run",
           "title": "Kind",
@@ -1219,6 +1242,7 @@
         "run_id",
         "error",
         "attributes",
+        "events",
         "kind",
         "data"
       ],
@@ -1627,6 +1651,13 @@
             }
           ]
         },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/RunEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
         "kind": {
           "const": "model_request",
           "title": "Kind",
@@ -1695,6 +1726,7 @@
         "run_id",
         "error",
         "attributes",
+        "events",
         "kind",
         "data"
       ],
@@ -1766,6 +1798,13 @@
             }
           ]
         },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/RunEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
         "kind": {
           "const": "other",
           "title": "Kind",
@@ -1834,6 +1873,7 @@
         "run_id",
         "error",
         "attributes",
+        "events",
         "kind",
         "data"
       ],
@@ -1923,6 +1963,75 @@
         "max_retries"
       ],
       "title": "RetryInfo",
+      "type": "object"
+    },
+    "RunEvent": {
+      "additionalProperties": false,
+      "description": "A ``CapabilityEvent`` or ``CustomEvent`` of a run, recorded by ``pydantic_ai_viz.CaptureEvents``.",
+      "properties": {
+        "capability_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Capability Id"
+        },
+        "data": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "event_kind": {
+          "enum": [
+            "capability",
+            "custom"
+          ],
+          "title": "Event Kind",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tool Call Id"
+        },
+        "tool_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tool Name"
+        },
+        "ts_ms": {
+          "title": "Ts Ms",
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "event_kind",
+        "capability_id",
+        "tool_call_id",
+        "tool_name",
+        "ts_ms",
+        "data"
+      ],
+      "title": "RunEvent",
       "type": "object"
     },
     "SessionStarted": {
@@ -2603,6 +2712,13 @@
             }
           ]
         },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/RunEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
         "kind": {
           "const": "tool_call",
           "title": "Kind",
@@ -2671,6 +2787,7 @@
         "run_id",
         "error",
         "attributes",
+        "events",
         "kind",
         "data"
       ],

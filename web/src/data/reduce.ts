@@ -160,8 +160,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Recordings made before deferred tool calls were read lack `deferred` and `deferral`. */
-function withSpanDefaults(span: Span): Span {
+/** Recordings made before deferred tool calls were read lack `deferred` and `deferral`; before
+ * events were recorded, `events`. */
+function withSpanDefaults(raw: Span): Span {
+  const span = Array.isArray(raw.events) ? raw : { ...raw, events: [] };
   if (span.kind === "agent_run" && isObject(span.data) && !Array.isArray(span.data.deferred))
     return { ...span, data: { ...span.data, deferred: [] } };
   if (span.kind === "tool_call" && isObject(span.data) && span.data.deferral === undefined)

@@ -233,6 +233,11 @@ def _is_combined(callee: Resolved) -> bool:
     return isinstance(callee, External) and callee.comes_from("pydantic_ai", "CombinedCapability")
 
 
+def _is_capture_events(callee: Resolved) -> bool:
+    """Whether a capability is ``pydantic_ai_viz.CaptureEvents``."""
+    return isinstance(callee, External) and callee.comes_from("pydantic_ai_viz", "CaptureEvents")
+
+
 def spec_method(callee: Resolved) -> str | None:
     """``from_spec`` or ``from_file`` when a call is that class method of Pydantic AI's ``Agent``."""
     if isinstance(callee, External) and callee.last in SPEC_METHODS:
@@ -1919,7 +1924,8 @@ class _AgentBuilder:
                 )
                 continue
             found.extend(self._opened(entries, 0))
-        return found
+        # The viewer's own capability, which records events and is no part of what the agent is, as live.
+        return [entry for entry in found if not _is_capture_events(self._built(entry)[2])]
 
     def _opened(self, entries: list[Expression], depth: int) -> list[Expression]:
         """The entries with each of Pydantic AI's ``CombinedCapability([...])`` replaced by what it holds.

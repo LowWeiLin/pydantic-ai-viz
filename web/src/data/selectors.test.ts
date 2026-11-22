@@ -13,7 +13,7 @@ import {
   TRACE,
   toolCall,
 } from "../test/factory";
-import type { Event, Json, Span } from "../wire";
+import type { Event, Json, RunEvent, Span } from "../wire";
 import {
   assembleStream,
   BLUEPRINT_FILTER_FROM,
@@ -524,6 +524,52 @@ describe("blueprints and canvas models", () => {
     expect(canvasModel(state, "a1", null)?.agents[0]?.loads).toEqual({});
   });
 
+  test("events are counted by the capability that emitted them, up to the view's time", () => {
+    const event = (ts: number, capabilityId: string | null): RunEvent => ({
+      kind: "probe.ping",
+      event_kind: capabilityId === null ? "custom" : "capability",
+      capability_id: capabilityId,
+      tool_call_id: null,
+      tool_name: null,
+      ts_ms: ts,
+      data: null,
+    });
+    const root = agentRun({
+      id: "root",
+      start: 0,
+      end: 50,
+      events: [event(5, "emitter"), event(30, "emitter"), event(31, null)],
+    });
+    const tool = toolCall({
+      id: "t1",
+      parent: "root",
+      start: 10,
+      end: 20,
+      tool: "lookup",
+      events: [event(12, "audit")],
+    });
+    const state = stateOf(
+      [0, { type: "blueprint.agent", agent: agentBlueprint({ id: "a1", name: "triage" }) }],
+      ...lifecycle(root, tool),
+    );
+    const at = (t: number) => canvasModel(state, "a1", runView(state, TRACE, t))?.agents[0]?.events;
+    expect(at(LIVE)).toEqual({
+      emitter: {
+        state: "ok",
+        calls: 2,
+        retries: 0,
+        errors: 0,
+        spanIds: [sid("root"), sid("root")],
+      },
+      audit: { state: "ok", calls: 1, retries: 0, errors: 0, spanIds: [sid("t1")] },
+    });
+    // A span that has not ended at the replay position shows only the events before it.
+    expect(projectSpan(root, 10)?.events.map((e) => e.ts_ms)).toEqual([5]);
+    expect(Object.keys(at(25) ?? {})).toEqual(["emitter", "audit"]);
+    expect(at(25)?.emitter?.calls).toBe(1);
+    expect(canvasModel(state, "a1", null)?.agents[0]?.events).toEqual({});
+  });
+
   test("delegation cycles terminate and depth is capped", () => {
     const chain = ["a1", "a2", "a3", "a4", "a5"].map((id, i, ids) =>
       agentBlueprint({
@@ -629,6 +675,7 @@ describe("blueprints and canvas models", () => {
       run_id: null,
       error: null,
       attributes: {},
+      events: [],
       kind: "graph_node",
       data: { graph_id: "g1", node_id: "work", inputs: null },
     });

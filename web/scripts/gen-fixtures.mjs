@@ -107,10 +107,14 @@ class Recording {
         ...owner,
         error: null,
         attributes: {},
+        events: [],
         data: startData,
       },
     });
-    const end = (ms, { data = {}, status = "ok", error = null, attributes = {} } = {}) => {
+    const end = (
+      ms,
+      { data = {}, status = "ok", error = null, attributes = {}, events = [] } = {},
+    ) => {
       this.emit(ms, {
         type: "span.ended",
         span: {
@@ -120,6 +124,11 @@ class Recording {
           ...owner,
           error,
           attributes,
+          events: events.map((event) => ({
+            ...event,
+            ts_ms: round(this.t0 + event.ts_ms),
+            data: this.c(event.data),
+          })),
           data: startData === null ? null : { ...startData, ...data },
         },
       });
@@ -271,10 +280,14 @@ class AgentRun {
       retry: null,
       deferral: null,
     });
-    const done = (end, { result, retry = null, error = null, deferral = null } = {}) => {
+    const done = (
+      end,
+      { result, retry = null, error = null, deferral = null, events = [] } = {},
+    ) => {
       span.end(end, {
         status: error ? "error" : "ok",
         error,
+        events,
         attributes: {
           "gen_ai.operation.name": "execute_tool",
           "logfire.msg": `running tool: ${call.name}`,
@@ -307,7 +320,14 @@ class AgentRun {
 
   finish(
     end,
-    { output = null, error = null, usage = this.usage, finalResultId, deferred = [] } = {},
+    {
+      output = null,
+      error = null,
+      usage = this.usage,
+      finalResultId,
+      deferred = [],
+      events = [],
+    } = {},
   ) {
     const { rec, o } = this;
     if (finalResultId) {
@@ -323,6 +343,7 @@ class AgentRun {
       status: error ? "error" : "ok",
       error,
       attributes: { "gen_ai.operation.name": "invoke_agent", "logfire.msg": `${o.agent} run` },
+      events,
       data: {
         instructions: rec.c(o.instructions),
         output: rec.c(output),
@@ -1075,6 +1096,7 @@ function failed() {
         run_id: base.runId,
         error: null,
         attributes,
+        events: [],
         data,
       },
     });
@@ -1291,6 +1313,11 @@ function redacted() {
  * `CallDeferred`: it runs outside the agent). The run ends waiting on all three. Run 2 continues
  * the same conversation: one deletion is approved and runs, the other is denied, and the caller
  * supplies the restart's result.
+ *
+ * The agent also has an `AuditLog` capability (`capability_id` "audit") and `CaptureEvents`, so
+ * its events are on the spans: an `immediate` one from its `before_tool_execute` hook is on the
+ * tool span, and those dispatched at their stream position are on the run, as is the custom
+ * event `restart_queued` the restart tool emits (with that tool's call id).
  */
 function approvals() {
   const rec = new Recording({ title: "Ops with approvals", seed: 0x5eed0006, t0: 1795305600000 });
@@ -1304,6 +1331,24 @@ function approvals() {
       label: "ops",
       description: "Housekeeping for the build machines",
       model: offlineModel("ops_model"),
+      capabilities: [
+        ...BUILTIN_CAPABILITIES,
+        {
+          name: "AuditLog",
+          builtin: false,
+          category: "custom",
+          package: null,
+          deferred: false,
+          details: {},
+          expressions: {},
+          toolsets: [],
+          native_tools: [],
+          capability_id: "audit",
+          stack: null,
+          skills: [],
+          hooks: [],
+        },
+      ],
       instructions: [{ kind: "instructions", dynamic: false, text: instructions, function: null }],
       toolsets: [agentTools],
       tools: [
@@ -1350,8 +1395,40 @@ function approvals() {
     usage: { input_tokens: 188, output_tokens: 52 },
   });
   // `delete_file` needs approval, so its calls get no span; `restart_service` raises CallDeferred.
-  first.tool(1216.4, restart).done(1219.9, { deferral: "external" });
+  const audited = (ms, call, decision) => ({
+    kind: "audit.tool_checked",
+    event_kind: "capability",
+    capability_id: "audit",
+    tool_call_id: call.id,
+    tool_name: call.name,
+    ts_ms: ms,
+    data: { tool: call.name, decision },
+  });
+  first.tool(1216.4, restart).done(1219.9, {
+    deferral: "external",
+    events: [audited(1217.1, restart, "allowed")],
+  });
   first.finish(1224.6, {
+    events: [
+      {
+        kind: "audit.request_logged",
+        event_kind: "capability",
+        capability_id: "audit",
+        tool_call_id: null,
+        tool_name: null,
+        ts_ms: 402.9,
+        data: { request: 1 },
+      },
+      {
+        kind: "restart_queued",
+        event_kind: "custom",
+        capability_id: null,
+        tool_call_id: restart.id,
+        tool_name: restart.name,
+        ts_ms: 1220.3,
+        data: { service: "cache" },
+      },
+    ],
     output: {
       calls: [
         {
@@ -1387,7 +1464,10 @@ function approvals() {
     conversationId: first.conversationId,
     history: first.history,
   });
-  second.tool(9403.1, a).done(9411.7, { result: "deleted build/a.log" });
+  second.tool(9403.1, a).done(9411.7, {
+    result: "deleted build/a.log",
+    events: [audited(9403.6, a, "approved")],
+  });
   second.answer(b, "The tool call was denied.");
   second.answer(restart, "cache restarted");
   second.request(9413, 10021.4, {
@@ -1395,6 +1475,17 @@ function approvals() {
     usage: { input_tokens: 291, output_tokens: 24 },
   });
   second.finish(10025.2, {
+    events: [
+      {
+        kind: "audit.request_logged",
+        event_kind: "capability",
+        capability_id: "audit",
+        tool_call_id: null,
+        tool_name: null,
+        ts_ms: 9413.4,
+        data: { request: 2 },
+      },
+    ],
     output: "Deleted build/a.log. build/b.log was kept, as asked. The cache is restarted.",
   });
   return rec;

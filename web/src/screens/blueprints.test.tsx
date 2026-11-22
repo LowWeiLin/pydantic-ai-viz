@@ -1196,4 +1196,33 @@ describe("tool calls left for the caller", () => {
     });
     expect(back.getAttribute("href")).toBe(`#/runs/${first?.traceId}`);
   });
+
+  test("the events of a run are marked on its spans, listed in their panel and counted on the capability", async () => {
+    const user = userEvent.setup();
+    render(<App plan={embedded(APPROVALS)} />);
+    const [, first] = runs(useViewer.getState().data);
+    await openRun(first?.traceId, "ops");
+    await user.click(await screen.findByRole("button", { name: "Skip to end" }));
+    const tree = within(screen.getByRole("tree"));
+    expect(tree.getByRole("img", { name: "Event audit.tool_checked from audit" })).toHaveAttribute(
+      "title",
+      "audit.tool_checked from audit",
+    );
+    expect(tree.getByRole("img", { name: "Event restart_queued" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Capability AuditLog, .*, 2 events$/ }),
+    ).toBeInTheDocument();
+
+    const row = tree
+      .getAllByRole("treeitem")
+      .find((item) => item.getAttribute("data-span") === first?.rootSpanId);
+    if (!row) throw new Error("expected the run's row");
+    await user.click(row);
+    await user.click(within(spanDetails()).getByRole("tab", { name: "Events" }));
+    const panel = within(spanDetails());
+    expect(panel.getByText("audit.request_logged")).toBeInTheDocument();
+    expect(panel.getByText("restart_queued")).toBeInTheDocument();
+    expect(panel.getByText("Custom event")).toBeInTheDocument();
+    expect(panel.getAllByText("restart_service").length).toBeGreaterThan(0);
+  });
 });

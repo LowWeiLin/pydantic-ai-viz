@@ -430,6 +430,21 @@ class GraphNodeData(WireModel):
     inputs: JsonValue
 
 
+class RunEvent(WireModel):
+    """A ``CapabilityEvent`` or ``CustomEvent`` of a run, recorded by ``pydantic_ai_viz.CaptureEvents``."""
+
+    kind: str
+    """The event's kind (``"planning.plan_updated"``); for a custom event, its name."""
+    event_kind: Literal["capability", "custom"]
+    capability_id: str | None
+    """The id of the capability that emitted it, when one did."""
+    tool_call_id: str | None
+    tool_name: str | None
+    ts_ms: float
+    data: JsonValue
+    """The event's own fields; ``None`` when content is not captured."""
+
+
 class SpanBase(WireModel):
     trace_id: TraceId
     span_id: SpanId
@@ -442,6 +457,8 @@ class SpanBase(WireModel):
     run_id: str | None
     error: SpanError | None
     attributes: dict[str, JsonValue]
+    events: list[RunEvent]
+    """The events recorded in this span, in order; ``[]`` until it ends."""
 
 
 class AgentRunSpan(SpanBase):

@@ -48,7 +48,13 @@ export function displayStatus(span: Span): DisplayStatus {
 export function projectSpan(span: Span, t: number): Span | null {
   if (span.start_ms > t) return null;
   if (span.end_ms !== null && span.end_ms <= t) return span;
-  const running = { end_ms: null, status: "running" as const, error: null, attributes: {} };
+  const running = {
+    end_ms: null,
+    status: "running" as const,
+    error: null,
+    attributes: {},
+    events: span.events.filter((event) => event.ts_ms <= t),
+  };
   switch (span.kind) {
     case "agent_run":
       return {
@@ -647,6 +653,11 @@ export type CanvasAgent = {
    * `capability_id`. Without content capture the arguments are not known, so there are none.
    */
   loads: Record<string, Activity>;
+  /**
+   * Capability events of its runs by the `capability_id` that emitted them: `calls` counts the
+   * events, `spanIds` the spans they are on.
+   */
+  events: Record<string, Activity>;
   /** Lit once a run of this agent has ended ok. */
   outputReady: boolean;
 };
@@ -739,6 +750,7 @@ export function canvasModel(
     const model = idle();
     const byTool = new Map<string, Activity>();
     const loads: Record<string, Activity> = {};
+    const events: Record<string, Activity> = {};
     let outputReady = false;
     if (blueprint.name !== null) {
       const called = new Set(
@@ -746,6 +758,14 @@ export function canvasModel(
       );
       for (const span of viewSpans) {
         if (span.agent_name !== blueprint.name) continue;
+        for (const event of span.events) {
+          if (event.capability_id === null) continue;
+          const emitted = events[event.capability_id] ?? idle();
+          events[event.capability_id] = emitted;
+          emitted.calls += 1;
+          emitted.spanIds.push(span.span_id);
+          emitted.state = "ok";
+        }
         if (span.kind === "agent_run") {
           touch(run, span);
           if (span.status === "ok") outputReady = true;
@@ -813,6 +833,7 @@ export function canvasModel(
       toolsets: [...groups.values()],
       unlisted,
       loads,
+      events,
       outputReady,
     };
   });

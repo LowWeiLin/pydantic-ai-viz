@@ -306,6 +306,18 @@ type SpanBase = {
   run_id: string | null;       // Pydantic AI's run id of the owning agent run
   error: { type: string; message: string | null; stacktrace: string | null } | null;
   attributes: { [k: string]: Json };  // leftover raw OpenTelemetry attributes; {} on span.started
+  events: RunEvent[];          // events recorded by CaptureEvents in this span; [] on span.started
+};
+
+// A CapabilityEvent or CustomEvent of the run, recorded by pydantic_ai_viz.CaptureEvents.
+type RunEvent = {
+  kind: string;                // "planning.plan_updated"; a custom event's name
+  event_kind: "capability" | "custom";
+  capability_id: string | null; // the id of the capability that emitted it
+  tool_call_id: string | null;
+  tool_name: string | null;
+  ts_ms: number;
+  data: Json | null;           // the event's own fields; null without content capture
 };
 
 type Span = SpanBase & (
@@ -372,6 +384,7 @@ type Part =
 - **Token totals.** A run's total is the sum of `usage` over the `model_request` spans of the trace. Do not add `agent_run` usages together; see [why](../concepts/how-capture-works.md#why-token-totals-come-from-model-requests).
 - **Waiting for the caller.** An `agent_run` with a non-empty `deferred` ended without running those tool calls: its output was `DeferredToolRequests`. A call to a tool that needs approval (`requires_approval=True`) has no span. A tool that raised `ApprovalRequired` or `CallDeferred` has an `ok` span with `deferral` set and no result. The run that resumes it (with `message_history` and `deferred_tool_results`) has the same `conversation_id`: an approved call runs there as a `tool_call` with the same `call_id`, and a denied call or a result the caller supplied is only a `tool_result` part in its first model request's input.
 - **Output tools.** A call to an output tool such as `final_result` has no span. It appears in `messages` only. An `agent_run` that ends with `status: "ok"` produced its output.
+- **Events.** `events` is only filled when the agent has the `CaptureEvents` capability: Pydantic AI does not record capability or custom events in its telemetry. An event is on the span that was current when it was dispatched: the agent run, or the tool span for an `immediate` event emitted in a tool. An event emitted in a tool at its stream position is dispatched after the tool returns, so it is on the agent run, with the tool's `tool_call_id`. Events reach a reader with `span.ended` of their span.
 - **Delegation.** An `agent_run` whose parent is a `tool_call` is a delegated run, started by that tool.
 - **Graph nesting.** An `agent_run` started inside a graph step has that `graph_node` as its parent, except in a parallel batch, where its parent is the `graph_run`.
 
@@ -411,6 +424,7 @@ Spans are produced by Pydantic AI as OpenTelemetry spans and converted to the sh
 | `ToolCallData.call_id`, `arguments`, `result` | `gen_ai.tool.call.id`, `.arguments`, `.result` |
 | `ToolCallData.retry` | `pydantic_ai.tool.retry.cause`, `.attempt`, `.max_retries` |
 | `ToolCallData.deferral` | `pydantic_ai.tool.deferral.name`: `ApprovalRequired` gives `approval`, `CallDeferred` gives `external` |
+| `events` | the span's `pydantic_ai_viz.event` events, added by `CaptureEvents`: their `kind`, `event_kind`, `capability_id`, `tool_call_id`, `tool_name` and `data` (a JSON string) attributes, and their timestamp |
 | `error` | the span's `exception` event (`exception.type`, `.message`, `.stacktrace`) |
 | `GraphRunData`, `GraphNodeData` | `pydantic_ai_viz.graph.id`, `.name`, `.node_id`, `.inputs`, `.output` |
 
@@ -455,7 +469,7 @@ A tool call that asks for a retry. At start, the arguments are known:
     "kind": "tool_call", "name": "get_order",
     "start_ms": 1795046401805.0, "end_ms": null, "status": "running",
     "agent_name": "triage", "run_id": "01a1ec72-21e1-753d-baa9-89ecf9dfa6b4",
-    "error": null, "attributes": {},
+    "error": null, "attributes": {}, "events": [],
     "data": {
       "tool_name": "get_order", "call_id": "call_1",
       "arguments": {"order_id": "1042"}, "result": null, "retry": null, "deferral": null
@@ -482,6 +496,12 @@ At end, the same span carries its result, the error and the retry information:
       "stacktrace": "Traceback ..."
     },
     "attributes": {"gen_ai.operation.name": "execute_tool", "logfire.msg": "running tool: get_order"},
+    "events": [
+      {
+        "kind": "orders.lookup", "event_kind": "capability", "capability_id": "orders",
+        "tool_call_id": "call_1", "tool_name": "get_order", "ts_ms": 1795046401950.0, "data": {"found": true}
+      }
+    ],
     "data": {
       "tool_name": "get_order", "call_id": "call_1",
       "arguments": {"order_id": "1042"},

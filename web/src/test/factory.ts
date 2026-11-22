@@ -16,6 +16,7 @@ import type {
   Json,
   Message,
   ModelRequestSpan,
+  RunEvent,
   SessionStarted,
   Skill,
   Span,
@@ -39,6 +40,7 @@ type Common = {
   status?: Span["status"];
   agent?: string | null;
   error?: Span["error"];
+  events?: RunEvent[];
 };
 
 function base(c: Common, name: string) {
@@ -55,6 +57,7 @@ function base(c: Common, name: string) {
     run_id: null,
     error: c.error ?? null,
     attributes: (end === null ? {} : { "gen_ai.operation.name": "x" }) as Record<string, Json>,
+    events: end === null ? [] : (c.events ?? []),
   };
 }
 

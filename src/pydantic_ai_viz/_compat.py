@@ -142,6 +142,18 @@ BUILTIN_CAPABILITIES = frozenset({"ToolSearch", "PendingMessageDrainCapability",
 OFFLINE_PROVIDERS = frozenset({"test", "function"})
 """Model providers that never touch the network."""
 
+
+def _event_classes() -> tuple[type, ...]:
+    try:
+        from pydantic_ai import CapabilityEvent, CustomEvent
+    except ImportError:
+        return ()
+    return (CapabilityEvent, CustomEvent)
+
+
+EVENT_CLASSES: tuple[type, ...] = _event_classes()
+"""``CapabilityEvent`` and ``CustomEvent``, which ``CaptureEvents`` records; ``()`` on a release without them."""
+
 _MISSING: Any = object()
 
 

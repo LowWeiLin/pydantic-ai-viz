@@ -334,6 +334,10 @@ def test_a_harness_stack_leaves_its_marker_among_the_agents_capabilities() -> No
         assert plain == [i for i, owner in _compat.HARNESS_STACK_HELPER_IDS.items() if owner == stack]
 
 
+def test_the_event_classes_capture_events_records_exist() -> None:
+    assert [cls.__name__ for cls in _compat.EVENT_CLASSES] == ["CapabilityEvent", "CustomEvent"]
+
+
 def test_pydantic_ai_version_is_reported() -> None:
     assert _compat.pydantic_ai_version().split(".")[0] == "2"
 
