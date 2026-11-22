@@ -123,9 +123,8 @@ If you raise or lower the floor in `pyproject.toml`, run the suite against the n
 ### Docs
 
 ```bash
-uv sync --group docs
-uv run mkdocs build --strict
-uv run mkdocs serve   # live preview at http://127.0.0.1:8000
+uv run --group docs mkdocs build --strict
+uv run --group docs mkdocs serve   # live preview at http://127.0.0.1:8000
 ```
 
 ## Regenerating generated files
