@@ -128,7 +128,7 @@ Hooks
 
 Approvals and sub-agents
 
-:   A tool given `requires_approval=True` carries a "needs approval" tag with a lock, and one whose result the caller supplies says "runs outside". A harness `SubAgents` capability draws a delegation edge from the agent's card to each sub-agent it lists, labelled with its tool, `delegate_task` by default. An agent wrapped in `TemporalAgent`, `DBOSAgent` or `PrefectAgent` has a chip that names the runtime.
+:   A tool given `requires_approval=True` carries an "approval" tag with a lock, and one whose result the caller supplies says "runs outside"; in a run only their icons stay, to leave the name room next to the call count. A harness `SubAgents` capability draws a delegation edge from the agent's card to each sub-agent it lists, labelled with its tool, `delegate_task` by default. An agent wrapped in `TemporalAgent`, `DBOSAgent` or `PrefectAgent` has a chip that names the runtime.
 
     ![The oncall agent of the operations demo: its restart_service tool tagged needs approval, the Hooks capability with its two hook rows, and a delegation edge to the log_reader agent](../assets/screenshots/operations-dark.png#only-dark)
     ![The oncall agent of the operations demo: its restart_service tool tagged needs approval, the Hooks capability with its two hook rows, and a delegation edge to the log_reader agent](../assets/screenshots/operations-light.png#only-light)

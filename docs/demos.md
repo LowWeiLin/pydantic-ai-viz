@@ -154,7 +154,7 @@ What to watch for:
 
 1. **Delegation through a capability.** `SubAgents` gives the agent a `delegate_task` tool, and the canvas draws an edge from `oncall` to `log_reader` before any run. In the run, the `log_reader` run is nested under the `delegate_task` call.
 2. **Hooks.** Under the `Hooks` row are its two hooks: `before_tool_execute`, which guards `restart_service` only, and `after_model_request`. Select the row for its panel, which lists them in the order they run.
-3. **A tool that needs approval.** `restart_service` has a "needs approval" tag. The first run calls it twice and ends "waiting for approval: 2 calls"; the tool's node shows it is waiting, and the run's **Output** tab lists the calls under **Waiting for**.
+3. **A tool that needs approval.** `restart_service` has an "approval" tag. The first run calls it twice and ends "waiting for approval: 2 calls"; the tool's node shows it is waiting, and the run's **Output** tab lists the calls under **Waiting for**.
 4. **The run that resumes it.** The second run is linked to the first: "resumes oncall ...: 1 approved, 1 denied". The approved restart runs there as an ordinary tool call; the denied one is only a tool result in its conversation, with the engineer's reason.
 5. **An event.** `Pager` emits an `oncall.paged` event when the alert comes in, and `CaptureEvents` records it: a diamond on the run's bar, a row in the run's **Events** tab, and "1 event" on the `Pager` row. `SubAgents` emits events of its own around the delegation, shown the same way.
 6. **The output validator.** In the agent's panel, the Output section lists `check_report` under **Validated by**. It checks that the report has a cause and an action.

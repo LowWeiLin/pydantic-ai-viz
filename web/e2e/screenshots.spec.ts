@@ -230,7 +230,7 @@ for (const scheme of ["dark", "light"] as const) {
   test.describe(`operations, ${scheme}`, () => {
     test.use({ colorScheme: scheme });
     // An agent that delegates through SubAgents, is watched by hooks and has a tool that needs
-    // approval: the delegation edge, the hook rows and the "needs approval" tag on one canvas.
+    // approval: the delegation edge, the hook rows and the "approval" tag on one canvas.
     test(`operations-${scheme}.png`, async ({ page }) => {
       await page.goto(operationsAgent(operations()));
       await expect(

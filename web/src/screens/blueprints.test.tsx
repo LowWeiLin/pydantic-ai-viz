@@ -1196,6 +1196,14 @@ describe("tool calls left for the caller", () => {
       screen.getByRole("button", { name: "Tool page_oncall, runs outside the agent" }),
     );
     expect(within(details).getByText("the caller supplies the result")).toBeInTheDocument();
+    // The tags are whole on a blueprint; a run, whose counts and state need the room, keeps their icons.
+    expect(screen.getByText("approval")).toBeInTheDocument();
+    expect(screen.getByText("runs outside")).toBeInTheDocument();
+    const [, first] = runs(useViewer.getState().data);
+    await openRun(first?.traceId, "ops");
+    await screen.findByRole("button", { name: /^Tool delete_file, needs approval/ });
+    expect(screen.queryByText("approval")).toBeNull();
+    expect(screen.queryByText("runs outside")).toBeNull();
   });
 
   test("a run that ended waiting lists its calls, and the run that resumes it says what became of them", async () => {

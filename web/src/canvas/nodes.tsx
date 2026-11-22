@@ -346,7 +346,7 @@ export type ToolNodeData = {
 
 /** How a tool is called when it is not simply called: words for its accessible name, and a tag. */
 const CALL_KINDS: Partial<Record<Tool["kind"], { words: string; tag: string; icon: IconName }>> = {
-  unapproved: { words: "needs approval", tag: "needs approval", icon: "lock" },
+  unapproved: { words: "needs approval", tag: "approval", icon: "lock" },
   external: { words: "runs outside the agent", tag: "runs outside", icon: "output" },
 };
 
@@ -375,11 +375,11 @@ export function ToolNode({ data }: NodeProps<Node<ToolNodeData, "tool">>) {
           className="min-w-0 flex-auto font-mono text-data text-fg"
         />
         {data.default && <DefaultTag />}
-        {/* The tag takes only the room the name leaves, down to its icon. */}
+        {/* The tag is whole, or in a run, whose counts and state need the room, only its icon. */}
         {callKind && (
-          <span className="flex min-w-3 flex-1 items-center justify-end gap-0.5 overflow-hidden text-faint text-meta">
-            <Icon name={callKind.icon} size={12} className="shrink-0" />
-            <span className="truncate">{callKind.tag}</span>
+          <span className="inline-flex shrink-0 items-center gap-0.5 text-faint text-meta">
+            <Icon name={callKind.icon} size={12} />
+            {!overlay && callKind.tag}
           </span>
         )}
         {overlay && activity.retries > 0 && (
