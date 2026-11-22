@@ -6,6 +6,7 @@ import json
 import os
 import threading
 import types
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ from pydantic_ai import (
     ToolDenied,
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import ExternalToolset
@@ -730,3 +731,24 @@ def test_without_content_a_call_to_an_external_tool_waits_for_its_result() -> No
         agent.run_sync("go")
     (run,) = [e["span"] for e in session.events if e["type"] == "span.ended" and e["span"]["kind"] == "agent_run"]
     assert run["data"]["deferred"] == [{"call_id": "e1", "tool_name": "page", "kind": "external"}]
+
+
+def test_without_content_a_streamed_run_that_ends_on_text_waits_for_nothing() -> None:
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        yield "hello "
+        yield {0: DeltaToolCall(name="t", tool_call_id="t1")}
+
+    agent = Agent(FunctionModel(stream_function=stream), name="talker")
+
+    @agent.tool_plain
+    def t() -> str:  # pyright: ignore[reportUnusedFunction]
+        return "ran"
+
+    async def main() -> str:
+        async with agent.run_stream("hi") as result:
+            return await result.get_output()
+
+    with record(agent, include_content=False) as session:
+        assert asyncio.run(main()) == "hello "
+    (run,) = [e["span"] for e in session.events if e["type"] == "span.ended" and e["span"]["kind"] == "agent_run"]
+    assert run["data"]["deferred"] == []

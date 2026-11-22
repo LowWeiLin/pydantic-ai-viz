@@ -250,6 +250,8 @@ def test_output_validators_read_from_source_match_the_live_agent(tmp_path: Path)
             @checked.output_validator
             async def short(ctx, output: str) -> str:
                 return output
+
+            checked.output_validator(lambda output: output)
             """
         ),
         encoding="utf-8",
@@ -257,9 +259,10 @@ def test_output_validators_read_from_source_match_the_live_agent(tmp_path: Path)
     live = live_agents(path)
     static = {b.label: b for b in analyze(path).agents}
     # The live module is loaded under another name than the file's, so only the function's own name is compared.
-    for name, expected in (("checked", ["not_empty", "short"]), ("plain", [])):
+    for name, expected in (("checked", ["not_empty", "short", "<lambda>"]), ("plain", [])):
         for found in (static[name], live[name]):
             assert [v.rsplit(".", 1)[-1] for v in found.output.validators] == expected, name
+    assert static["checked"].output.validators[-1] == "checked.<lambda>"
 
 
 def test_the_graph_read_from_source_matches_the_live_graph() -> None:

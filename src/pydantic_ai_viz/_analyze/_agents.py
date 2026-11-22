@@ -188,6 +188,14 @@ def _inside(scope: Scope, outer: Scope) -> bool:
     return False
 
 
+def _lambda_name(scope: Scope) -> str:
+    """``module.qualname`` of a lambda written in ``scope``, as ``__qualname__`` gives it live."""
+    inside = (
+        f"{scope.qualname}.<locals>." if scope.kind == "function" else f"{scope.qualname}." if scope.qualname else ""
+    )
+    return f"{scope.module.name}.{inside}<lambda>"
+
+
 def _output_mode(kinds: list[str]) -> str:
     """The output mode Pydantic AI picks for outputs of these kinds, by the rule it builds its output schema with.
 
@@ -813,6 +821,10 @@ class AgentExtractor:
                     receiver.tools.append(spec)
                 elif spec is None:
                     self._unread(receiver, call, scope)
+                return
+            if method.attr == "output_validator" and isinstance(call.args[0], ast.Lambda):
+                if isinstance(receiver, _AgentSite):
+                    receiver.output_validators.append(_lambda_name(scope))
                 return
             target = self.resolver.resolve(call.args[0], scope, line)
             if not isinstance(target, Definition) or isinstance(target.node, ast.ClassDef):
@@ -2269,10 +2281,11 @@ class _AgentBuilder:
             if len(sites) != 1:
                 return None
             shown: dict[str, Any] = {}
-            site = sites[0].site
-            named = next((keyword.value for keyword in site.node.keywords if keyword.arg == "name"), None)
+            # Read as the sub-agent's own blueprint reads it: from the call, a ``**dict`` or its spec.
+            sub_agent = _AgentBuilder(self.extractor, sites[0], self.ids)
+            named = sub_agent.arguments.get("name")
             if named is not None and not (isinstance(named, ast.Constant) and named.value is None):
-                name = string(self.resolver, named, site.scope, site.node.lineno)
+                name = string(self.resolver, named, *sub_agent.where(named))
                 if name is None:
                     return None
                 shown["agent"] = name

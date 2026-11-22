@@ -295,7 +295,9 @@ A capability that puts the agent's `CapabilityEvent`s and `CustomEvent`s on its 
 agent = Agent("openai:gpt-5.2", capabilities=[Pager(), pviz.CaptureEvents()])
 ```
 
-Each event is recorded on the span that is current when it is dispatched (the agent run, or a tool for an `immediate` event emitted while the tool runs) and reaches the viewer when that span ends. Its kind, capability id and tool are always kept; its own fields only when the run's instrumentation includes content. It changes nothing else about the agent, never raises, and is left out of the agent's blueprint, live and from source. It needs a Pydantic AI release with capability events; see [Compatibility](compatibility.md).
+Each event is recorded on the span that is current when it is dispatched (the agent run, or a tool for an `immediate` event emitted while the tool runs) and reaches the viewer when that span ends. Its kind, capability id and tool are always kept; its own fields only when the run's instrumentation includes content. It never raises and is left out of the agent's blueprint, live and from source. It needs a Pydantic AI release with capability events; see [Compatibility](compatibility.md).
+
+Like `stream=True`, it switches the agent's model requests to streaming, because Pydantic AI drains a run as a stream whenever a capability listens to events. The model must support streaming: a `FunctionModel` without a `stream_function` fails. See [Token streaming](../guides/token-streaming.md#why-it-works-this-way).
 
 ## AgentBlueprint { #agentblueprint }
 

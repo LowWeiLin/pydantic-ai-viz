@@ -420,7 +420,7 @@ Spans are produced by Pydantic AI as OpenTelemetry spans and converted to the sh
 | `AgentRunData.output` | `final_result` |
 | `AgentRunData.usage` | `gen_ai.aggregated_usage.input_tokens`, `.output_tokens` |
 | `AgentRunData.messages` | `pydantic_ai.all_messages` |
-| `AgentRunData.deferred` | the `calls` (`external`) and `approvals` (`approval`) of a `DeferredToolRequests` in `final_result`, names and ids only. Without content capture there is no `final_result`: the tool calls of the last model response that no tool result answers, `external` when their span raised `CallDeferred` or their tool is external, else `approval` |
+| `AgentRunData.deferred` | the `calls` (`external`) and `approvals` (`approval`) of a `DeferredToolRequests` in `final_result`, names and ids only. Without content capture there is no `final_result`: the tool calls of the last model response that no tool result answers, `external` when their span raised `CallDeferred` or their tool is external, else `approval`; a call to a plain function or output tool that no span deferred is left out (a streamed run that ended on text) |
 | `instructions` (agent run and model request) | `gen_ai.system_instructions`, a JSON list whose `content` values are joined with a blank line |
 | `ModelRequestData.model_name` | `gen_ai.request.model`, else the span name |
 | `ModelRequestData.provider` | `gen_ai.provider.name`, else `gen_ai.system` |

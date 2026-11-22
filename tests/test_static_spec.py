@@ -227,6 +227,31 @@ def test_an_agent_from_a_spec_file_reads_as_the_live_agent(tmp_path: Path, monke
     assert found.settings.model_dump(exclude=ignored) == expected.settings.model_dump(exclude=ignored)
 
 
+def test_a_sub_agent_made_from_a_spec_file_is_named_as_the_live_agent_names_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("pydantic_ai_harness")
+    write_spec(tmp_path, {"model": "test", "name": "writer"})
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "app.py"
+    path.write_text(
+        "\n".join(
+            [
+                "from pydantic_ai import Agent",
+                "from pydantic_ai_harness import SubAgent, SubAgents",
+                'helper = Agent("test", name="helper")',
+                'writer = Agent.from_file("agent.json")',
+                'subs = SubAgents(agents=[SubAgent(helper, name="h"), SubAgent(writer)])',
+                'boss = Agent("test", name="boss", capabilities=[subs])',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    expected = [c.details for c in live_agents(path)["boss"].capabilities if c.name == "SubAgents"]
+    found = [c.details for c in {b.label: b for b in analyze(path).agents}["boss"].capabilities]
+    assert found == expected == [{"agents": [{"agent": "helper", "name": "h"}, {"agent": "writer"}]}]
+
+
 def test_a_spec_file_given_as_the_target_is_read_as_its_agent(tmp_path: Path) -> None:
     path = write_spec(tmp_path)
     (tmp_path / "other.json").write_text('{"items": [1, 2]}', encoding="utf-8")

@@ -6,11 +6,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import ModelResponse, PartStartEvent, TextPart
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -200,3 +203,17 @@ def test_capture_events_is_no_part_of_the_blueprint_live_or_from_source(tmp_path
     )
     analysis = analyze(tmp_path)
     assert [(b.name, b.capabilities, b.warnings) for b in analysis.agents] == [("one", [], []), ("two", [], [])]
+
+
+def test_it_listens_only_to_capability_and_custom_events() -> None:
+    capture = CaptureEvents()
+    assert capture.listens_to(Ping(n=1))
+    assert capture.listens_to(Progress(done=1))
+    assert not capture.listens_to(PartStartEvent(index=0, part=TextPart("x")))
+
+
+def test_it_makes_runs_stream_so_a_model_that_cannot_stream_fails() -> None:
+    model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart("x")]))
+    assert Agent(model).run_sync("hi").output == "x"
+    with pytest.raises(AssertionError, match="stream_function"):
+        Agent(model, capabilities=[CaptureEvents()]).run_sync("hi")

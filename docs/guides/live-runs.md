@@ -104,7 +104,7 @@ A run that calls a tool needing approval, or a tool that raises `ApprovalRequire
   ![The first run of the operations demo, ended waiting for approval of two restart_service calls, with the run that resumes it in the sidebar](../assets/screenshots/approvals.png)
 </figure>
 
-Capability and custom events are not in Pydantic AI's telemetry. Add [`CaptureEvents`](../reference/python-api.md#captureevents) to the agent's capabilities to see them: each is a diamond on its span's bar in the timeline and a row in the span's **Events** tab, and the capability that emitted it counts its events on the canvas. An event shows up when its span ends.
+Capability and custom events are not in Pydantic AI's telemetry. Add [`CaptureEvents`](../reference/python-api.md#captureevents) to the agent's capabilities to see them: each is a diamond on its span's bar in the timeline and a row in the span's **Events** tab, and the capability that emitted it counts its events on the canvas. An event shows up when its span ends. Like [token streaming](token-streaming.md#why-it-works-this-way), `CaptureEvents` makes the agent's model requests stream, so the model must support streaming.
 
 Hooks have no mark on a run: Pydantic AI records nothing when a hook changes or blocks something.
 

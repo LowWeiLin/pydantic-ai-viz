@@ -31,9 +31,16 @@ class CaptureEvents(AbstractCapability[Any]):
     Add it to the agent: `Agent(..., capabilities=[CaptureEvents()])`. Each `CapabilityEvent` and
     `CustomEvent` of a run is recorded on the span that is current when it is dispatched: the run's,
     or a tool's for an `immediate` event emitted while the tool runs. Their fields are content: they
-    are only recorded when the run's instrumentation includes content.
-    It changes nothing else about the agent and is left out of its blueprint.
+    are only recorded when the run's instrumentation includes content. It is left out of the
+    agent's blueprint.
+
+    Pydantic AI drains a run as a stream whenever a capability listens to events, so with it
+    `run` and `run_sync` make streamed model requests, as `stream=True` would: the model must
+    support streaming (a `FunctionModel` needs a `stream_function`).
     """
+
+    def listens_to(self, event: Any) -> bool:
+        return isinstance(event, _compat.EVENT_CLASSES)
 
     async def on_event(self, ctx: Any, *, event: Any) -> None:
         with contextlib.suppress(Exception):  # the run must not notice the viewer

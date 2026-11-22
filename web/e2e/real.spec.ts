@@ -330,6 +330,36 @@ test.describe("real demo recordings", () => {
     expect(errors).toEqual([]);
   });
 
+  test("operations: the hook rows and the SubAgents panel can be read", async ({ page }) => {
+    const errors = trackErrors(page);
+    const recording = load("operations");
+    const agent = briefing(recording);
+    await page.goto(src(recording, `#/agents/${agent.id}`));
+    // Where a hook hooks in is shown whole, inside its row.
+    for (const point of ["before_tool_execute", "after_model_request"]) {
+      const text = page.locator(".react-flow").getByText(point, { exact: true });
+      const fits = await text.evaluate((element) => {
+        const row = element.closest(".react-flow__node")?.getBoundingClientRect();
+        const own = element.getBoundingClientRect();
+        return (
+          row !== undefined && own.right <= row.right && element.scrollWidth <= element.clientWidth
+        );
+      });
+      expect(fits, point).toBe(true);
+    }
+
+    const inspector = page.getByRole("complementary", { name: /details/ });
+    await canvasNode(page, /^Capability Hooks, /).click();
+    await expect(inspector.getByRole("list", { name: "Hooks of Hooks" })).toBeVisible();
+    await expect(inspector).not.toContainText("given nothing the blueprint records");
+
+    await canvasNode(page, /^Capability SubAgents, /).click();
+    await expect(inspector.getByRole("link", { name: "log_reader" })).toBeVisible();
+    await expect(inspector).toContainText("Reads service logs");
+    await expect(inspector).not.toContainText('"agent":');
+    expect(errors).toEqual([]);
+  });
+
   test("pipeline: a graph run with a loop and agent runs inside its steps", async ({ page }) => {
     const errors = trackErrors(page);
     const recording = load("pipeline");

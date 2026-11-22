@@ -467,6 +467,60 @@ function DetailValue({ value }: { value: Json }) {
   return <code>{JSON.stringify(value)}</code>;
 }
 
+type JsonObject = { [k: string]: Json };
+
+const isObjectList = (value: Json): value is JsonObject[] =>
+  Array.isArray(value) &&
+  value.every((v) => typeof v === "object" && v !== null && !Array.isArray(v));
+
+/**
+ * The agents a `SubAgents` capability holds, one row each: the agent, linked when it is one of
+ * the agents this one delegates to, the name the model calls it by, and its description.
+ */
+function SubAgentList({ agent, entries }: { agent: AgentBlueprint; entries: JsonObject[] }) {
+  const agents = useViewer((state) => state.data.agents);
+  return (
+    <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+      {entries.map((entry, i) => {
+        const name = typeof entry.agent === "string" ? entry.agent : null;
+        const target =
+          name === null
+            ? undefined
+            : agent.delegates.map((d) => agents[d.agent_id]).find((a) => a?.name === name);
+        const calledAs = typeof entry.name === "string" && entry.name !== name ? entry.name : null;
+        const models = entry.models;
+        return (
+          <li key={i} className="flex flex-col gap-0.5">
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+              {target ? (
+                <a
+                  href={formatRoute({ name: "agent", id: target.id })}
+                  className="break-all font-medium text-agent underline underline-offset-2"
+                >
+                  {target.label}
+                </a>
+              ) : (
+                <code className="break-all text-data text-fg">
+                  {name ?? "an agent with no name"}
+                </code>
+              )}
+              {calledAs !== null && (
+                <span className="text-meta text-muted">
+                  as <code className="break-all">{calledAs}</code>
+                </span>
+              )}
+            </span>
+            {typeof entry.description === "string" && (
+              <span className="text-meta text-muted">{entry.description}</span>
+            )}
+            {models !== undefined && <DetailValue value={models} />}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /** Where a capability is defined (Core, Harness) and whether it loads on demand. */
 function CapabilityChips({ item }: { item: Capability }) {
   return (
@@ -482,7 +536,14 @@ function CapabilityChips({ item }: { item: Capability }) {
 const capabilityFacts = (agent: AgentBlueprint, item: Capability): Fact[] =>
   known([
     ...Object.entries(item.details).map(
-      ([key, value]): Fact => [key, <DetailValue key={key} value={value} />],
+      ([key, value]): Fact => [
+        key,
+        item.name === "SubAgents" && key === "agents" && isObjectList(value) ? (
+          <SubAgentList key={key} agent={agent} entries={value} />
+        ) : (
+          <DetailValue key={key} value={value} />
+        ),
+      ],
     ),
     ...Object.entries(item.expressions).map(
       ([key, code]): Fact => [key, <Expression key={key} code={code} hint={false} />],
@@ -1148,7 +1209,9 @@ export function CapabilityInspector({
         label="Capability"
         reveal={reveal}
         items={present([
-          {
+          // A capability that records only its skills or hooks is shown by those sections alone.
+          (facts.length > 0 ||
+            (capability.skills.length === 0 && capability.hooks.length === 0)) && {
             id: "definition",
             title: "Definition",
             content:

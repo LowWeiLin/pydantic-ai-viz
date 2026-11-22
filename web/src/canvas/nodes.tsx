@@ -370,12 +370,16 @@ export function ToolNode({ data }: NodeProps<Node<ToolNodeData, "tool">>) {
       />
       <div className="pointer-events-none relative flex h-full items-center gap-2 px-2.5">
         <Icon name={data.delegates ? "agent" : "tool"} size={14} className="tone-text" />
-        <MiddleTruncate text={data.name} className="min-w-0 flex-1 font-mono text-data text-fg" />
+        <MiddleTruncate
+          text={data.name}
+          className="min-w-0 flex-auto font-mono text-data text-fg"
+        />
         {data.default && <DefaultTag />}
+        {/* The tag takes only the room the name leaves, down to its icon. */}
         {callKind && (
-          <span className="inline-flex shrink-0 items-center gap-0.5 text-faint text-meta">
-            <Icon name={callKind.icon} size={12} />
-            {callKind.tag}
+          <span className="flex min-w-3 flex-1 items-center justify-end gap-0.5 overflow-hidden text-faint text-meta">
+            <Icon name={callKind.icon} size={12} className="shrink-0" />
+            <span className="truncate">{callKind.tag}</span>
           </span>
         )}
         {overlay && activity.retries > 0 && (
@@ -613,10 +617,14 @@ export function CapabilityNode({ data }: NodeProps<Node<CapabilityNodeData, "cap
         )}
         {rollup && <span className="shrink-0 text-faint text-meta">{rollup}</span>}
         {data.default && !capability.stack && <DefaultTag />}
-        <span className="min-w-0 shrink-[4] truncate text-faint text-meta">
-          {capability.stack ? `via ${capability.stack}` : categoryNames(capability).short}
-        </span>
-        {emitted && <Badge className="shrink-0">{emitted}</Badge>}
+        {/* A run's events take the group's place: the row has no room for both next to the name. */}
+        {emitted ? (
+          <Badge className="shrink-0">{emitted}</Badge>
+        ) : (
+          <span className="min-w-0 shrink-[4] truncate text-faint text-meta">
+            {capability.stack ? `via ${capability.stack}` : categoryNames(capability).short}
+          </span>
+        )}
         {overlay && activity && <RowActivity activity={activity} />}
       </div>
     </div>
@@ -733,8 +741,9 @@ export function HookNode({ data }: NodeProps<Node<HookNodeData, "hook">>) {
       />
       <div className="pointer-events-none relative flex h-full items-center gap-1.5 px-2">
         <Icon name="span" size={12} className="shrink-0 tone-text" />
-        <MiddleTruncate text={hook.point} className="min-w-0 flex-1 font-mono text-data text-fg" />
-        <span className="min-w-0 shrink-[2] truncate font-mono text-faint text-meta">
+        {/* Where it hooks in is what the row is about: the function gives way to it. */}
+        <span className="shrink-0 font-mono text-data text-fg">{hook.point}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-faint text-meta">
           {hook.function === null ? "?" : hookFunction(hook)}
         </span>
       </div>

@@ -100,11 +100,14 @@ def test_the_viewer_in_a_browser_follows_the_live_demo(tmp_path: Path) -> None:
         # Each attempt keeps its own traces: the next one does not clear them away.
         output_dir = f"test-results/live-attempt-{attempt}"
         with serving(DEMO, cwd=tmp_path) as (url, _):
+            # Its own port for the fixture server the Playwright config starts, so this can run next to `pnpm e2e`.
+            env = child_env(PVIZ_LIVE_URL=url, PVIZ_E2E_PORT=str(free_port()))
+            # Playwright sets FORCE_COLOR for its children, and Node warns about a NO_COLOR next to it.
+            env.pop("NO_COLOR", None)
             result = subprocess.run(
                 [*spec, "--output", output_dir],
                 cwd=WEB,
-                # Its own port for the fixture server the Playwright config starts, so this can run next to `pnpm e2e`.
-                env=child_env(PVIZ_LIVE_URL=url, PVIZ_E2E_PORT=str(free_port())),
+                env=env,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

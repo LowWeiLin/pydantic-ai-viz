@@ -634,19 +634,24 @@ class Session:
 
         Without content a run's deferred calls are read from its messages, which do not say why a
         call waits. A call whose tool span raised ``CallDeferred``, or whose tool is external, runs outside.
+        A call to a plain function or output tool that no tool span deferred does not wait at all: it
+        was left unanswered because the run ended first, as ``run_stream`` does on its first text.
         """
         if span.kind == "tool_call" and span.data.deferral is not None and span.data.call_id is not None:
             self._deferrals[span.trace_id, span.data.call_id] = span.data.deferral
         if span.kind != "agent_run" or not span.data.deferred:
             return span
         blueprint = self._blueprint_named(span.agent_name)
-        external = {tool.name for tool in blueprint.tools if tool.kind == "external"} if blueprint else set[str]()
+        kinds = {tool.name: tool.kind for tool in blueprint.tools} if blueprint else {}
 
-        def kind(call: DeferredCall) -> Deferral:
+        def kind(call: DeferredCall) -> Deferral | None:
             seen = self._deferrals.pop((span.trace_id, call.call_id or ""), None)
-            return seen or ("external" if call.tool_name in external else call.kind)
+            tool_kind = kinds.get(call.tool_name)
+            if seen or tool_kind == "external":
+                return seen or "external"
+            return None if tool_kind in ("function", "output") else call.kind
 
-        calls = [call.model_copy(update={"kind": kind(call)}) for call in span.data.deferred]
+        calls = [call.model_copy(update={"kind": found}) for call in span.data.deferred if (found := kind(call))]
         return span.model_copy(update={"data": span.data.model_copy(update={"deferred": calls})})
 
     def _blueprint_for_run(self, name: str, description: str | None, model_name: str | None) -> AgentBlueprint:
