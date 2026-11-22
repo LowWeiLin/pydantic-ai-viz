@@ -146,8 +146,8 @@ An alert says the checkout error rate is climbing. The `oncall` agent hands the 
 | `log_reader` | One tool, `read_logs` |
 
 <figure class="screenshot" markdown="span">
-  ![The oncall agent: its restart_service tool tagged needs approval, the Hooks capability with its two hook rows, the Pager capability, and a delegation edge to log_reader](assets/screenshots/operations-dark.png#only-dark)
-  ![The oncall agent: its restart_service tool tagged needs approval, the Hooks capability with its two hook rows, the Pager capability, and a delegation edge to log_reader](assets/screenshots/operations-light.png#only-light)
+  ![The oncall agent: its restart_service tool tagged approval, the Hooks capability with its two hook rows, the Pager capability, and a delegation edge to log_reader](assets/screenshots/operations-dark.png#only-dark)
+  ![The oncall agent: its restart_service tool tagged approval, the Hooks capability with its two hook rows, the Pager capability, and a delegation edge to log_reader](assets/screenshots/operations-light.png#only-light)
 </figure>
 
 What to watch for:
