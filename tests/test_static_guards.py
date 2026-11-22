@@ -174,4 +174,8 @@ def test_the_only_installed_package_the_analyser_reads_is_pydantic_ai() -> None:
             elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
                 imported.add(node.module)
     # ``pydantic_ai`` itself, never one of its submodules: those of ``pydantic_ai.common_tools`` need extras.
-    assert {name for name in imported if name.partition(".")[0] not in stdlib | {"__future__"}} == {"pydantic_ai"}
+    # ``yaml`` is PyYAML, when it is installed: its ``safe_load`` reads an agent spec as data.
+    assert {name for name in imported if name.partition(".")[0] not in stdlib | {"__future__"}} == {
+        "pydantic_ai",
+        "yaml",
+    }

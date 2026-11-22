@@ -43,8 +43,9 @@ from ._docstring import Style, describe
 from ._installed import InstalledPydanticAI
 from ._resolve import END_OF_MODULE, Definition, Expression, External, Project, Resolved, Resolver, receiver_class
 from ._schema import NOT_FROM_THE_MODEL, SchemaBuilder, typing_construct
-from ._skills import library, read_catalog, shown
-from ._source import CallSite, Module, Mutation, Scope, clip_expression, unwrap
+from ._skills import contained, library, read_catalog, shown
+from ._source import CallSite, Module, Mutation, Scope, SkippedFile, clip_expression, parse_module, unwrap
+from ._spec import FORMATS, SPEC_METHODS, load_spec, registry, spec_source
 from ._values import EnvironmentRead, NotLiteral, environment, format_template, fstring_template, literal, string
 
 ToolKind: TypeAlias = Literal["function", "output", "external", "unapproved"]
@@ -230,6 +231,13 @@ def _detail(value: Any) -> Any:
 def _is_combined(callee: Resolved) -> bool:
     """Whether a capability is made by Pydantic AI's ``CombinedCapability``."""
     return isinstance(callee, External) and callee.comes_from("pydantic_ai", "CombinedCapability")
+
+
+def spec_method(callee: Resolved) -> str | None:
+    """``from_spec`` or ``from_file`` when a call is that class method of Pydantic AI's ``Agent``."""
+    if isinstance(callee, External) and callee.last in SPEC_METHODS:
+        return callee.last if External(callee.name.rpartition(".")[0]).is_library("Agent") else None
+    return None
 
 
 def _union(groups: Iterable[list[str]]) -> list[str]:
@@ -421,6 +429,8 @@ class AgentExtractor:
         class, said to be so in some cases only, whichever value stands closer above it.
         """
         made = callee.last if isinstance(callee, External) and callee.is_library(*_CONSTRUCTED) else None
+        if spec_method(callee) is not None:
+            return "Agent", None
         function = site.node.func.value if isinstance(site.node.func, ast.Subscript) else site.node.func
         if not isinstance(function, ast.Name):
             return made, None
@@ -1234,7 +1244,11 @@ class _AgentBuilder:
         """``id(node)`` of an argument taken out of a ``**dict`` -> the scope and line it is written at."""
         self._owned_toolsets: list[list[str]] = []
         """Filled by ``_toolsets``: for each capability entry, the ids of the toolsets it gives the agent."""
-        if self.call.args and not isinstance(self.call.args[0], ast.Starred):
+        self._spec: dict[str, ast.expr] = {}
+        """``Agent.from_spec``/``from_file``: what the spec gives that the call's arguments add to, not replace."""
+        self._spec_scope: Scope | None = None
+        method = spec_method(self.resolver.callee(self.call, self.scope, self.line))
+        if method is None and self.call.args and not isinstance(self.call.args[0], ast.Starred):
             self.arguments["model"] = self.call.args[0]
         spread: list[ast.expr] = []
         for keyword in self.call.keywords:
@@ -1246,6 +1260,123 @@ class _AgentBuilder:
             self._spread(node)
         if any(isinstance(argument, ast.Starred) for argument in self.call.args):
             self.warn("arguments passed with `*` cannot be read from source")
+        if method is not None:
+            self._read_spec(method)
+
+    def _read_spec(self, method: str) -> None:
+        """Take the arguments ``Agent.from_spec`` makes of its spec, as it takes them.
+
+        A keyword of the call replaces the field of the spec of the same name, unless it is ``None``;
+        instructions, capabilities, model settings and retries of the call are added to those of the spec.
+        """
+        given = self.call.args[0] if self.call.args and not isinstance(self.call.args[0], ast.Starred) else None
+        given = given or self.arguments.pop("spec" if method == "from_spec" else "path", None)
+        if given is None:
+            self.warn(f"the spec given to `Agent.{method}` cannot be read from source")
+            return
+        text = brief(self.text(given))
+        if method == "from_file":
+            found = self._spec_file(given)
+            if found is None:
+                return
+            path, fmt = found
+            spec, warning = load_spec(path, fmt)
+            project = self.extractor.project
+            rel, line = shown(path, project.root), 1
+        else:
+            try:
+                spec = self.literal(given)
+            except NotLiteral:
+                spec = None
+            warning = (
+                None
+                if isinstance(spec, dict)
+                else f"the agent spec is built by `{text}`; it is read when the code runs"
+            )
+            path, rel, line = self.module.path, self.module.rel, self.line
+        if warning is not None or not isinstance(spec, dict):
+            self.warn(warning or f"the agent spec `{text}` cannot be read")
+            return
+        written, warnings = spec_source(cast("dict[str, Any]", spec), self._spec_classes(), line)
+        for message in warnings:
+            self.warn(message)
+        module = parse_module(written.encode("utf-8"), path, rel)
+        if isinstance(module, SkippedFile):
+            self.warn(f"the agent spec `{rel}` is nested too deeply to read")
+            return
+        statement = module.scope.node.body[-1] if isinstance(module.scope.node, ast.Module) else None
+        made = statement.value if isinstance(statement, ast.Expr) else None
+        if not isinstance(made, ast.Call):
+            return
+        self._spec_scope = module.scope
+        for keyword in made.keywords:
+            if keyword.arg is None:
+                continue
+            self._spread_from[id(keyword.value)] = (module.scope, line)
+            if keyword.arg in ("instructions", "capabilities", "model_settings", "retries"):
+                self._spec[keyword.arg] = keyword.value
+            else:
+                current = self.arguments.get(keyword.arg)
+                if current is None or (isinstance(current, ast.Constant) and current.value is None):
+                    self.arguments[keyword.arg] = keyword.value
+
+    def _spec_file(self, given: ast.expr) -> tuple[Path, str] | None:
+        """The spec file ``Agent.from_file`` reads and its format, when it is in the analysed directories."""
+        name = string(self.resolver, given, *self.where(given))
+        if name is None:
+            self.warn(f"the agent spec file is named by `{brief(self.text(given))}`; it is read when the code runs")
+            return None
+        fmt_node = self.arguments.pop("fmt", None)
+        fmt = None if fmt_node is None else string(self.resolver, fmt_node, *self.where(fmt_node))
+        fmt = fmt or FORMATS.get(Path(name).suffix.lower())
+        if fmt not in ("json", "yaml"):
+            self.warn(f"the format of the agent spec `{name}` cannot be told from its name")
+            return None
+        project = self.extractor.project
+        bases = [base.resolve() for base in project.bases] or [project.root.resolve()]
+        # A run reads it relative to its working directory: most often where the code is, or the project.
+        candidates = [Path(name)] if Path(name).is_absolute() else [self.module.path.parent / name, project.root / name]
+        outside = False
+        for candidate in candidates:
+            path = contained(candidate, bases)
+            if path is not None and path.is_file():
+                if path.stat().st_size > self.extractor.max_file_bytes:
+                    self.warn(
+                        f"the agent spec `{name}` is larger than the {self.extractor.max_file_bytes} byte limit of the "
+                        "analysis, so it is not read"
+                    )
+                    return None
+                return path, fmt
+            outside = outside or (path is None and candidate.is_file())
+        if outside:
+            self.warn(f"the agent spec `{name}` is outside the analysed directories, so it is not read")
+        else:
+            self.warn(f"the agent spec `{name}` was not found in the analysed files")
+        return None
+
+    def _spec_classes(self) -> dict[str, str]:
+        """The capability names a spec may use, as ``from_spec`` looks them up: its own, and those it is given."""
+        classes = registry()
+        node = self.arguments.pop("custom_capability_types", None)
+        if node is None:
+            return classes
+        entries = self._listed(node, *self.where(node), "capability types")
+        if entries is None:
+            self.warn(f"the custom capability types are given by `{brief(self.text(node))}`, which is not read")
+            return classes
+        for entry in entries:
+            found = self.resolver.resolve(entry.node, entry.scope, entry.line)
+            if isinstance(found, External):
+                classes[found.last] = found.name
+            elif (
+                isinstance(found, Definition)
+                and isinstance(found.node, ast.ClassDef)
+                and "." not in found.body.qualname
+            ):
+                classes[found.node.name] = f"{found.module.name}.{found.node.name}"
+            else:
+                self.warn(f"a custom capability type is `{brief(entry.module.text(entry.node))}`, which is not read")
+        return classes
 
     def warn(self, message: str) -> None:
         _compat.add_warning(self.warnings, message)
@@ -1544,14 +1675,17 @@ class _AgentBuilder:
         ]
 
     def _prompts(self, kind: PromptKind) -> list[Instruction]:
-        node = self.arguments.get(kind)
-        if node is None:
-            return []
-        entries = self._listed(node, *self.where(node), "instructions" if kind == "instructions" else "system prompts")
-        if entries is None:
-            entries = [Expression(node, *self.where(node))]
-        prompts = (self._prompt(kind, entry) for entry in entries)
-        return [prompt for prompt in prompts if prompt is not None]
+        found: list[Instruction] = []
+        for node in (self._spec.get(kind), self.arguments.get(kind)):  # a spec's come first
+            if node is None:
+                continue
+            what = "instructions" if kind == "instructions" else "system prompts"
+            entries = self._listed(node, *self.where(node), what)
+            if entries is None:
+                entries = [Expression(node, *self.where(node))]
+            prompts = (self._prompt(kind, entry) for entry in entries)
+            found.extend(prompt for prompt in prompts if prompt is not None)
+        return found
 
     def _prompt(self, kind: PromptKind, entry: Expression) -> Instruction | None:
         node = entry.node
@@ -1560,7 +1694,9 @@ class _AgentBuilder:
             return None
         value = string(self.resolver, node, entry.scope, entry.line)
         if value is not None:
-            return Instruction(kind=kind, dynamic=False, text=value, function=None, expression=None, location=where)
+            # A spec's text with ``{{name}}`` in it is a template, filled in from the deps of each run.
+            dynamic = entry.scope is self._spec_scope and "{{" in value
+            return Instruction(kind=kind, dynamic=dynamic, text=value, function=None, expression=None, location=where)
         target = self.resolver.resolve(node, entry.scope, entry.line)
         if isinstance(target, Definition) and not isinstance(target.node, ast.ClassDef):
             return Instruction(
@@ -1681,6 +1817,19 @@ class _AgentBuilder:
                 return
             if isinstance(inner, ast.Call):
                 callee = self.resolver.callee(inner, target.scope, target.line)
+                if isinstance(callee, External) and callee.is_library("StructuredDict"):
+                    # A dict the model writes to the JSON Schema it is given, as ``output_schema`` of a spec gives.
+                    given = inner.args[0] if inner.args and not isinstance(inner.args[0], ast.Starred) else None
+                    given = next((k.value for k in inner.keywords if k.arg == "json_schema"), given)
+                    try:
+                        schema = None if given is None else literal(self.resolver, given, target.scope, target.line)
+                    except NotLiteral:
+                        schema = None
+                    if isinstance(schema, dict):
+                        labels.append("_StructuredDict")  # the name of the class it makes, as a live agent shows it
+                        modes.append("auto")
+                        schemas.append(cast("dict[str, Any]", schema))
+                        return
                 if isinstance(callee, External) and callee.is_library(*_OUTPUT_MODES):
                     wrapped = inner.args[0] if inner.args and not isinstance(inner.args[0], ast.Starred) else None
                     keyword = _OUTPUT_WRAPS[callee.last]
@@ -1755,17 +1904,22 @@ class _AgentBuilder:
 
     @cached_property
     def _capability_entries(self) -> list[Expression]:
-        """The entries of ``capabilities=[...]``, read once for the capabilities and for the toolsets they give."""
-        node = self.arguments.get("capabilities")
-        if node is None or (isinstance(node, ast.Constant) and node.value is None):
-            return []
-        entries = self._listed(node, *self.where(node), "capabilities")
-        if entries is None:
-            self.warn(
-                f"the capabilities are built by `{brief(self.text(node))}`; they are only known when the code runs"
-            )
-            return []
-        return self._opened(entries, 0)
+        """The entries of ``capabilities=[...]``, read once for the capabilities and for the toolsets they give.
+
+        A spec's come first, then those the call adds to them.
+        """
+        found: list[Expression] = []
+        for node in (self._spec.get("capabilities"), self.arguments.get("capabilities")):
+            if node is None or (isinstance(node, ast.Constant) and node.value is None):
+                continue
+            entries = self._listed(node, *self.where(node), "capabilities")
+            if entries is None:
+                self.warn(
+                    f"the capabilities are built by `{brief(self.text(node))}`; they are only known when the code runs"
+                )
+                continue
+            found.extend(self._opened(entries, 0))
+        return found
 
     def _opened(self, entries: list[Expression], depth: int) -> list[Expression]:
         """The entries with each of Pydantic AI's ``CombinedCapability([...])`` replaced by what it holds.
@@ -1855,6 +2009,8 @@ class _AgentBuilder:
         """For each of those, the defaults its class declares."""
         for index, entry in enumerate(self._capability_entries):
             target, call, callee, name = self._built(entry)
+            if name is None and entry.scope is self._spec_scope and isinstance(callee, External):
+                name = callee.last  # a spec names its capabilities, known to Pydantic AI or not
             if name is None:
                 name = entry.module.text(entry.node)
                 built = brief(self._as_assigned(entry))
@@ -2602,7 +2758,14 @@ class _AgentBuilder:
         return tools, output
 
     def _retry_budgets(self, expressions: dict[str, str]) -> tuple[int | None, int | None]:
-        node = self.arguments.get("retries")
+        """The budgets ``retries=`` sets; a spec's, but for those the call sets itself."""
+        tools, output = self._retries_given(self._spec.get("retries"), expressions)
+        given = self._retries_given(self.arguments.get("retries"), expressions)
+        if "tool_retries" in expressions:
+            return None, None
+        return (tools if given[0] is None else given[0]), (output if given[1] is None else given[1])
+
+    def _retries_given(self, node: ast.expr | None, expressions: dict[str, str]) -> tuple[int | None, int | None]:
         if node is None or (isinstance(node, ast.Constant) and node.value is None):
             return None, None
         try:
@@ -2643,7 +2806,14 @@ class _AgentBuilder:
         return found
 
     def _model_settings(self, expressions: dict[str, str]) -> dict[str, Any] | None:
-        node = self.arguments.get("model_settings")
+        """The settings ``model_settings=`` gives; a spec's, with those the call gives over them."""
+        spec = self._model_settings_given(self._spec.get("model_settings"), expressions)
+        given = self._model_settings_given(self.arguments.get("model_settings"), expressions)
+        if spec is None or "model_settings" in expressions:
+            return given
+        return spec if given is None else {**spec, **given}
+
+    def _model_settings_given(self, node: ast.expr | None, expressions: dict[str, str]) -> dict[str, Any] | None:
         if node is None or (isinstance(node, ast.Constant) and node.value is None):
             return None
         target = self.resolver.resolve(node, *self.where(node))

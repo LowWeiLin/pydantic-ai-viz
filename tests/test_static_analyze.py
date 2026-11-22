@@ -222,7 +222,7 @@ def test_a_selection_and_a_whole_file_can_be_mixed(tmp_path: Path) -> None:
         ("nowhere", "no module named 'nowhere': looked for nowhere.py or nowhere/__init__.py below"),
         ("pkg.module:agent", "no module named 'pkg.module': looked for pkg/module.py or pkg/module/__init__.py"),
         ("pkg.module:agent", "or use --import to import it by name (this runs its code)"),
-        ("notes.txt", "notes.txt is not a .py file; only Python source can be read"),
+        ("notes.txt", "notes.txt is not a .py file or an agent spec; only those can be read"),
         ("no/such/place", "no file or directory at no/such/place"),
         ("not a target!", "it is not the path of a .py file or of a directory, a module name, or a GitHub repository"),
         ("https://example.com/owner/repo", "of remote code only GitHub repositories are fetched"),

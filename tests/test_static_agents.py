@@ -1473,7 +1473,6 @@ def test_only_pydantic_ai_agents_are_agents() -> None:
         "from agents_lib import Agent\na = Agent('test')\n",
         "import pydantic_ai\nAgent = make_class()\na = Agent('test')\n",
         "from pydantic_ai import Agent\na = Agent\n",  # never called
-        "from pydantic_ai import Agent\na = Agent.from_spec(spec)\n",
         "from pydantic_ai import Agent\nclass Mine(Agent): pass\na = Mine('test')\n",
         "# from pydantic_ai import Agent\n# a = Agent('test')\n",
         "text = '''\nfrom pydantic_ai import Agent\na = Agent(\"test\")\n'''\n",

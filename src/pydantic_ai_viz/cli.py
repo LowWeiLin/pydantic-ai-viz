@@ -344,7 +344,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "targets",
         nargs="+",
         metavar="TARGET",
-        help="a file (path/to/file.py, or path/to/file.py:name for one agent or graph), a directory "
+        help="a file (path/to/file.py, or path/to/file.py:name for one agent or graph), an agent spec "
+        "(agent.yaml, .yml or .json, as Agent.from_file reads it), a directory "
         "(every .py file below it), a module name (pkg.module or pkg.module:name, found on disk without "
         "importing it), or a GitHub repository (https://github.com/owner/repo[/tree/REF[/SUBDIR]] or "
         "gh:owner/repo[@REF][/SUBDIR], fetched with git and only read)",
