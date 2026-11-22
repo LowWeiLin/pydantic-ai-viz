@@ -21,6 +21,7 @@ What has been considered and left for later. Nothing here is promised or schedul
 - **Evals.** Showing a `Dataset` of `Case`s, its `Evaluator`s and a report over the runs needs a data model of its own, a new kind of blueprint and new screens. A large piece of work, left for later.
 - **Realtime sessions.** Speech-to-speech sessions have audio and transcript turns and interruptions, which need new span kinds and a timeline mode of their own. A large piece of work, left for later.
 - **A `Researcher` with a store of its own, from a live object.** A live `Coder` or `Researcher` is listed as itself, found by a marker that Pydantic AI's harness leaves among its capabilities. A `Researcher` whose overflow store is not the workspace's (for example `Researcher(instructions=None, store=LocalFileOverflowStore())`) leaves no marker, so only the capabilities it is made of are listed.
+- **A capability merged into a stack's own, from a live object.** A `WebSearch`, `WebFetch` or `SubAgents` given before a `Coder` or `Researcher` with the id of one the stack puts there is merged into the stack's own, and the live agent keeps nothing that tells the author's part apart, so it reads as the stack's ("via Researcher"). A blueprint from source shows the author's capability on its own. (A `ToolOutputLimits` merged into a `Researcher`'s is told apart by what it states.)
 
 ## Reading source code
 

@@ -555,7 +555,7 @@ def _capabilities(agent: AnyAgent, walk: _ToolsetWalk, warnings: list[str]) -> l
             found.append(entry)
             continue
         if within is not None:
-            if package_of(cls.__module__) is not None and cls.__name__ in left:
+            if package_of(cls.__module__) is not None and cls.__name__ in left and _stack_built(capability, within):
                 left = left[left.index(cls.__name__) + 1 :]
             else:
                 within = None  # the first capability the stack does not put there: the agent was given it otherwise
@@ -593,6 +593,22 @@ def _harness_stack(capability: Any) -> str | None:
         return None
     owner: Any = _safe_getattr(capability, _compat.HARNESS_STACK_OWNER)
     return owner if isinstance(owner, str) and owner in _compat.HARNESS_STACKS else None
+
+
+def _stack_built(capability: Any, stack: str) -> bool:
+    """Whether the stack could have built this member as it is: it states nothing beyond the fields the stack sets."""
+    cls = type(cast("object", capability))
+    fields = _compat.HARNESS_STACK_MEMBER_FIELDS.get((stack, cls.__name__))
+    if fields is None or not dataclasses.is_dataclass(capability):
+        return True
+
+    def stated(c: Any) -> dict[str, Any]:
+        return {f.name: getattr(c, f.name) for f in dataclasses.fields(c) if f.init and f.compare and f.name != "id"}
+
+    try:
+        return bool(stated(capability) == stated(cls(**{name: getattr(capability, name) for name in fields})))
+    except Exception:
+        return True  # cannot tell: as the stack's
 
 
 def _stack_helper_of(capability: Any) -> str | None:
