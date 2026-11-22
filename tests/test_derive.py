@@ -213,6 +213,7 @@ User is ann.\
                 "defaults": [],
             },
             "delegates": [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "observed"}],
+            "wrapper": None,
             "warnings": [],
         }
     )
@@ -601,6 +602,7 @@ def test_observed_blueprint_shape() -> None:
                 "defaults": [],
             },
             "delegates": [],
+            "wrapper": None,
             "warnings": [],
         }
     )

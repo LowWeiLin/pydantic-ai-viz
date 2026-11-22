@@ -390,6 +390,8 @@ class AgentExtractor:
         """Tools registered on a parameter, until the calls that pass an agent for it are looked at."""
         self.unattached: list[_ToolSpec] = []
         """Tools registered on a parameter for which no call passes an agent that the source shows."""
+        self.durable: dict[tuple[int, int], str] = {}
+        """``_AgentSite.key`` -> the class of the durable-execution wrapper the source gives it."""
 
     # -------------------------------------------------------------- driver
 
@@ -426,6 +428,26 @@ class AgentExtractor:
         for module in self.project.modules:
             self._registrations(module)
         self._attach_handed_in()
+        self._find_durable()
+
+    def _find_durable(self) -> None:
+        """Note the agents that ``TemporalAgent(agent)``, ``DBOSAgent(agent)`` and ``PrefectAgent(agent)`` wrap."""
+        for module in self.project.modules:
+            for site in module.calls:
+                callee = self.resolver.callee(site.node, site.scope)
+                if not (
+                    isinstance(callee, External)
+                    and callee.name.startswith("pydantic_ai.durable_exec.")
+                    and callee.last.endswith("Agent")
+                ):
+                    continue
+                wrapped = site.node.args[0] if site.node.args else None
+                if wrapped is None:
+                    wrapped = next((item.value for item in site.node.keywords if item.arg == "wrapped"), None)
+                if wrapped is None or isinstance(wrapped, ast.Starred):
+                    continue
+                for agent in self.agents_at(wrapped, site.scope, site.node.lineno):
+                    self.durable.setdefault(agent.key, callee.last)
 
     def _constructs(self, site: CallSite, callee: Resolved) -> tuple[str | None, str | None]:
         """Which of ``Agent`` and ``FunctionToolset`` a call makes, if either; and a warning if the run decides it.
@@ -1541,6 +1563,7 @@ class _AgentBuilder:
             capabilities=self._capabilities(),
             settings=self._settings(),
             delegates=[*delegates, *(d for d in self._sub_agent_delegates() if d not in delegates)],
+            wrapper=self.extractor.durable.get(self.agent.key),
             warnings=self.warnings,
         )
         # The provider-side tools the capabilities give the agent, as a live agent lists them: after its own.

@@ -351,6 +351,7 @@ def test_full_agent_blueprint() -> None:
                 "defaults": ["end_strategy"],
             },
             "delegates": [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "object"}],
+            "wrapper": None,
             "warnings": [],
         }
     )

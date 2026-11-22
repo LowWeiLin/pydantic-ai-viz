@@ -261,6 +261,7 @@ export function agentBlueprint(fields: Partial<AgentBlueprint> & { id: string })
       defaults: [],
     },
     delegates: [],
+    wrapper: null,
     warnings: [],
     ...fields,
   };

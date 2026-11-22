@@ -478,6 +478,7 @@ const agent = (fields) =>
       defaults: ["end_strategy", "tool_retries", "output_retries"],
     },
     delegates: [],
+    wrapper: null,
     warnings: [],
     ...fields,
   });

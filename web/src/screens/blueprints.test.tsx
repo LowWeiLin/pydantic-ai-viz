@@ -1251,3 +1251,31 @@ describe("tool calls left for the caller", () => {
     expect(panel.getAllByText("restart_service").length).toBeGreaterThan(0);
   });
 });
+
+describe("an agent run as durable steps", () => {
+  const open = (wrapper: string | null): HTMLElement => {
+    const agent = agentBlueprint({ id: "a1", source: "object", wrapper });
+    const events = log(
+      [0, { ...sessionStarted(), mode: "blueprint" }],
+      [1, { type: "blueprint.agent", agent }],
+    );
+    window.location.hash = "#/agents/a1";
+    render(<App plan={{ kind: "embedded", events }} />);
+    return screen.getByRole("complementary", { name: "Blueprint details" });
+  };
+
+  test("the card carries the wrapper's name, and the panel the class", () => {
+    const details = open("TemporalAgent");
+    expect(
+      screen.getByTitle(/^TemporalAgent: model requests and tool calls run as durable steps/),
+    ).toHaveTextContent("Temporal");
+    expect(within(details).getByText("Durable execution")).toBeInTheDocument();
+    expect(within(details).getByText("TemporalAgent", { selector: "dd code" })).toBeVisible();
+  });
+
+  test("an agent without one shows neither", () => {
+    const details = open(null);
+    expect(screen.queryByTitle(/durable steps/)).toBeNull();
+    expect(within(details).queryByText("Durable execution")).toBeNull();
+  });
+});

@@ -110,6 +110,8 @@ export type AgentBlueprint = {
   capabilities: Capability[];
   settings: AgentSettings;
   delegates: Delegate[];
+  /** Class name of the durable-execution wrapper around the agent, e.g. "TemporalAgent". */
+  wrapper: string | null;
   /** Human-readable degradations. */
   warnings: string[];
 };

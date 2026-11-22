@@ -30,12 +30,20 @@ from ._analyze import Analysis
 from ._capture import CaptureProcessor
 from ._derive import add_delegate, carry_observed, merge_request, observed_blueprint
 from ._export import write_html, write_jsonl
-from ._introspect import AnyAgent, AnyGraph, agent_closure, introspect_agent, introspect_graph
+from ._introspect import (
+    AnyAgent,
+    AnyGraph,
+    AnyWrapper,
+    agent_closure,
+    durable_wrapper,
+    introspect_agent,
+    introspect_graph,
+)
 from ._models import WIRE_VERSION, AgentBlueprint, Deferral, DeferredCall, GraphBlueprint, SessionMode, to_wire
 from ._normalize import Normalized, WireSpan, clip
 from ._version import __version__
 
-Target: TypeAlias = "AnyAgent | AnyGraph | ModuleType | Analysis"
+Target: TypeAlias = "AnyAgent | AnyWrapper | AnyGraph | ModuleType | Analysis"
 Envelope: TypeAlias = dict[str, Any]
 
 DEFAULT_MAX_EVENTS = 50_000
@@ -245,6 +253,8 @@ class _RegisteredAgent:
     agent: AnyAgent
     id: str
     label: str | None
+    wrapper: str | None = None
+    """Class name of the durable-execution wrapper around the agent."""
 
 
 @dataclass(slots=True)
@@ -420,7 +430,10 @@ class Session:
         """
         with self._lock:
             for target in targets:
-                if isinstance(target, Agent):
+                wrapped = durable_wrapper(target)
+                if wrapped is not None:
+                    self._register_wrapped(*wrapped, {})
+                elif isinstance(target, Agent):
                     self._register_agent(target, {})
                 elif isinstance(target, Graph):
                     self._register_graph(target, None)
@@ -434,10 +447,30 @@ class Session:
                         f"got {type(target).__name__}"
                     )
 
+    def _register_wrapped(self, agent: AnyAgent, wrapper: str, labels: Mapping[int, str]) -> None:
+        """Register ``agent`` as the one a durable-execution wrapper runs; shown once, with the wrapper's name."""
+        entry = self._agents.get(id(agent))
+        if entry is None:
+            self._register_agent(agent, labels, wrapper)
+        elif entry.wrapper is None:
+            entry.wrapper = wrapper
+            self._emit_agent(carry_observed(self._agent_blueprints[entry.id], self._introspect(entry)))
+
     def _register_module(self, module: ModuleType) -> None:
         members = list(vars(module).items())
+        # A module-level wrapper stands for the agent it wraps, shown once with the wrapper's name.
+        agents: list[tuple[str, AnyAgent, str | None]] = []
+        for name, value in members:
+            wrapped = durable_wrapper(value)
+            if wrapped is not None:
+                agents.append((name, *wrapped))
+            elif isinstance(value, Agent):
+                agents.append((name, cast("AnyAgent", value), None))
         # Variable names are the fallback labels, also for agents first reached as a delegate.
-        labels = {id(cast("object", value)): name for name, value in reversed(members) if isinstance(value, Agent)}
+        labels = {id(agent): name for name, agent, _ in reversed(agents)}
+        for _, agent, wrapper in agents:
+            if wrapper is not None:  # first, so that an agent the module also holds is not drawn twice
+                self._register_wrapped(agent, wrapper, labels)
         for name, value in members:
             if isinstance(value, Agent):
                 self._register_agent(cast("AnyAgent", value), labels)
@@ -473,7 +506,7 @@ class Session:
             label = f"graph-{self._graph_count}" if graph.label == f"graph-{graph.id[1:]}" else graph.label
             self._emit_graph(graph.model_copy(update={"id": new_id, "label": label}))
 
-    def _register_agent(self, root: AnyAgent, labels: Mapping[int, str]) -> None:
+    def _register_agent(self, root: AnyAgent, labels: Mapping[int, str], wrapper: str | None = None) -> None:
         if id(root) in self._agents:
             return
         added: list[_RegisteredAgent] = []
@@ -483,7 +516,10 @@ class Session:
                 # so the static blueprint replaces that one in the viewer.
                 observed = self._blueprint_named(agent.name, source="observed")
                 entry = _RegisteredAgent(
-                    agent, self._new_agent_id() if observed is None else observed.id, labels.get(id(agent))
+                    agent,
+                    self._new_agent_id() if observed is None else observed.id,
+                    labels.get(id(agent)),
+                    wrapper if agent is root else None,
                 )
                 self._agents[id(agent)] = entry
                 added.append(entry)
@@ -512,7 +548,9 @@ class Session:
             known = self._agents.get(id(agent))
             return None if known is None else known.id
 
-        blueprint = introspect_agent(entry.agent, id=entry.id, label=entry.label, delegate_id=delegate_id)
+        blueprint = introspect_agent(
+            entry.agent, id=entry.id, label=entry.label, delegate_id=delegate_id, wrapper=entry.wrapper
+        )
         return self._with_unique_name(blueprint)
 
     def _with_unique_name(self, blueprint: AgentBlueprint) -> AgentBlueprint:

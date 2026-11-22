@@ -64,6 +64,7 @@ def observed_blueprint(id: str, name: str, *, description: str | None, model_nam
             defaults=[],
         ),
         delegates=[],
+        wrapper=None,
         warnings=[],
     )
 

@@ -129,6 +129,17 @@
           },
           "title": "Warnings",
           "type": "array"
+        },
+        "wrapper": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Wrapper"
         }
       },
       "required": [
@@ -148,6 +159,7 @@
         "capabilities",
         "settings",
         "delegates",
+        "wrapper",
         "warnings"
       ],
       "title": "AgentBlueprint",

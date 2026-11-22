@@ -31,6 +31,7 @@ from typing import Annotated, Any, Literal, TypeAlias, Union, cast, get_args, ge
 from warnings import catch_warnings, simplefilter
 
 from pydantic_ai import Agent, NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import Model
 from pydantic_ai.toolsets import (
@@ -67,6 +68,7 @@ from ._normalize import clip
 from ._skills import is_skills, skill_catalog
 
 AnyAgent: TypeAlias = "Agent[Any, Any]"
+AnyWrapper: TypeAlias = "WrapperAgent[Any, Any]"
 AnyGraph: TypeAlias = "Graph[Any, Any, Any, Any]"
 ToolKind: TypeAlias = Literal["function", "output", "external", "unapproved"]
 ToolsetKind: TypeAlias = Literal["agent", "function", "mcp", "dynamic", "other"]
@@ -360,6 +362,29 @@ def _capability_delegates(agent: AnyAgent) -> list[tuple[str, AnyAgent]]:
                 name = tool_name if isinstance(tool_name, str) else _compat.SUB_AGENTS_TOOL_NAME
                 pairs.append((name, cast("AnyAgent", target)))
     return pairs
+
+
+_DURABLE_MODULE = "pydantic_ai.durable_exec."
+_MAX_WRAPPED = 4
+
+
+def durable_wrapper(value: object) -> tuple[AnyAgent, str] | None:
+    """The agent inside a durable-execution wrapper (``TemporalAgent`` and the like) and the wrapper's class name.
+
+    Found by name and module, so the optional ``temporalio``, ``dbos`` and ``prefect`` are never imported.
+    """
+    name: str | None = None
+    current: object = value
+    for _ in range(_MAX_WRAPPED):
+        if not isinstance(current, WrapperAgent):
+            break
+        wrapper = cast("AnyWrapper", current)
+        if name is None and type(wrapper).__module__.startswith(_DURABLE_MODULE):
+            name = type(wrapper).__name__
+        current = cast("object", wrapper.wrapped)
+    if name is not None and isinstance(current, Agent):
+        return cast("AnyAgent", current), name
+    return None
 
 
 def find_delegates(agent: AnyAgent) -> list[tuple[str, AnyAgent]]:
@@ -847,6 +872,7 @@ def introspect_agent(
     id: str,
     label: str | None = None,
     delegate_id: Callable[[AnyAgent], str | None],
+    wrapper: str | None = None,
 ) -> AgentBlueprint:
     """Build the static blueprint of ``agent``.
 
@@ -857,6 +883,7 @@ def introspect_agent(
             used while ``agent.name`` is ``None``.
         delegate_id: Maps a sub-agent found by the delegation heuristic to its
             blueprint id. Returning ``None`` drops that edge.
+        wrapper: Class name of the durable-execution wrapper around ``agent``, if it has one.
     """
     warnings: list[str] = []
     walk = _walk_toolsets(agent, warnings)
@@ -886,6 +913,7 @@ def introspect_agent(
         capabilities=_capabilities(agent, walk, warnings),
         settings=_settings(agent, warnings),
         delegates=delegates,
+        wrapper=wrapper,
         warnings=warnings,
     )
 
@@ -1015,7 +1043,7 @@ def introspect_graph(graph: AnyGraph, *, id: str, label: str | None = None) -> G
 # -------------------------------------------------------------------- public
 
 
-def blueprint(target: AnyAgent | AnyGraph) -> AgentBlueprint | GraphBlueprint:
+def blueprint(target: AnyAgent | AnyGraph | AnyWrapper) -> AgentBlueprint | GraphBlueprint:
     """Describe an agent or a graph without running it.
 
     Pure: no model call, no server, no session, nothing global is touched. The
@@ -1027,7 +1055,8 @@ def blueprint(target: AnyAgent | AnyGraph) -> AgentBlueprint | GraphBlueprint:
     `"a1"`.
 
     Args:
-        target: A `pydantic_ai.Agent` or a `pydantic_graph.Graph`.
+        target: A `pydantic_ai.Agent` (or a durable-execution wrapper around one, such as `TemporalAgent`)
+            or a `pydantic_graph.Graph`.
 
     Returns:
         An `AgentBlueprint` or a `GraphBlueprint`. Anything that could not be
@@ -1036,6 +1065,9 @@ def blueprint(target: AnyAgent | AnyGraph) -> AgentBlueprint | GraphBlueprint:
     Raises:
         TypeError: If `target` is neither an agent nor a graph.
     """
+    wrapped = durable_wrapper(target)
+    if wrapped is not None:
+        target = wrapped[0]
     if isinstance(target, Agent):
         agents = agent_closure(target)
 
@@ -1045,7 +1077,9 @@ def blueprint(target: AnyAgent | AnyGraph) -> AgentBlueprint | GraphBlueprint:
                     return f"a{index + 1}"
             return None
 
-        return introspect_agent(target, id="a1", delegate_id=delegate_id)
+        return introspect_agent(
+            target, id="a1", delegate_id=delegate_id, wrapper=None if wrapped is None else wrapped[1]
+        )
     if isinstance(target, Graph):  # pyright: ignore[reportUnnecessaryIsInstance]
         return introspect_graph(target, id="g1")
     raise TypeError(f"blueprint() expects a pydantic_ai.Agent or a pydantic_graph.Graph, got {type(target).__name__}")

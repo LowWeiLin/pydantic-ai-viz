@@ -256,6 +256,8 @@ function apply(draft: Draft, owned: Owned, env: Envelope): { draft: Draft; owned
         capabilities: withCapabilityDefaults(env.agent.capabilities),
         settings: withSettingsDefaults(env.agent.settings),
         output: withOutputDefaults(env.agent.output),
+        // Recordings made before durable-execution wrappers were read name none.
+        wrapper: env.agent.wrapper ?? null,
       };
       break;
     }

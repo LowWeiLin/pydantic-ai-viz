@@ -201,6 +201,14 @@ export function AgentNode({ data }: NodeProps<Node<AgentNodeData, "agent">>) {
             <Icon name="agent" size={14} />
           </span>
           <span className="min-w-0 flex-1 truncate font-semibold text-em text-fg">{bp.label}</span>
+          {bp.wrapper && (
+            <span
+              title={`${bp.wrapper}: model requests and tool calls run as durable steps`}
+              className="inline-flex shrink-0"
+            >
+              <Chip>{bp.wrapper.replace(/Agent$/, "")}</Chip>
+            </span>
+          )}
           {warnings > 0 && (
             // What could not be read is listed in the inspector; the card says only that there is some.
             <span

@@ -123,6 +123,7 @@ type AgentBlueprint = {
     expressions: { [k: string]: string };  // settings computed at run time: name -> source text
   };
   delegates: { tool_name: string; agent_id: string; evidence: Provenance }[];
+  wrapper: string | null;      // the durable-execution wrapper around the agent, e.g. "TemporalAgent"
   warnings: string[];          // human-readable notes about anything that could not be read
 };
 

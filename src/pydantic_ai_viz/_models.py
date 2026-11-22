@@ -281,6 +281,8 @@ class AgentBlueprint(WireModel):
     capabilities: list[CapabilityInfo]
     settings: AgentSettings
     delegates: list[Delegate]
+    wrapper: str | None
+    """Class name of the durable-execution wrapper around the agent (``TemporalAgent``...)."""
     warnings: list[str]
 
 

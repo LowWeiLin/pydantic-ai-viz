@@ -336,6 +336,7 @@ function settingsSection(agent: AgentBlueprint, showDefaults: boolean): SectionI
   const byDefault = (key: string): boolean => settings.defaults.includes(key);
   const facts = known([
     row("Dependencies", agent.deps_type && <code className="break-all">{agent.deps_type}</code>),
+    row("Durable execution", agent.wrapper && <code>{agent.wrapper}</code>),
     ...fields
       .filter(([key]) => showDefaults || !byDefault(key))
       .map(([key, label, shown]) =>

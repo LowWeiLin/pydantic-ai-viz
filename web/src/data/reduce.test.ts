@@ -82,8 +82,9 @@ describe("reduce", () => {
       package: "pydantic_ai_harness",
     });
     const { validators: _validators, ...olderOutput } = rest.output;
+    const { wrapper: _wrapper, ...older } = rest;
     const old = {
-      ...rest,
+      ...older,
       output: olderOutput,
       settings: olderSettings,
       capabilities: [olderCapability],
@@ -97,6 +98,7 @@ describe("reduce", () => {
     });
     expect(state.agents.a1?.settings.defaults).toEqual([]);
     expect(state.agents.a1?.output.validators).toEqual([]);
+    expect(state.agents.a1?.wrapper).toBeNull();
     // What a newer recording says is kept.
     const newer = agentBlueprint({ id: "a2" });
     newer.settings.defaults = ["end_strategy"];

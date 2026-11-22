@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import Agent
+from pydantic_ai.agent import WrapperAgent
 from pydantic_graph import Graph
 
 from ._analyze import Analysis
@@ -160,7 +161,9 @@ def download_name(title: str, extension: str) -> str:
 # ------------------------------------------------------------------- public
 
 
-def blueprint_events(target: Agent[Any, Any] | Graph[Any, Any, Any, Any] | Analysis) -> list[Envelope]:
+def blueprint_events(
+    target: Agent[Any, Any] | WrapperAgent[Any, Any] | Graph[Any, Any, Any, Any] | Analysis,
+) -> list[Envelope]:
     """The log of a session that only ever registered ``target``: blueprints, no runs."""
     from ._session import blueprint_session
 
@@ -169,7 +172,13 @@ def blueprint_events(target: Agent[Any, Any] | Graph[Any, Any, Any, Any] | Analy
 
 
 def export_html(
-    source: Session | Agent[Any, Any] | Graph[Any, Any, Any, Any] | Analysis | str | os.PathLike[str],
+    source: Session
+    | Agent[Any, Any]
+    | WrapperAgent[Any, Any]
+    | Graph[Any, Any, Any, Any]
+    | Analysis
+    | str
+    | os.PathLike[str],
     path: str | os.PathLike[str],
 ) -> Path:
     """Write a self-contained HTML file that opens in any browser, with no server.
@@ -204,7 +213,7 @@ def export_html(
 
     if isinstance(source, Session):
         events = source.events
-    elif isinstance(source, Agent | Graph | Analysis):
+    elif isinstance(source, Agent | WrapperAgent | Graph | Analysis):
         events = blueprint_events(source)  # pyright: ignore[reportUnknownArgumentType]
     elif isinstance(source, str | os.PathLike):  # pyright: ignore[reportUnnecessaryIsInstance]
         events = read_jsonl(source)
