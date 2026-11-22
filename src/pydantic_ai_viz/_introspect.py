@@ -477,12 +477,14 @@ def _output(agent: AnyAgent, warnings: list[str]) -> OutputInfo:
         )
         tool_names = [str(tool_def.name) for tool_def in tool_defs]
 
+    validators: Any = _compat.get_private(agent, "_output_validators", [], warnings)
     return OutputInfo(
         mode=mode,
         allows_text=allows_text if isinstance(allows_text, bool) else None,
         type_name=type_name,
         json_schema=json_schema,
         tool_names=tool_names,
+        validators=[name for v in validators if (name := qualified_name(_safe_getattr(v, "function"))) is not None],
         location=None,
     )
 

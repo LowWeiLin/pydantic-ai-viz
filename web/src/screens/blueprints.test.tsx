@@ -949,6 +949,31 @@ describe("the hooks of a Hooks capability", () => {
   });
 });
 
+describe("the output validators of an agent", () => {
+  test("the output section names them in registration order", () => {
+    const base = agentBlueprint({ id: "a1" });
+    const agent = {
+      ...base,
+      output: { ...base.output, validators: ["app.not_empty", "app.short"] },
+    };
+    window.location.hash = "#/agents/a1";
+    render(
+      <App
+        plan={{
+          kind: "embedded",
+          events: log(
+            [0, { ...sessionStarted(), mode: "blueprint" }],
+            [1, { type: "blueprint.agent", agent }],
+          ),
+        }}
+      />,
+    );
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    expect(within(details).getByText("Validated by")).toBeInTheDocument();
+    expect(within(details).getByText("app.not_empty, app.short")).toBeInTheDocument();
+  });
+});
+
 describe("skills, and what Pydantic AI adds by default", () => {
   const houseStyle = skill({
     name: "house-style",

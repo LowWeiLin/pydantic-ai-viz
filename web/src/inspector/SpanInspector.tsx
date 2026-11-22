@@ -459,8 +459,7 @@ function toolCallTabs(span: ToolCallSpan): TabItem[] {
               {span.error && <ErrorBox error={span.error} retry={data.retry !== null} />}
               {data.retry && (
                 <Note>
-                  A retry is not a failure: the tool asked the model to call it again, and the run
-                  went on.
+                  A retry is not a failure: the model was asked to try again, and the run went on.
                 </Note>
               )}
             </>

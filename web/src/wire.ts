@@ -150,6 +150,8 @@ export type OutputInfo = {
   json_schema: Json | null;
   /** e.g. ["final_result"]; may be filled from observed runs. */
   tool_names: string[];
+  /** The functions registered with `@agent.output_validator`, in registration order. */
+  validators: string[];
   /** Where the output type is defined. */
   location: SourceLocation | null;
 };

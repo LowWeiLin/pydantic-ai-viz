@@ -229,6 +229,36 @@ def test_harness_toolsets_merged_capabilities_and_given_instructions_read_as_the
         assert [t.name for t in static[name].tools] == [t.name for t in live[name].tools], name
 
 
+def test_output_validators_read_from_source_match_the_live_agent(tmp_path: Path) -> None:
+    path = tmp_path / "checked.py"
+    path.write_text(
+        textwrap.dedent(
+            """
+            from pydantic_ai import Agent, ModelRetry
+            from pydantic_ai.models.test import TestModel
+
+            checked = Agent(TestModel(), name="checked")
+            plain = Agent(TestModel(), name="plain")
+
+            @checked.output_validator
+            def not_empty(ctx, output: str) -> str:
+                return output
+
+            @checked.output_validator
+            async def short(ctx, output: str) -> str:
+                return output
+            """
+        ),
+        encoding="utf-8",
+    )
+    live = live_agents(path)
+    static = {b.label: b for b in analyze(path).agents}
+    # The live module is loaded under another name than the file's, so only the function's own name is compared.
+    for name, expected in (("checked", ["not_empty", "short"]), ("plain", [])):
+        for found in (static[name], live[name]):
+            assert [v.rsplit(".", 1)[-1] for v in found.output.validators] == expected, name
+
+
 def test_the_graph_read_from_source_matches_the_live_graph() -> None:
     live, static = live_and_static("pipeline")
     (expected,) = (b for b in live if isinstance(b, GraphBlueprint))

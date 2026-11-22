@@ -45,7 +45,13 @@ def observed_blueprint(id: str, name: str, *, description: str | None, model_nam
         tools=[],
         native_tools=[],
         output=OutputInfo(
-            mode="unknown", allows_text=None, type_name=None, json_schema=None, tool_names=[], location=None
+            mode="unknown",
+            allows_text=None,
+            type_name=None,
+            json_schema=None,
+            tool_names=[],
+            validators=[],
+            location=None,
         ),
         capabilities=[],
         settings=AgentSettings(

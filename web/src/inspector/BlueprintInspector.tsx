@@ -417,6 +417,7 @@ function outputSection(agent: AgentBlueprint): SectionItem {
               output.allows_text ? "allowed" : "not allowed",
             ],
             output.tool_names.length > 0 && ["Output tools", output.tool_names.join(", ")],
+            output.validators.length > 0 && ["Validated by", output.validators.join(", ")],
             output.location && [
               "Defined at",
               <SourceRef key="location" location={output.location} prefix="" />,

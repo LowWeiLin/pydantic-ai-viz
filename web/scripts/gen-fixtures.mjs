@@ -465,6 +465,7 @@ const agent = (fields) =>
       type_name: "str",
       json_schema: { type: "string" },
       tool_names: [],
+      validators: [],
     },
     capabilities: BUILTIN_CAPABILITIES,
     // The defaults of the Pydantic AI in VERSIONS, which a live agent names as such.
@@ -683,6 +684,7 @@ function sample() {
           required: ["status", "refund_eur", "reply"],
         },
         tool_names: ["final_result"],
+        validators: [],
       },
       settings: {
         model_settings: { temperature: 0.2 },
@@ -735,6 +737,7 @@ function sample() {
         required: ["approved", "notes"],
       },
       tool_names: ["final_result"],
+      validators: [],
     },
   });
   const pipeline = {
@@ -1019,6 +1022,7 @@ function failed() {
         type_name: null,
         json_schema: null,
         tool_names: [],
+        validators: [],
       },
       capabilities: [],
       settings: {
@@ -1069,7 +1073,14 @@ function failed() {
         },
       ),
     ],
-    output: { mode: "text", allows_text: true, type_name: null, json_schema: null, tool_names: [] },
+    output: {
+      mode: "text",
+      allows_text: true,
+      type_name: null,
+      json_schema: null,
+      tool_names: [],
+      validators: [],
+    },
     warnings: [
       "Built from observed runs. Register the agent with serve() or record() for full detail.",
     ],
@@ -1374,6 +1385,7 @@ function approvals() {
         type_name: "str | DeferredToolRequests",
         json_schema: { type: "string" },
         tool_names: [],
+        validators: [],
       },
     }),
   });
@@ -1615,6 +1627,7 @@ function newsroom() {
       type_name: "Story",
       json_schema: story,
       tool_names: ["final_result"],
+      validators: [],
       location: at("desk.py", 12),
     },
     settings: {
@@ -1820,6 +1833,7 @@ function newsroom() {
       type_name: "Verdict[Claim]",
       json_schema: { "x-python-type": "Verdict[Claim]" },
       tool_names: [],
+      validators: [],
       location: at("checks.py", 8),
     },
     warnings: [

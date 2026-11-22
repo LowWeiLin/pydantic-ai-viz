@@ -697,6 +697,22 @@ def test_an_expected_retry_has_no_stacktrace(exception_type: str, attributes: di
     assert wire["error"] == {"type": exception_type, "message": "x must be 2", "stacktrace": None}
 
 
+def test_a_text_output_function_retry_reads_the_output_retry_attributes() -> None:
+    span = _span(
+        "running output function: tf",
+        {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "tf",
+            "pydantic_ai.output.retry.cause": "model_retry",
+            "pydantic_ai.output.retry.attempt": 1,
+            "pydantic_ai.output.retry.max_retries": 2,
+        },
+    )
+    wire = to_wire(normalize(span, ended=True).span)
+    assert wire["data"]["retry"] == {"cause": "model_retry", "attempt": 1, "max_retries": 2}
+    assert "pydantic_ai.output.retry.cause" not in wire["attributes"]
+
+
 def test_a_real_error_keeps_its_stacktrace() -> None:
     wire = _failed({}, "RuntimeError")
     assert wire["error"]["stacktrace"].startswith("Traceback")

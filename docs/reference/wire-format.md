@@ -109,6 +109,7 @@ type AgentBlueprint = {
     type_name: string | null;  // for example "Resolution", "str", "A | B"
     json_schema: Json | null;
     tool_names: string[];      // for example ["final_result"]; may be filled from observed runs
+    validators: string[];      // the @agent.output_validator functions, in registration order
     location: SourceLocation | null;  // where the output type is defined
   };
   capabilities: Capability[];
@@ -422,7 +423,7 @@ Spans are produced by Pydantic AI as OpenTelemetry spans and converted to the sh
 | `ModelRequestData.input_messages`, `output_messages` | `gen_ai.input.messages`, `gen_ai.output.messages` |
 | `ModelRequestData.usage` | `gen_ai.usage.input_tokens`, `.output_tokens` |
 | `ToolCallData.call_id`, `arguments`, `result` | `gen_ai.tool.call.id`, `.arguments`, `.result` |
-| `ToolCallData.retry` | `pydantic_ai.tool.retry.cause`, `.attempt`, `.max_retries` |
+| `ToolCallData.retry` | `pydantic_ai.tool.retry.cause`, `.attempt`, `.max_retries` (or `pydantic_ai.output.retry.*`, on the span of a text output function) |
 | `ToolCallData.deferral` | `pydantic_ai.tool.deferral.name`: `ApprovalRequired` gives `approval`, `CallDeferred` gives `external` |
 | `events` | the span's `pydantic_ai_viz.event` events, added by `CaptureEvents`: their `kind`, `event_kind`, `capability_id`, `tool_call_id`, `tool_name` and `data` (a JSON string) attributes, and their timestamp |
 | `error` | the span's `exception` event (`exception.type`, `.message`, `.stacktrace`) |

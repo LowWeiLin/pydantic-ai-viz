@@ -68,7 +68,7 @@ describe("reduce", () => {
     expect(state.agents.a2?.capabilities).toEqual([current]);
   });
 
-  test("a recording made before skills, hooks, stacks and default settings were read has none", () => {
+  test("a recording made before skills, hooks, stacks, default settings and output validators were read has none", () => {
     const { settings, ...rest } = agentBlueprint({ id: "a1" });
     const { defaults: _defaults, ...olderSettings } = settings;
     const {
@@ -81,7 +81,13 @@ describe("reduce", () => {
       name: "Skills",
       package: "pydantic_ai_harness",
     });
-    const old = { ...rest, settings: olderSettings, capabilities: [olderCapability] };
+    const { validators: _validators, ...olderOutput } = rest.output;
+    const old = {
+      ...rest,
+      output: olderOutput,
+      settings: olderSettings,
+      capabilities: [olderCapability],
+    };
     const state = stateOf([1, { type: "blueprint.agent", agent: old as AgentBlueprint }]);
     expect(state.agents.a1?.capabilities[0]).toMatchObject({
       capability_id: null,
@@ -90,6 +96,7 @@ describe("reduce", () => {
       hooks: [],
     });
     expect(state.agents.a1?.settings.defaults).toEqual([]);
+    expect(state.agents.a1?.output.validators).toEqual([]);
     // What a newer recording says is kept.
     const newer = agentBlueprint({ id: "a2" });
     newer.settings.defaults = ["end_strategy"];

@@ -25,6 +25,7 @@ AGENT_PRIVATE_ATTRS: dict[str, str] = {
     "_tool_timeout": "tool timeout",
     "_output_schema": "output mode",
     "_output_toolset": "output tool names",
+    "_output_validators": "output validators",
     "_cap_native_tools": "native tools",
 }
 """Private ``Agent`` attributes we read, mapped to what the user loses without them."""

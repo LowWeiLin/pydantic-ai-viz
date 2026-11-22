@@ -306,6 +306,7 @@ def test_full_agent_blueprint() -> None:
                     "type": "object",
                 },
                 "tool_names": ["final_result"],
+                "validators": [],
                 "location": None,
             },
             "capabilities": [
@@ -422,6 +423,21 @@ def shout(text: str) -> str:
     return text.upper()
 
 
+def test_output_validators_are_listed_in_order() -> None:
+    agent = Agent()
+
+    @agent.output_validator
+    def first(output: str) -> str:
+        return output
+
+    @agent.output_validator
+    async def second(output: str) -> str:
+        return output
+
+    names = _agent_blueprint(agent).output.validators
+    assert [name.rsplit(".", 1)[-1] for name in names] == ["first", "second"]
+
+
 def test_text_output() -> None:
     assert _agent_blueprint(Agent()).output.model_dump() == snapshot(
         {
@@ -430,6 +446,7 @@ def test_text_output() -> None:
             "type_name": "str",
             "json_schema": {"type": "string"},
             "tool_names": [],
+            "validators": [],
             "location": None,
         }
     )
@@ -448,6 +465,7 @@ def test_structured_output() -> None:
                 "type": "object",
             },
             "tool_names": ["final_result"],
+            "validators": [],
             "location": None,
         }
     )
@@ -476,6 +494,7 @@ def test_multi_output() -> None:
                 ]
             },
             "tool_names": ["final_result_Left", "final_result_Right"],
+            "validators": [],
             "location": None,
         }
     )
@@ -492,6 +511,7 @@ def test_multi_output() -> None:
                     "allows_text": True,
                     "type_name": "Left | Right",
                     "tool_names": ["final_result_Left", "final_result_Right"],
+                    "validators": [],
                     "location": None,
                 }
             ),
@@ -504,13 +524,23 @@ def test_multi_output() -> None:
                     "allows_text": False,
                     "type_name": "Left",
                     "tool_names": ["give_left"],
+                    "validators": [],
                     "location": None,
                 }
             ),
         ),
         (
             NativeOutput(Left),
-            snapshot({"mode": "native", "allows_text": True, "type_name": "Left", "tool_names": [], "location": None}),
+            snapshot(
+                {
+                    "mode": "native",
+                    "allows_text": True,
+                    "type_name": "Left",
+                    "tool_names": [],
+                    "validators": [],
+                    "location": None,
+                }
+            ),
         ),
         (
             PromptedOutput([Left, Right]),
@@ -520,13 +550,23 @@ def test_multi_output() -> None:
                     "allows_text": True,
                     "type_name": "Left | Right",
                     "tool_names": [],
+                    "validators": [],
                     "location": None,
                 }
             ),
         ),
         (
             TextOutput(shout),
-            snapshot({"mode": "text", "allows_text": True, "type_name": "shout", "tool_names": [], "location": None}),
+            snapshot(
+                {
+                    "mode": "text",
+                    "allows_text": True,
+                    "type_name": "shout",
+                    "tool_names": [],
+                    "validators": [],
+                    "location": None,
+                }
+            ),
         ),
         (
             [ToolOutput(Left, name="give_left"), Right, shout],
@@ -536,6 +576,7 @@ def test_multi_output() -> None:
                     "allows_text": False,
                     "type_name": "Left | Right | shout",
                     "tool_names": ["give_left", "final_result_Right", "final_result_shout"],
+                    "validators": [],
                     "location": None,
                 }
             ),
@@ -548,6 +589,7 @@ def test_multi_output() -> None:
                     "allows_text": True,
                     "type_name": "list[Left]",
                     "tool_names": ["final_result"],
+                    "validators": [],
                     "location": None,
                 }
             ),

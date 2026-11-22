@@ -360,6 +360,7 @@ def test_blueprint_survives_losing_every_private_attribute() -> None:
             "native tools unavailable (pydantic-ai internals changed)",
             "output mode unavailable (pydantic-ai internals changed)",
             "output tool names unavailable (pydantic-ai internals changed)",
+            "output validators unavailable (pydantic-ai internals changed)",
             "tool timeout unavailable (pydantic-ai internals changed)",
             "tool retries unavailable (pydantic-ai internals changed)",
             "output retries unavailable (pydantic-ai internals changed)",
@@ -368,7 +369,14 @@ def test_blueprint_survives_losing_every_private_attribute() -> None:
     assert result.instructions == []
     assert result.native_tools == []
     assert result.output.model_dump(exclude={"json_schema"}) == snapshot(
-        {"mode": "unknown", "allows_text": None, "type_name": "Answer", "tool_names": [], "location": None}
+        {
+            "mode": "unknown",
+            "allows_text": None,
+            "type_name": "Answer",
+            "tool_names": [],
+            "validators": [],
+            "location": None,
+        }
     )
     assert result.settings.model_dump() == snapshot(
         {

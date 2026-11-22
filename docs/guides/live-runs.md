@@ -94,6 +94,7 @@ Two details that are easy to trip over:
 
 - **The output tool has no row of its own.** When an agent returns structured output through a tool such as `final_result`, Pydantic AI does not emit a span for that call. The viewer lights the output node when the run ends successfully, and the call is visible in the conversation.
 - **Amber is a retry, red is an error.** A `ModelRetry` is the agent working as designed, so it never shows red.
+- **A retry from an output validator leaves no mark.** Pydantic AI records no span or attribute when an `@agent.output_validator` raises `ModelRetry`, so the viewer cannot show it; the extra model request is all a run shows. A retry from an output function or an output tool is shown as any tool retry.
 
 The run's token total in the sidebar is the sum over its model requests, including those of delegated agents, counted once each.
 

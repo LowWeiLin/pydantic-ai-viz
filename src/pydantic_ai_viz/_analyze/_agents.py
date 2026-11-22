@@ -322,6 +322,7 @@ class _AgentSite:
     tools: list[_ToolSpec] = field(default_factory=list[_ToolSpec])
     instructions: list[Instruction] = field(default_factory=list[Instruction])
     system_prompts: list[Instruction] = field(default_factory=list[Instruction])
+    output_validators: list[str] = field(default_factory=list[str])
     toolset_functions: list[Definition] = field(default_factory=list[Definition])
     notes: list[str] = field(default_factory=list[str])
     """Warnings about registrations that could not be read."""
@@ -822,6 +823,8 @@ class AgentExtractor:
                     location=where,
                 )
                 (receiver.instructions if name == "instructions" else receiver.system_prompts).append(prompt)
+            elif name == "output_validator":
+                receiver.output_validators.append(function.qualified_name)
             elif name == "toolset":
                 receiver.toolset_functions.append(function)
 
@@ -1750,6 +1753,7 @@ class _AgentBuilder:
     # -------------------------------------------------------------- output
 
     def _output(self) -> OutputInfo:
+        validators = self.agent.output_validators
         # ``result_type`` is what ``output_type`` was called in early releases; code written then is read too.
         node = self.arguments.get("output_type", self.arguments.get("result_type"))
         if node is None:
@@ -1759,6 +1763,7 @@ class _AgentBuilder:
                 type_name="str",
                 json_schema={"type": "string"},
                 tool_names=[],
+                validators=validators,
                 location=None,
             )
         builder = SchemaBuilder(self.resolver)
@@ -1795,6 +1800,7 @@ class _AgentBuilder:
             type_name=" | ".join(labels) or None,
             json_schema=document,
             tool_names=[],
+            validators=validators,
             location=None if where is None else location(where.module, where.node),
         )
 

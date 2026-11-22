@@ -87,6 +87,7 @@ So the failure mode of a Pydantic AI upgrade is a less detailed blueprint with a
 | `settings.tool_timeout` | `agent._tool_timeout` | `null` and a warning. |
 | `output.mode`, `output.allows_text` | `agent._output_schema` | `"text"` when the output schema is a plain string, else `"unknown"`. Filled in from the first observed run. |
 | `output.tool_names` | `agent._output_toolset`, then its `_tool_defs` | Empty list and a warning. Filled in from observed runs. |
+| `output.validators` | `agent._output_validators` | Empty list and a warning. |
 | `native_tools` | `agent._cap_native_tools` | Empty list. For a capability loaded on demand, the native tool is read from a keyword default (`native_tool`) of the function `CombinedCapability.get_native_tools` puts in its place; a function without one is left out. |
 | `capabilities[].toolsets` | `CapabilityOwnedToolset.capability` (`pydantic_ai.toolsets._capability_owned`) | Empty list. |
 | A harness `Coder` or `Researcher` | The `owner` field of the private `RequireWorkspace` capability (`pydantic_ai_harness._workspace`), which the stack puts among its capabilities | The stack is not listed; its members are. |

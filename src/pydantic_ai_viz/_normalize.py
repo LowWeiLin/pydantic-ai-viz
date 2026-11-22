@@ -302,12 +302,14 @@ def _events(span: ReadableSpan) -> list[RunEvent]:
 
 
 def _retry(attributes: _Attributes) -> RetryInfo | None:
-    cause = attributes.take("pydantic_ai.tool.retry.cause")
-    attempt = _int(attributes.take("pydantic_ai.tool.retry.attempt"))
-    max_retries = _int(attributes.take("pydantic_ai.tool.retry.max_retries"))
-    if not isinstance(cause, str):
-        return None
-    return RetryInfo(cause=cause, attempt=attempt or 0, max_retries=max_retries or 0)
+    """A tool call's retry. A text output function answers no call, so its span carries ``output.retry`` instead."""
+    for prefix in ("pydantic_ai.tool.retry", "pydantic_ai.output.retry"):
+        cause = attributes.take(f"{prefix}.cause")
+        attempt = _int(attributes.take(f"{prefix}.attempt"))
+        max_retries = _int(attributes.take(f"{prefix}.max_retries"))
+        if isinstance(cause, str):
+            return RetryInfo(cause=cause, attempt=attempt or 0, max_retries=max_retries or 0)
+    return None
 
 
 _DEFERRALS: dict[str, Deferral] = {"ApprovalRequired": "approval", "CallDeferred": "external"}

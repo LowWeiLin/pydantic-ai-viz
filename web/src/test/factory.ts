@@ -247,6 +247,7 @@ export function agentBlueprint(fields: Partial<AgentBlueprint> & { id: string })
       type_name: "str",
       json_schema: null,
       tool_names: [],
+      validators: [],
       location: null,
     },
     capabilities: [],

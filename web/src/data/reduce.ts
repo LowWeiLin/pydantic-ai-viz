@@ -41,6 +41,10 @@ const withCapabilityDefaults = (list: Capability[] | undefined): Capability[] =>
 const withSettingsDefaults = (settings: AgentBlueprint["settings"]): AgentBlueprint["settings"] =>
   isObject(settings) ? { ...settings, defaults: settings.defaults ?? [] } : settings;
 
+/** Recordings made before output validators were read name none. */
+const withOutputDefaults = (output: AgentBlueprint["output"]): AgentBlueprint["output"] =>
+  isObject(output) ? { ...output, validators: output.validators ?? [] } : output;
+
 /** One stream.delta, kept with its envelope time so time travel can filter it. */
 export type DeltaRecord = {
   seq: number;
@@ -251,6 +255,7 @@ function apply(draft: Draft, owned: Owned, env: Envelope): { draft: Draft; owned
         ...env.agent,
         capabilities: withCapabilityDefaults(env.agent.capabilities),
         settings: withSettingsDefaults(env.agent.settings),
+        output: withOutputDefaults(env.agent.output),
       };
       break;
     }

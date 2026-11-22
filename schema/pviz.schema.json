@@ -1928,6 +1928,13 @@
             }
           ],
           "title": "Type Name"
+        },
+        "validators": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Validators",
+          "type": "array"
         }
       },
       "required": [
@@ -1936,6 +1943,7 @@
         "type_name",
         "json_schema",
         "tool_names",
+        "validators",
         "location"
       ],
       "title": "OutputInfo",

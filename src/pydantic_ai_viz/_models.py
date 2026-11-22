@@ -147,6 +147,8 @@ class OutputInfo(WireModel):
     type_name: str | None
     json_schema: JsonValue
     tool_names: list[str]
+    validators: list[str]
+    """The functions registered with ``@agent.output_validator``, in registration order."""
     location: SourceLocation | None
     """Where the output type is defined."""
 

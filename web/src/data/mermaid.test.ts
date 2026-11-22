@@ -209,6 +209,7 @@ describe("agentMermaid", () => {
         type_name: null,
         json_schema: null,
         tool_names: [],
+        validators: [],
         location: null,
       },
     });
@@ -255,6 +256,7 @@ describe("agentMermaid", () => {
         type_name: 'dict[str, "A | B"]',
         json_schema: null,
         tool_names: [],
+        validators: [],
         location: null,
       },
     });
