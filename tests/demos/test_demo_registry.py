@@ -17,7 +17,7 @@ HARNESS = find_spec("pydantic_ai_harness") is not None
 
 
 def test_demos_are_listed_in_display_order() -> None:
-    assert list(DEMOS) == ["support", "research", "pipeline", *(["capabilities"] if HARNESS else [])]
+    assert list(DEMOS) == ["support", "research", "pipeline", *(["capabilities", "operations"] if HARNESS else [])]
     assert [demo.name for demo in DEMOS.values()] == list(DEMOS)
     assert all(isinstance(demo, Demo) for demo in DEMOS.values())
 
@@ -41,9 +41,10 @@ def test_targets_are_root_first() -> None:
     assert DEMOS["research"].targets == (research.planner, research.searcher, research.writer)
     assert DEMOS["pipeline"].targets == (pipeline.graph, pipeline.writer, pipeline.critic)
     if HARNESS:
-        from pydantic_ai_viz.demos import capabilities
+        from pydantic_ai_viz.demos import capabilities, operations
 
         assert DEMOS["capabilities"].targets == (capabilities.briefing,)
+        assert DEMOS["operations"].targets == (operations.oncall, operations.log_reader)
 
 
 def test_models_are_offline_and_honestly_named() -> None:
@@ -66,7 +67,8 @@ def test_a_demo_needing_the_harness_is_unavailable_without_it() -> None:
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, check=True)
     shown, unavailable = result.stdout.splitlines()[-2:]
     assert shown == "['support', 'research', 'pipeline']"
-    assert unavailable == "{'capabilities': \"needs pydantic-ai-harness: pip install 'pydantic-ai-viz[demos]'\"}"
+    needs = "needs pydantic-ai-harness: pip install 'pydantic-ai-viz[demos]'"
+    assert unavailable == repr({"capabilities": needs, "operations": needs})
 
 
 @pytest.mark.skipif(not HARNESS, reason="needs pydantic-ai-harness")
@@ -79,7 +81,7 @@ def test_a_missing_dependency_of_the_harness_is_named_not_reported_as_a_missing_
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, check=True)
     shown, unavailable = result.stdout.splitlines()[-2:]
-    assert shown == "['support', 'research', 'pipeline']"
+    assert shown == "['support', 'research', 'pipeline', 'operations']"
     assert "pydantic-ai-harness:" not in unavailable
     assert "PyYAML is required" in unavailable
     assert unavailable.endswith("pip install 'pydantic-ai-viz[demos]'")

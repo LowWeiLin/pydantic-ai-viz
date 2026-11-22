@@ -1,8 +1,8 @@
 /**
- * The docs screenshots (spec section 7): ten PNGs at 1440x900, device scale 2.
+ * The docs screenshots (spec section 7): thirteen PNGs at 1440x900, device scale 2.
  *
- *   PVIZ_RECORDINGS_DIR   directory holding the real demo recordings (support, research,
- *                         pipeline and capabilities `.pviz.jsonl`, and `source.pviz.jsonl`, the demos read from
+ *   PVIZ_RECORDINGS_DIR   directory holding the real demo recordings (support, research, pipeline,
+ *                         capabilities and operations `.pviz.jsonl`, and `source.pviz.jsonl`, the demos read from
  *                         source), as written by `scripts/build_demo_site.py`.
  *                         Not set: the committed fixtures stand in, so the spec always runs.
  *   PVIZ_SCREENSHOTS_DIR  where to write. Default: `docs/assets/screenshots` when the real
@@ -55,6 +55,9 @@ function load(...names: string[]): Recording {
 const support = () => load("support", "sample");
 const research = () => load("research", "sample");
 const pipeline = () => load("pipeline", "sample");
+const operations = () => load("operations", "approvals");
+/** The tool that needs approval: the demo's, or the approvals fixture's. */
+const approvedTool = real ? "restart_service" : "delete_file";
 
 /**
  * The demos' source code as `pydantic-ai-viz view` reads it (`source.pviz.jsonl`, written by
@@ -87,6 +90,16 @@ function capabilities(): string {
   const index = agent.capabilities.findIndex((capability) => capability.name === "Skills");
   const hash = `#/agents/${agent.id}?part=skill%3A${index}%3Ahouse-style`;
   return real ? src(recording, hash) : `/fx/?src=recordings/${recording.file}${hash}`;
+}
+
+/**
+ * The on-call agent of the operations demo, its Hooks capability picked: the real recording, or
+ * the approvals fixture's agent, which has a tool that needs approval but no hooks.
+ */
+function operationsAgent(recording: Recording): string {
+  const agent = blueprint(recording, real ? "oncall" : "ops");
+  const index = agent.capabilities.findIndex((capability) => capability.name === "Hooks");
+  return src(recording, `#/agents/${agent.id}${index < 0 ? "" : `?part=capability%3A${index}`}`);
 }
 
 const agentRun = (recording: Recording): Span =>
@@ -213,6 +226,25 @@ for (const scheme of ["dark", "light"] as const) {
       await shoot(page, `capabilities-${scheme}.png`);
     });
   });
+
+  test.describe(`operations, ${scheme}`, () => {
+    test.use({ colorScheme: scheme });
+    // An agent that delegates through SubAgents, is watched by hooks and has a tool that needs
+    // approval: the delegation edge, the hook rows and the "needs approval" tag on one canvas.
+    test(`operations-${scheme}.png`, async ({ page }) => {
+      await page.goto(operationsAgent(operations()));
+      await expect(
+        canvasNode(page, new RegExp(`^Tool ${approvedTool}, needs approval`)),
+      ).toBeVisible();
+      if (real) {
+        await expect(
+          canvasNode(page, /^Hook before_tool_execute of Hooks: guard_restart/),
+        ).toBeVisible();
+        await expect(canvasNode(page, /^Agent log_reader/)).toBeVisible();
+      }
+      await shoot(page, `operations-${scheme}.png`);
+    });
+  });
 }
 
 test.describe("docs images", () => {
@@ -249,6 +281,22 @@ test.describe("docs images", () => {
       "true",
     );
     await shoot(page, "inspector.png");
+  });
+
+  test("approvals.png", async ({ page }) => {
+    // A run that ended waiting for a human to approve its restarts, and the link to the run
+    // that resumes it.
+    const recording = operations();
+    const waited = recording.spans.find(
+      (span) => span.kind === "agent_run" && span.data.deferred.length > 0,
+    );
+    if (!waited) throw new Error(`${recording.file} has no run that waits for approval`);
+    await openRun(page, recording, waited.trace_id);
+    await skipToEnd(page);
+    await expect(
+      canvasNode(page, new RegExp(`^Tool ${approvedTool}, needs approval, [0-9]+ calls?, waiting`)),
+    ).toBeVisible();
+    await shoot(page, "approvals.png");
   });
 
   test("graph.png", async ({ page }) => {

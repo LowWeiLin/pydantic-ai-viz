@@ -65,7 +65,8 @@ def test_the_demo_site_is_the_viewer_a_gallery_index_and_one_recording_per_demo(
         events = read_recording(out / "recordings" / f"{demo.name}.pviz.jsonl")
         assert_log_guarantees(events)
         assert (events[0]["title"], events[0]["stream"]) == (demo.title, True)
-        assert finished_runs(events) == 1
+        # The operations demo resumes its first run in a second one.
+        assert finished_runs(events) == (2 if demo.name == "operations" else 1)
         assert any(event["type"] == "stream.delta" for event in events)
 
     # The same demos as `view` reads their source: every agent and graph, from code, and no run.
@@ -80,8 +81,8 @@ def test_the_demo_site_is_the_viewer_a_gallery_index_and_one_recording_per_demo(
     agents = [event["agent"] for event in events if event["type"] == "blueprint.agent"]
     modules = (demos.support, demos.research, demos.pipeline)
     live = [str(value.name) for module in modules for value in vars(module).values() if isinstance(value, Agent)]
-    # The capabilities demo is read from source even when pydantic-ai-harness (needed to import it) is missing.
-    assert sorted(agent["label"] for agent in agents) == sorted([*live, "briefing"])
+    # The harness demos are read from source even when pydantic-ai-harness (needed to import them) is missing.
+    assert sorted(agent["label"] for agent in agents) == sorted([*live, "briefing", "oncall", "log_reader"])
     assert {agent["source"] for agent in agents} == {"code"}
     # Where each one is defined, relative to the demos: no path of the machine that built the site.
     assert {agent["location"]["file"] for agent in agents} == {
@@ -89,6 +90,7 @@ def test_the_demo_site_is_the_viewer_a_gallery_index_and_one_recording_per_demo(
         "research.py",
         "pipeline.py",
         "capabilities.py",
+        "operations.py",
     }
     assert [event["graph"]["label"] for event in events if event["type"] == "blueprint.graph"] == ["pipeline"]
 

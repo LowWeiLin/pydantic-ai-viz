@@ -30,8 +30,13 @@ from .support import (
     read_recording,
 )
 
-# The capabilities demo needs pydantic-ai-harness; without it the demo is not listed.
-NAMES = ["support", "research", "pipeline", *(["capabilities"] if find_spec("pydantic_ai_harness") else [])]
+# The capabilities and operations demos need pydantic-ai-harness; without it they are not listed.
+NAMES = [
+    "support",
+    "research",
+    "pipeline",
+    *(["capabilities", "operations"] if find_spec("pydantic_ai_harness") else []),
+]
 
 
 @pytest.fixture(scope="module")
@@ -92,7 +97,8 @@ def test_a_demo_recording_is_a_complete_valid_session_log(recorded: dict[str, tu
     started = events[0]
     assert (started["title"], started["stream"], started["include_content"]) == (DEMOS[name].title, True, True)
     spans = final_spans(events)
-    assert root_of(spans)["status"] == "ok"
+    # Every run ends well; the operations demo has two, the second resuming the first.
+    assert {span["status"] for span in spans.values() if span["parent_id"] is None} == {"ok"}
     # Introspection understood every agent and graph of the demo: nothing degraded.
     assert all(e["agent"]["warnings"] == [] and e["agent"]["source"] == "object" for e in events if "agent" in e)
     assert all(e["graph"]["warnings"] == [] for e in events if "graph" in e)

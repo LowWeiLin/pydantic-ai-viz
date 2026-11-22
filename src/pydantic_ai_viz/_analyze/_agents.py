@@ -234,7 +234,13 @@ def _is_combined(callee: Resolved) -> bool:
 
 
 def _is_capture_events(callee: Resolved) -> bool:
-    """Whether a capability is ``pydantic_ai_viz.CaptureEvents``."""
+    """Whether a capability is ``pydantic_ai_viz.CaptureEvents``.
+
+    It is the class itself when the analysed code sits inside this package (the bundled demos), whose import is
+    followed into its source.
+    """
+    if isinstance(callee, Definition):
+        return callee.module.name == "pydantic_ai_viz._events" and callee.node.name == "CaptureEvents"
     return isinstance(callee, External) and callee.comes_from("pydantic_ai_viz", "CaptureEvents")
 
 

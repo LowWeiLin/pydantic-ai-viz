@@ -96,6 +96,18 @@ Two details that are easy to trip over:
 - **Amber is a retry, red is an error.** A `ModelRetry` is the agent working as designed, so it never shows red.
 - **A retry from an output validator leaves no mark.** Pydantic AI records no span or attribute when an `@agent.output_validator` raises `ModelRetry`, so the viewer cannot show it; the extra model request is all a run shows. A retry from an output function or an output tool is shown as any tool retry.
 
+## Approvals and events
+
+A run that calls a tool needing approval, or a tool that raises `ApprovalRequired` or `CallDeferred`, ends with `DeferredToolRequests` instead of running the call. The sidebar marks it "waiting for approval" with the number of calls, the tool's node shows that it is waiting, and the run's panel lists what it waits for. When your code answers with `deferred_tool_results` on the same `message_history`, the new run is linked to it: "resumes oncall 12:05:09: 1 approved, 1 denied". The approved call runs there as an ordinary tool call; a denied one is only a tool result in the conversation.
+
+<figure class="screenshot" markdown="span">
+  ![The first run of the operations demo, ended waiting for approval of two restart_service calls, with the run that resumes it in the sidebar](../assets/screenshots/approvals.png)
+</figure>
+
+Capability and custom events are not in Pydantic AI's telemetry. Add [`CaptureEvents`](../reference/python-api.md#captureevents) to the agent's capabilities to see them: each is a diamond on its span's bar in the timeline and a row in the span's **Events** tab, and the capability that emitted it counts its events on the canvas. An event shows up when its span ends.
+
+Hooks have no mark on a run: Pydantic AI records nothing when a hook changes or blocks something.
+
 The run's token total in the sidebar is the sum over its model requests, including those of delegated agents, counted once each.
 
 ## Read a run
@@ -104,10 +116,12 @@ Select a row in the timeline (or press ++j++ and ++k++) to inspect it. A click o
 
 | Selection | Inspector tabs (and the sections in them) |
 |---|---|
-| Agent run | **Conversation**; **Output** (Output, Usage); **Raw** |
+| Agent run | **Conversation**; **Output** (Output, Waiting for, Usage); **Raw** |
 | Model request | **Response** (Request, Response); **Input** (Instructions, Input messages); **Raw** |
 | Tool call | **Details** (Retry or Error, Arguments, Result); **Raw** |
 | Graph run, graph node | **Details** (Inputs, Output); **Raw** |
+
+A span with events recorded by `CaptureEvents` also has an **Events** tab, before **Raw**.
 
 **Raw** shows the OpenTelemetry attributes of the span that were not turned into something more readable, which is useful when you want to know exactly what Pydantic AI recorded.
 

@@ -50,6 +50,8 @@ With content capture off, you still see the full shape of every run, but not wha
 | Token counts | The final output of each run |
 | Tool names and tool-call ids in the conversation | The message and stack trace of an error (its type is kept) |
 | Retries and errors as such | Graph node inputs and the graph output |
+| The tool calls a run ended waiting on: tool name, call id, approval or external | Their arguments, and the caller's answers |
+| The kind, capability id and tool of each event `CaptureEvents` records | The event's own fields (`data`) |
 
 In the viewer, the places where content would be show "Content capture is off (include_content=False)".
 
@@ -59,6 +61,7 @@ Keep in mind:
 
 - **It is decided at capture time.** The content is never recorded, so it cannot leak later. For the same reason, a recording made with content cannot be redacted afterwards. Capture the run again.
 - **Blueprints are not redacted.** Static instructions, system prompts, tool descriptions and schemas are part of the blueprint and are still shown. So are the skills of a `Skills` capability: each skill's description, when to use it and the body of its `SKILL.md`, whatever `include_content` is. Skill paths are relative to the workspace or the folder read, never absolute. They describe your code, not your data, but check them before sharing.
+- **A retry has no stack trace, with or without content.** A retry is expected, so only its error type and message are kept (and the message only with content); a real error keeps its stack trace when content is captured.
 - **Token streaming is off.** A token is content, so `stream=True` (or `--stream`) has no effect when content capture is off. See [Token streaming](token-streaming.md#streaming-and-content-capture).
 - **With `instrument=False` your own settings apply.** If you instrument Pydantic AI yourself or through Logfire, the `include_content` of that configuration decides what the spans contain. See [Use with Logfire](logfire.md).
 

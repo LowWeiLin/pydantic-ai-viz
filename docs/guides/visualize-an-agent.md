@@ -122,6 +122,17 @@ Skills
 
 :   Pick a skill row, or a skill in the panel of its `Skills` capability or of the agent, for its panel: when to use it, its instructions (the Markdown of its `SKILL.md`, which the model gets when it loads the skill, with a copy button), its path and the id `load_capability` takes. The skill is read from the live `Skills` capability or, from source, from the `SKILL.md` files in the folder read. A skill's text is part of the blueprint, so it is shown even when content capture is off. In a run, a `load_capability` call outlines the skill it loaded, its panel names it, and the `load_capability` tool's own panel lists what it can load.
 
+Hooks
+
+:   The functions a `Hooks` capability registers are rows under its row: the hook point, such as `before_tool_execute`, and the function. A hook limited to some tools says which. Pick one for the capability's panel, which lists them all in the order they run.
+
+Approvals and sub-agents
+
+:   A tool given `requires_approval=True` carries a "needs approval" tag with a lock, and one whose result the caller supplies says "runs outside". A harness `SubAgents` capability draws a delegation edge from the agent's card to each sub-agent it lists, labelled with its tool, `delegate_task` by default. An agent wrapped in `TemporalAgent`, `DBOSAgent` or `PrefectAgent` has a chip that names the runtime.
+
+    ![The oncall agent of the operations demo: its restart_service tool tagged needs approval, the Hooks capability with its two hook rows, and a delegation edge to the log_reader agent](../assets/screenshots/operations-dark.png#only-dark)
+    ![The oncall agent of the operations demo: its restart_service tool tagged needs approval, the Hooks capability with its two hook rows, and a delegation edge to the log_reader agent](../assets/screenshots/operations-light.png#only-light)
+
 ### Pydantic AI defaults { #pydantic-ai-defaults }
 
 The agent view and the run view show what you wrote. What Pydantic AI or the harness adds on its own is collapsed into counts. The "Pydantic AI defaults" button in the bar above the canvas, with a count such as "+12", shows it again; it appears only when the agent has any. It is a toggle (`aria-pressed`), hidden by default, and the choice is remembered in this browser, not in the page's address.

@@ -23,9 +23,12 @@ from pydantic_ai_viz import AgentBlueprint, Analysis, GraphBlueprint, Limits, an
 DEMOS = ["support", "research", "pipeline"]
 ALL_DEMOS = [
     *DEMOS,
-    pytest.param(
-        "capabilities",
-        marks=pytest.mark.skipif(find_spec("pydantic_ai_harness") is None, reason="needs pydantic-ai-harness"),
+    *(
+        pytest.param(
+            name,
+            marks=pytest.mark.skipif(find_spec("pydantic_ai_harness") is None, reason="needs pydantic-ai-harness"),
+        )
+        for name in ("capabilities", "operations")
     ),
 ]
 

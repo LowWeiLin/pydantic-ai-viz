@@ -3,7 +3,7 @@
  * hosted demo serves. The fixtures are written by hand from the wire contract; these recordings
  * come out of the Python backend, so this is where the two halves are proven to agree.
  *
- *   PVIZ_RECORDINGS_DIR   directory with support, research, pipeline and capabilities
+ *   PVIZ_RECORDINGS_DIR   directory with support, research, pipeline, capabilities and operations
  *                         `.pviz.jsonl` and their `index.json`. Not set: every test here is skipped.
  *
  * Expected numbers are computed from the recording itself, never typed in, so a change to a demo
@@ -64,7 +64,7 @@ const subject = (page: Page, name: string) =>
 test.describe("real demo recordings", () => {
   test.skip(!dir, "PVIZ_RECORDINGS_DIR is not set; build it with scripts/build_demo_site.py");
 
-  test("the gallery lists the four demos and their source, and plays one, asking for nothing else", async ({
+  test("the gallery lists the five demos and their source, and plays one, asking for nothing else", async ({
     page,
     baseURL,
   }) => {
@@ -77,6 +77,7 @@ test.describe("real demo recordings", () => {
       "Research team",
       "Article pipeline",
       "Capabilities tour",
+      "On-call operations",
     ]) {
       await expect(page.getByRole("link", { name: `Play ${title}` })).toBeVisible();
     }
@@ -297,6 +298,35 @@ test.describe("real demo recordings", () => {
     await expect(page.getByRole("complementary", { name: /details/ })).toContainText(
       "Loads skill house-style of",
     );
+    expect(errors).toEqual([]);
+  });
+
+  test("operations: a run waits for approval and the next run resumes it", async ({ page }) => {
+    const errors = trackErrors(page);
+    const recording = load("operations");
+    const [waited, resumed] = recording.spans
+      .filter((span) => span.kind === "agent_run" && span.parent_id === null)
+      .sort((a, b) => a.start_ms - b.start_ms);
+    if (waited?.kind !== "agent_run" || !resumed) throw new Error("operations has no resumed run");
+    const calls = waited.data.deferred.length;
+    await openRun(page, { ...recording, root: waited });
+    await skipToEnd(page);
+    await expect(
+      canvasNode(
+        page,
+        new RegExp(`^Tool restart_service, needs approval, ${calls} calls, waiting`),
+      ),
+    ).toBeVisible();
+    await expect(page.getByText(`waiting for approval: ${calls} calls`).first()).toBeVisible();
+    await expect(
+      canvasNode(page, /^Hook before_tool_execute of Hooks: guard_restart/),
+    ).toBeVisible();
+
+    const link = page
+      .getByRole("navigation", { name: /^Runs/ })
+      .getByRole("link", { name: /resumes oncall \d\d:\d\d:\d\d: 1 approved, 1 denied$/ });
+    await link.click();
+    await page.waitForURL(new RegExp(`#/runs/${resumed.trace_id}`));
     expect(errors).toEqual([]);
   });
 

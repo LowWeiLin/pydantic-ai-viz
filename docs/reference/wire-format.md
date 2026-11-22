@@ -109,7 +109,7 @@ type AgentBlueprint = {
     type_name: string | null;  // for example "Resolution", "str", "A | B"
     json_schema: Json | null;
     tool_names: string[];      // for example ["final_result"]; may be filled from observed runs
-    validators: string[];      // the @agent.output_validator functions, in registration order
+    validators: string[];      // the @agent.output_validator functions, module-qualified, in registration order
     location: SourceLocation | null;  // where the output type is defined
   };
   capabilities: Capability[];
@@ -227,6 +227,11 @@ type GraphBlueprint = {
   warnings: string[];
 };
 ```
+
+- **`kind: "unapproved"`** is a tool given `requires_approval=True`: a run stops before calling it and waits for the caller's answer. `"external"` is a tool whose result the caller supplies.
+- **`output.validators`** names each `@agent.output_validator` function, module-qualified like `Tool.function`, live and from source.
+- **`wrapper`** is the class name of the durable-execution wrapper (`TemporalAgent`, `DBOSAgent`, `PrefectAgent`) when the agent was given wrapped, live or from source; the blueprint is that of the agent it wraps. It is `null` otherwise.
+- **`CaptureEvents`** is the viewer's own capability and is never listed in `capabilities`, live or from source.
 
 ### Capabilities { #capabilities }
 
@@ -382,7 +387,7 @@ type Part =
 
 ### Reading spans correctly { #reading-spans }
 
-- **Retry or error.** A `tool_call` with `status: "error"` and a non-null `retry` is a retry: the tool asked the model to try again. Only an error with `retry: null` is a failure.
+- **Retry or error.** A `tool_call` with `status: "error"` and a non-null `retry` is a retry: the tool asked the model to try again. Only an error with `retry: null` is a failure. A retry keeps its error's `type` and `message` but has `stacktrace: null`, since it is expected; a failure keeps its stack trace. A retry asked for by an output validator leaves no span.
 - **Token totals.** A run's total is the sum of `usage` over the `model_request` spans of the trace. Do not add `agent_run` usages together; see [why](../concepts/how-capture-works.md#why-token-totals-come-from-model-requests).
 - **Waiting for the caller.** An `agent_run` with a non-empty `deferred` ended without running those tool calls: its output was `DeferredToolRequests`. A call to a tool that needs approval (`requires_approval=True`) has no span. A tool that raised `ApprovalRequired` or `CallDeferred` has an `ok` span with `deferral` set and no result. The run that resumes it (with `message_history` and `deferred_tool_results`) has the same `conversation_id`: an approved call runs there as a `tool_call` with the same `call_id`, and a denied call or a result the caller supplied is only a `tool_result` part in its first model request's input.
 - **Output tools.** A call to an output tool such as `final_result` has no span. It appears in `messages` only. An `agent_run` that ends with `status: "ok"` produced its output.
@@ -495,7 +500,7 @@ At end, the same span carries its result, the error and the retry information:
     "error": {
       "type": "pydantic_ai.exceptions.ToolRetryError",
       "message": "Order ids look like 'A-1042'.",
-      "stacktrace": "Traceback ..."
+      "stacktrace": null
     },
     "attributes": {"gen_ai.operation.name": "execute_tool", "logfire.msg": "running tool: get_order"},
     "events": [

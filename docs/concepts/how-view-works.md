@@ -115,7 +115,16 @@ Other things that stay open:
 - **A tool wrapped by another decorator first.** Under `@agent.tool_plain`, a decorator such as `@cached` hands Pydantic AI whatever it returns. The parameters are read from the `def`, with a warning that names the decorator.
 - **A model configuration that is computed.** A pydantic model's `model_config` (or class keywords such as `extra="forbid"`) is applied to its schema when it is written out: `title`, `extra`, `use_attribute_docstrings` and `json_schema_extra`. A configuration built by a call, or one that sets something like `alias_generator`, is named in a warning, since the schema it gives is only known when the code runs.
 - **Graph edges added in a loop or by a helper function.** The steps are listed, the edges that are written out are drawn, and a warning names the call that could not be followed.
-- **Agents that the source does not construct**: an agent returned by a library function, an `Agent` subclass, `Agent.from_spec(...)`. They are not found. Use [`--import`](#when-to-use-import) for these.
+- **Agents that the source does not construct**: an agent returned by a library function, or an `Agent` subclass. They are not found. Use [`--import`](#when-to-use-import) for these. Agents made from a spec are read; see the next section.
+
+## Spec files, hooks, sub-agents and durable wrappers
+
+A few ways of putting an agent together are read on purpose, so that `view` shows what `--import` would:
+
+- **Spec files.** `Agent.from_file("agent.yaml")` with a literal path, and `Agent.from_spec({...})` with a written-out dict, are agents. The spec is read as data (`json.loads`, or `yaml.safe_load` when PyYAML is installed; without it, the agent of a YAML spec has a warning that says to install PyYAML) and turned into the `Agent(...)` call `from_spec` makes. Keyword arguments next to the spec follow `from_spec`: a plain value replaces the spec's, instructions and capabilities are added to it, and model settings and retries are merged key by key. A spec file is only read inside the analysed folders and under the file size limit. A `.json`, `.yaml` or `.yml` spec can also be named as a `view` target on its own.
+- **Hooks.** The functions a `Hooks` capability registers are listed by hook point: the keyword arguments of `Hooks(...)` first, then each `@hooks.on.<point>` or `@hooks.on.<point>(tools=[...], timeout=...)` decorator in the module that builds it, in source order, as a live agent's registry has them.
+- **Sub-agents.** A harness `SubAgents(agents=[SubAgent(agent, name=..., description=...)])` shows each entry in its details and draws a delegation edge to each agent it can find, labelled with its tool, `delegate_task` by default. When an entry is not a written-out `SubAgent(...)`, the list stays an expression and no edge is drawn.
+- **Durable wrappers.** An agent handed to `TemporalAgent(...)`, `DBOSAgent(...)` or `PrefectAgent(...)` of `pydantic_ai.durable_exec` is marked with the wrapper's name. The blueprint is the wrapped agent's; what the durable runtime does at run time is not shown.
 
 ## Standard-library calls the analyser evaluates
 

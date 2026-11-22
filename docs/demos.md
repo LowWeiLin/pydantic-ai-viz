@@ -1,6 +1,6 @@
 # Demos
 
-Four demos ship with the package. Each is a small but complete agent program whose "model" is a script: it returns the same responses every time, needs no API key and makes no network calls. Everything else is real. The agents are ordinary Pydantic AI agents, the tools are ordinary functions that really run, and the spans you see are the ones Pydantic AI emits.
+Five demos ship with the package. Each is a small but complete agent program whose "model" is a script: it returns the same responses every time, needs no API key and makes no network calls. Everything else is real. The agents are ordinary Pydantic AI agents, the tools are ordinary functions that really run, and the spans you see are the ones Pydantic AI emits.
 
 ```bash
 pydantic-ai-viz demo --list
@@ -11,11 +11,12 @@ support - A triage agent resolves a damaged-order ticket: parallel tools, a retr
 research - A planner fans out to three parallel searchers, then a writer drafts the report.
 pipeline - A step graph writes, reviews and publishes a post, looping back once for a rewrite.
 capabilities - One agent plans, searches, reads, loads a skill and keeps a note, all through capabilities.
+operations - An on-call agent delegates log reading, waits for approval to restart and resumes once answered.
 ```
 
-The `capabilities` demo uses capabilities of `pydantic-ai-harness`, which is not a dependency of the package. Install it with `pip install 'pydantic-ai-viz[demos]'`, which brings `pydantic-ai-harness[skills]` (its `Skills` capability needs PyYAML); without it, `demo --list` leaves the demo out and `demo capabilities` says what to install.
+The `capabilities` and `operations` demos use capabilities of `pydantic-ai-harness`, which is not a dependency of the package. Install it with `pip install 'pydantic-ai-viz[demos]'`, which brings `pydantic-ai-harness[skills]` (its `Skills` capability needs PyYAML); without it, `demo --list` leaves them out and `demo capabilities` or `demo operations` says what to install.
 
-You can also watch all four in the [hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/), which replays recordings of these same scenarios in your browser. The hosted demo also shows [the demos' source code as `view` reads it](https://lowweilin.github.io/pydantic-ai-viz/demo/?src=recordings/source.pviz.jsonl): eight agents and a graph in four files, drawn without running any of them.
+You can also watch all five in the [hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/), which replays recordings of these same scenarios in your browser. The hosted demo also shows [the demos' source code as `view` reads it](https://lowweilin.github.io/pydantic-ai-viz/demo/?src=recordings/source.pviz.jsonl): ten agents and a graph in five files, drawn without running any of them.
 
 ## support { #support }
 
@@ -129,6 +130,39 @@ What to watch for:
 
 The demo reads the skills bundled with the package and never writes one.
 
+## operations { #operations }
+
+```bash
+pydantic-ai-viz demo operations   # needs: pip install 'pydantic-ai-viz[demos]'
+```
+
+[Open the recording in the hosted demo](https://lowweilin.github.io/pydantic-ai-viz/demo/?src=recordings/operations.pviz.jsonl)
+
+An alert says the checkout error rate is climbing. The `oncall` agent hands the log reading to a sub-agent, then asks to restart the two services the logs point at. A restart needs a human's approval, so the first run stops and waits. The demo answers as the engineer would: restart checkout, leave the database alone. A second run picks the conversation up, restarts checkout and writes the incident report.
+
+| Agent | Has |
+|---|---|
+| `oncall` | `SubAgents` with `log_reader`, a `Hooks` capability with two hooks, a small `Pager` capability of its own, `CaptureEvents`, a tool that needs approval (`restart_service`), an output validator (`check_report`) and the output types `str` and `DeferredToolRequests` |
+| `log_reader` | One tool, `read_logs` |
+
+<figure class="screenshot" markdown="span">
+  ![The oncall agent: its restart_service tool tagged needs approval, the Hooks capability with its two hook rows, the Pager capability, and a delegation edge to log_reader](assets/screenshots/operations-dark.png#only-dark)
+  ![The oncall agent: its restart_service tool tagged needs approval, the Hooks capability with its two hook rows, the Pager capability, and a delegation edge to log_reader](assets/screenshots/operations-light.png#only-light)
+</figure>
+
+What to watch for:
+
+1. **Delegation through a capability.** `SubAgents` gives the agent a `delegate_task` tool, and the canvas draws an edge from `oncall` to `log_reader` before any run. In the run, the `log_reader` run is nested under the `delegate_task` call.
+2. **Hooks.** Under the `Hooks` row are its two hooks: `before_tool_execute`, which guards `restart_service` only, and `after_model_request`. Select the row for its panel, which lists them in the order they run.
+3. **A tool that needs approval.** `restart_service` has a "needs approval" tag. The first run calls it twice and ends "waiting for approval: 2 calls"; the tool's node shows it is waiting, and the run's **Output** tab lists the calls under **Waiting for**.
+4. **The run that resumes it.** The second run is linked to the first: "resumes oncall ...: 1 approved, 1 denied". The approved restart runs there as an ordinary tool call; the denied one is only a tool result in its conversation, with the engineer's reason.
+5. **An event.** `Pager` emits an `oncall.paged` event when the alert comes in, and `CaptureEvents` records it: a diamond on the run's bar, a row in the run's **Events** tab, and "1 event" on the `Pager` row. `SubAgents` emits events of its own around the delegation, shown the same way.
+6. **The output validator.** In the agent's panel, the Output section lists `check_report` under **Validated by**. It checks that the report has a cause and an action.
+
+<figure class="screenshot" markdown="span">
+  ![The first run of the operations demo, ended waiting for approval of two restart_service calls, with the run that resumes it in the sidebar](assets/screenshots/approvals.png)
+</figure>
+
 ## Options
 
 ```bash
@@ -148,11 +182,11 @@ The demos are meant to be read. They are 180 to 300 lines each, in [`src/pydanti
 
 | File | Contents |
 |---|---|
-| `support.py`, `research.py`, `pipeline.py`, `capabilities.py` | The agents, tools and graph of each demo |
+| `support.py`, `research.py`, `pipeline.py`, `capabilities.py`, `operations.py` | The agents, tools and graph of each demo |
 | `_script.py` | The helper that turns a list of scripted turns into a `FunctionModel` that can also stream |
 
 Shorter starting points are in [`examples/`](https://github.com/LowWeiLin/pydantic-ai-viz/tree/main/examples).
 
 ## About the model names
 
-The demo models are called `scripted-support`, `scripted-research`, `scripted-pipeline` and `scripted-capabilities`, and the viewer marks them **offline**. They are Pydantic AI `FunctionModel`s. The names are deliberately honest: nothing in a demo recording was produced by a real language model.
+The demo models are called `scripted-support`, `scripted-research`, `scripted-pipeline`, `scripted-capabilities` and `scripted-operations`, and the viewer marks them **offline**. They are Pydantic AI `FunctionModel`s. The names are deliberately honest: nothing in a demo recording was produced by a real language model.

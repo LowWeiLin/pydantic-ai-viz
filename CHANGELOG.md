@@ -25,6 +25,16 @@ The wire format has its own version number (`pviz`, currently `1`), recorded in 
 - The capabilities demo bundles a second skill, `fact-check`, which its run does not load.
 - Wire format: `CapabilityInfo` gains `capability_id`, `stack` and `skills`, with the new `SkillInfo` type, and `AgentSettings` gains `defaults`. The change is additive within `pviz` 1. The viewer opens older recordings with `null`, `null`, `[]` and `[]`; the Python models and the JSON Schema require the fields.
 
+- Hooks. The functions a `Hooks` capability registers are listed by hook point, with the tools a tool hook is limited to and its timeout: from a live agent's registry, and from source (the keywords of `Hooks(...)` and each `@hooks.on.<point>` decorator). They are rows under the capability on the canvas and a section of its panel.
+- A literal `SubAgents(agents=[SubAgent(...)])` read from source shows its entries in `details`, as a live one does.
+- Approvals and deferred tool calls. A tool given `requires_approval=True` is tagged "needs approval" on the canvas, and an external one "runs outside". A run that ends with `DeferredToolRequests` is marked "waiting for approval" with the calls it waits for, a tool that raised `ApprovalRequired` or `CallDeferred` says so, and the run that answers them (same conversation) is linked to it with each call's outcome: "resumes oncall 12:05:09: 1 approved, 1 denied". Without content capture only tool names and call ids are kept.
+- Agents made from a spec are read from source: `Agent.from_file(...)` with a literal path and `Agent.from_spec({...})` with a written-out dict, with keyword overrides applied as `from_spec` applies them. A `.json`, `.yaml` or `.yml` spec can be given to `view` as a target.
+- `pydantic_ai_viz.CaptureEvents`, an opt-in capability that records an agent's `CapabilityEvent`s and `CustomEvent`s on its runs. They are diamonds on the timeline, an Events tab in the span panel and a count on the capability that emitted them. An event's fields are content, recorded only when content is captured. It is left out of blueprints.
+- Output validators. The `@agent.output_validator` functions of an agent are listed under its output, live and from source, and the retries of a text output function (`pydantic_ai.output.retry.*`) are shown as retries.
+- Durable-execution wrappers. `blueprint()`, `serve`, `record`, `export_html` and `view` accept a `TemporalAgent`, `DBOSAgent` or `PrefectAgent`, show the agent it wraps and badge it with the runtime; static analysis marks an agent the source hands to one of them.
+- The operations demo (`pydantic-ai-viz demo operations`): an on-call agent delegates through `SubAgents`, is watched by hooks, waits for approval to restart a service and is resumed with one call approved and one denied, with an output validator and an event recorded by `CaptureEvents`. Like the capabilities demo, it needs `pip install 'pydantic-ai-viz[demos]'`.
+- Wire format: `CapabilityInfo` gains `hooks`, with the new `HookInfo` type; `AgentRunData` gains `deferred`, with the new `DeferredCall` type; `ToolCallData` gains `deferral`; every span gains `events`, with the new `RunEvent` type; the agent's `output` gains `validators`; and `AgentBlueprint` gains `wrapper`. The change is additive within `pviz` 1. The viewer opens older recordings with `[]`, `[]`, `null`, `[]`, `[]` and `null`; the Python models and the JSON Schema require the fields.
+
 ### Fixed
 
 - The details of a live capability no longer list values the class fills in itself (the `denied_commands` of a `Shell()`, the method of an `Advisor`), and a plain `Capability(instructions=...)` shows its instructions.
@@ -35,6 +45,9 @@ The wire format has its own version number (`pviz`, currently `1`), recorded in 
 - A delegation arc back to an agent above its own card is drawn behind the sub-agent card and its capabilities box instead of through them.
 - A live agent's `native_tools` no longer lists the function `CombinedCapability` puts in place of the native tool of a capability loaded on demand; it lists the tool's kind.
 - Static analysis no longer lists `pydantic_ai_slim` among the libraries it knows by name; it is not importable.
+- A live `Skills(include=...)` or `Skills(exclude=...)` shows its selection; it was dropped because the harness keeps it as a set. From source the names are sorted and de-duplicated the same way.
+- An expected retry (a `ModelRetry` from a tool or an output function) keeps its error type and message but no stack trace; real errors keep theirs.
+- Static analysis leaves out `CaptureEvents` when it follows the import into this package's own source, as in the bundled demos.
 
 ## [0.1.0] - 2026-11-19
 
