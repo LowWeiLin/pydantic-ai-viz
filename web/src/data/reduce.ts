@@ -160,7 +160,17 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function upsertSpan(draft: Draft, owned: Owned, span: Span, seq: number): void {
+/** Recordings made before deferred tool calls were read lack `deferred` and `deferral`. */
+function withSpanDefaults(span: Span): Span {
+  if (span.kind === "agent_run" && isObject(span.data) && !Array.isArray(span.data.deferred))
+    return { ...span, data: { ...span.data, deferred: [] } };
+  if (span.kind === "tool_call" && isObject(span.data) && span.data.deferral === undefined)
+    return { ...span, data: { ...span.data, deferral: null } };
+  return span;
+}
+
+function upsertSpan(draft: Draft, owned: Owned, raw: Span, seq: number): void {
+  const span = withSpanDefaults(raw);
   const known = span.span_id in draft.spans;
   own(draft, owned, "spans")[span.span_id] = span;
   if (known) return;

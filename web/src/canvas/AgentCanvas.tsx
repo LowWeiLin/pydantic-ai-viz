@@ -49,10 +49,10 @@ const NO_CALLS: Activity = { state: "idle", calls: 0, retries: 0, errors: 0, spa
 
 /**
  * Activities as one: every call counted, and the state of the most urgent (running, then
- * failed, then waiting for a retry).
+ * failed, then waiting for a retry, then waiting for approval or a result).
  */
 function mergedActivity(list: readonly Activity[]): Activity {
-  const rank = ["idle", "ok", "retry", "error", "running"] as const;
+  const rank = ["idle", "ok", "waiting", "retry", "error", "running"] as const;
   return list.reduce(
     (sum, a) => ({
       state: rank.indexOf(a.state) > rank.indexOf(sum.state) ? a.state : sum.state,

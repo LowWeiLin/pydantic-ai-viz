@@ -7,11 +7,14 @@ import type {
   AgentBlueprint,
   AgentRunSpan,
   Capability,
+  Deferral,
+  DeferredCall,
   Envelope,
   Event,
   GraphBlueprint,
   Hook,
   Json,
+  Message,
   ModelRequestSpan,
   SessionStarted,
   Skill,
@@ -55,7 +58,14 @@ function base(c: Common, name: string) {
   };
 }
 
-export function agentRun(c: Common & { usage?: Usage | null; output?: string }): AgentRunSpan {
+export function agentRun(
+  c: Common & {
+    usage?: Usage | null;
+    output?: string;
+    conversation?: string;
+    deferred?: DeferredCall[];
+  },
+): AgentRunSpan {
   const b = base(c, c.agent ?? "triage");
   const ended = b.end_ms !== null;
   return {
@@ -63,17 +73,18 @@ export function agentRun(c: Common & { usage?: Usage | null; output?: string }):
     kind: "agent_run",
     data: {
       model_name: "m",
-      conversation_id: "c",
+      conversation_id: c.conversation ?? "c",
       instructions: ended ? "be brief" : null,
       output: ended ? (c.output ?? "done") : null,
       usage: ended ? (c.usage ?? null) : null,
       messages: ended ? [] : null,
+      deferred: ended ? (c.deferred ?? []) : [],
     },
   };
 }
 
 export function modelRequest(
-  c: Common & { usage?: Usage | null; text?: string },
+  c: Common & { usage?: Usage | null; text?: string; input?: Message[] | null },
 ): ModelRequestSpan {
   const b = base(c, "m");
   const ended = b.end_ms !== null;
@@ -86,7 +97,7 @@ export function modelRequest(
       response_model: ended ? "m" : null,
       settings: ended ? { temperature: 0 } : {},
       instructions: ended ? "be brief" : null,
-      input_messages: ended ? [] : null,
+      input_messages: ended ? (c.input === undefined ? [] : c.input) : null,
       output_messages: ended
         ? [{ role: "assistant", parts: [{ type: "text", content: c.text ?? "hello" }] }]
         : null,
@@ -96,7 +107,13 @@ export function modelRequest(
 }
 
 export function toolCall(
-  c: Common & { tool: string; retry?: boolean; result?: string },
+  c: Common & {
+    tool: string;
+    retry?: boolean;
+    result?: string;
+    callId?: string;
+    deferral?: Deferral;
+  },
 ): ToolCallSpan {
   const b = base(c, c.tool);
   const ended = b.end_ms !== null;
@@ -105,10 +122,11 @@ export function toolCall(
     kind: "tool_call",
     data: {
       tool_name: c.tool,
-      call_id: `call_${sid(c.id)}`,
+      call_id: c.callId ?? `call_${sid(c.id)}`,
       arguments: { q: 1 },
       result: ended ? (c.result ?? "ok") : null,
       retry: ended && c.retry ? { cause: "model_retry", attempt: 1, max_retries: 2 } : null,
+      deferral: ended ? (c.deferral ?? null) : null,
     },
   };
 }

@@ -9,10 +9,10 @@ import { categoryNames, environmentWords, modelLabel } from "../data/model";
 import type { Activity, CanvasAgent, CanvasTool, GraphCanvasNode } from "../data/selectors";
 import { plural } from "../shell/format";
 import { Badge, Chip, StatusDot } from "../ui/Badge";
-import { Icon } from "../ui/Icon";
+import { Icon, type IconName } from "../ui/Icon";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { cx, statusMeta, toneClass } from "../ui/tone";
-import type { Capability, Hook, ModelInfo, Skill, Toolset } from "../wire";
+import type { Capability, Hook, ModelInfo, Skill, Tool, Toolset } from "../wire";
 import {
   DELEGATION_INLET,
   graphNodeLabel,
@@ -95,7 +95,9 @@ const stateWords = (state: Activity["state"]): string =>
       ? "failed"
       : state === "retry"
         ? "waiting for a retry"
-        : "OK";
+        : state === "waiting"
+          ? "waiting for approval or a result"
+          : "OK";
 
 /** Border and ring for a node in a given run state. */
 function stateFrame(state: Activity["state"]): string {
@@ -106,6 +108,8 @@ function stateFrame(state: Activity["state"]): string {
       return "border-ok/55";
     case "retry":
       return "border-retry/70";
+    case "waiting":
+      return "border-retry/70 border-dashed";
     case "error":
       return "border-error/80";
     default:
@@ -332,8 +336,15 @@ export type ToolNodeData = {
   default: boolean;
 };
 
+/** How a tool is called when it is not simply called: words for its accessible name, and a tag. */
+const CALL_KINDS: Partial<Record<Tool["kind"], { words: string; tag: string; icon: IconName }>> = {
+  unapproved: { words: "needs approval", tag: "needs approval", icon: "lock" },
+  external: { words: "runs outside the agent", tag: "runs outside", icon: "output" },
+};
+
 export function ToolNode({ data }: NodeProps<Node<ToolNodeData, "tool">>) {
   const { activity, overlay } = data;
+  const callKind = data.tool ? CALL_KINDS[data.tool.kind] : undefined;
   return (
     <div
       className={cx(
@@ -346,13 +357,19 @@ export function ToolNode({ data }: NodeProps<Node<ToolNodeData, "tool">>) {
     >
       <Ports loop />
       <Cover
-        label={`Tool ${data.name}${activityPhrase(activity, overlay)}${data.default ? DEFAULT_WORDS : ""}`}
+        label={`Tool ${data.name}${callKind ? `, ${callKind.words}` : ""}${activityPhrase(activity, overlay)}${data.default ? DEFAULT_WORDS : ""}`}
         target={{ kind: "tool", agentId: data.agentId, name: data.name }}
       />
       <div className="pointer-events-none relative flex h-full items-center gap-2 px-2.5">
         <Icon name={data.delegates ? "agent" : "tool"} size={14} className="tone-text" />
         <MiddleTruncate text={data.name} className="min-w-0 flex-1 font-mono text-data text-fg" />
         {data.default && <DefaultTag />}
+        {callKind && (
+          <span className="inline-flex shrink-0 items-center gap-0.5 text-faint text-meta">
+            <Icon name={callKind.icon} size={12} />
+            {callKind.tag}
+          </span>
+        )}
         {overlay && activity.retries > 0 && (
           <span className="tone-retry tone-text inline-flex shrink-0 items-center gap-0.5 font-medium text-meta">
             <Icon name="retry" size={12} />

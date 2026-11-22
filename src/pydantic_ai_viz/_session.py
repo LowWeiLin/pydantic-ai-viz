@@ -31,7 +31,7 @@ from ._capture import CaptureProcessor
 from ._derive import add_delegate, carry_observed, merge_request, observed_blueprint
 from ._export import write_html, write_jsonl
 from ._introspect import AnyAgent, AnyGraph, agent_closure, introspect_agent, introspect_graph
-from ._models import WIRE_VERSION, AgentBlueprint, GraphBlueprint, SessionMode, to_wire
+from ._models import WIRE_VERSION, AgentBlueprint, Deferral, DeferredCall, GraphBlueprint, SessionMode, to_wire
 from ._normalize import Normalized, WireSpan, clip
 from ._version import __version__
 
@@ -342,6 +342,8 @@ class Session:
         """Span id of a running tool call -> (owning agent name, tool name)."""
         self._open_requests: dict[str, _OpenRequest] = {}
         """Run id -> its model request in flight. A run makes one request at a time."""
+        self._deferrals: dict[tuple[str, str], Deferral] = {}
+        """(trace id, call id) -> deferral of an ended tool call, until its run ends. Only kept without content."""
 
         with _sessions_lock:
             if instrument:
@@ -575,6 +577,8 @@ class Session:
                 del self._open_requests[run_id]
             parameters = normalized.request_parameters
             name = span.agent_name
+            if not self.include_content:
+                span = self._with_deferral_kinds(span)
             if span.kind == "model_request" and name is not None and parameters is not None:
                 # Rule 2: the request says which tools and output mode the model was given. Every request
                 # is looked at, because a dynamic or filtered toolset can offer tools it did not offer
@@ -586,6 +590,26 @@ class Session:
                 if merged is not blueprint:
                     self._emit_agent(merged)
             self._log.append({"type": "span.ended", "span": to_wire(span)})
+
+    def _with_deferral_kinds(self, span: WireSpan) -> WireSpan:
+        """``span``, with the kind of each call its run waits on corrected from what the session saw.
+
+        Without content a run's deferred calls are read from its messages, which do not say why a
+        call waits. A call whose tool span raised ``CallDeferred``, or whose tool is external, runs outside.
+        """
+        if span.kind == "tool_call" and span.data.deferral is not None and span.data.call_id is not None:
+            self._deferrals[span.trace_id, span.data.call_id] = span.data.deferral
+        if span.kind != "agent_run" or not span.data.deferred:
+            return span
+        blueprint = self._blueprint_named(span.agent_name)
+        external = {tool.name for tool in blueprint.tools if tool.kind == "external"} if blueprint else set[str]()
+
+        def kind(call: DeferredCall) -> Deferral:
+            seen = self._deferrals.pop((span.trace_id, call.call_id or ""), None)
+            return seen or ("external" if call.tool_name in external else call.kind)
+
+        calls = [call.model_copy(update={"kind": kind(call)}) for call in span.data.deferred]
+        return span.model_copy(update={"data": span.data.model_copy(update={"deferred": calls})})
 
     def _blueprint_for_run(self, name: str, description: str | None, model_name: str | None) -> AgentBlueprint:
         """The blueprint that runs of the agent called ``name`` belong to (rule 1)."""

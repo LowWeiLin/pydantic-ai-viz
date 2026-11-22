@@ -151,6 +151,12 @@ const paths = {
     </>
   ),
   decision: <path d="M8 2l6 6-6 6-6-6z" />,
+  lock: (
+    <>
+      <rect x="3.5" y="7" width="9" height="6.5" rx="1.5" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+    </>
+  ),
   arrowRight: <path d="M2.5 8h10M9 4.5L12.5 8 9 11.5" />,
   user: (
     <>

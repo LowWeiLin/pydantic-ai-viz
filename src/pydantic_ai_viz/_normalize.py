@@ -24,6 +24,8 @@ from ._models import (
     MAX_STRING_CHARS,
     AgentRunData,
     AgentRunSpan,
+    Deferral,
+    DeferredCall,
     GraphNodeData,
     GraphNodeSpan,
     GraphRunData,
@@ -284,6 +286,64 @@ def _retry(attributes: _Attributes) -> RetryInfo | None:
     return RetryInfo(cause=cause, attempt=attempt or 0, max_retries=max_retries or 0)
 
 
+_DEFERRALS: dict[str, Deferral] = {"ApprovalRequired": "approval", "CallDeferred": "external"}
+"""``pydantic_ai.tool.deferral.name`` -> what the call is left waiting for."""
+
+
+def _deferral(attributes: _Attributes) -> Deferral | None:
+    name = attributes.take("pydantic_ai.tool.deferral.name")
+    return _DEFERRALS.get(name) if isinstance(name, str) else None
+
+
+def _requested(raw: list[Any], kind: Deferral) -> list[DeferredCall]:
+    """The ``ToolCallPart``s of one list of a ``DeferredToolRequests``; nothing if any item is not one."""
+    parts = [cast("dict[str, Any]", item) for item in raw if isinstance(item, dict)]
+    if len(parts) != len(raw) or any(part.get("part_kind") != "tool-call" for part in parts):
+        return []
+    return [
+        DeferredCall(call_id=_text(part.get("tool_call_id")), tool_name=str(part.get("tool_name")), kind=kind)
+        for part in parts
+    ]
+
+
+def deferred(raw_output: Any, history: list[Message] | None) -> list[DeferredCall]:
+    """The tool calls an ended run is waiting on: those of a ``DeferredToolRequests`` output.
+
+    Only the names and call ids are kept: arguments and metadata are content. Without content
+    capture there is no output to read, so the calls are those of the last model response that
+    no tool result answers. Those are taken to wait for approval; the session corrects the
+    kind of the calls it knows run outside the agent.
+    """
+    output: Any = raw_output
+    if isinstance(output, str):
+        try:
+            output = json.loads(output)
+        except ValueError:
+            return []
+    if isinstance(output, dict):
+        request = cast("dict[str, Any]", output)
+        calls, approvals = request.get("calls"), request.get("approvals")
+        if not isinstance(calls, list) or not isinstance(approvals, list):
+            return []
+        return [
+            *_requested(cast("list[Any]", calls), "external"),
+            *_requested(cast("list[Any]", approvals), "approval"),
+        ]
+    if output is not None or not history:
+        return []
+    last = max((index for index, message in enumerate(history) if message.role == "assistant"), default=None)
+    if last is None:
+        return []
+    answered = {
+        part.id for message in history[last + 1 :] for part in message.parts if isinstance(part, ToolResultPart)
+    }
+    return [
+        DeferredCall(call_id=part.id, tool_name=part.name, kind="approval")
+        for part in history[last].parts
+        if isinstance(part, ToolCallPart) and part.id not in answered
+    ]
+
+
 def normalize(span: ReadableSpan, *, ended: bool) -> Normalized:
     """Turn an OTel span into its wire form.
 
@@ -349,13 +409,16 @@ def normalize(span: ReadableSpan, *, ended: bool) -> Normalized:
     elif operation == "invoke_agent":
         raw_description = attributes.peek(ATTR_AGENT_DESCRIPTION)
         description = raw_description if isinstance(raw_description, str) else None
+        raw_output = attributes.take("final_result")
+        history = messages(attributes.take("pydantic_ai.all_messages"))
         run = AgentRunData(
             model_name=_text(attributes.take("model_name")),
             conversation_id=_text(attributes.take(ATTR_CONVERSATION_ID)),
             instructions=instructions(attributes.take(ATTR_INSTRUCTIONS)),
-            output=parse_jsonish(attributes.take("final_result")),
+            output=parse_jsonish(raw_output),
             usage=_usage(attributes, "gen_ai.aggregated_usage."),
-            messages=messages(attributes.take("pydantic_ai.all_messages")),
+            messages=history,
+            deferred=deferred(raw_output, history) if status == "ok" else [],
         )
         wire = AgentRunSpan(kind="agent_run", data=run, **base(agent_name or _strip(span.name, "invoke_agent ")))
     elif operation == "chat":
@@ -385,6 +448,7 @@ def normalize(span: ReadableSpan, *, ended: bool) -> Normalized:
             arguments=parse_jsonish(attributes.take("gen_ai.tool.call.arguments")),
             result=parse_jsonish(attributes.take("gen_ai.tool.call.result")),
             retry=_retry(attributes),
+            deferral=_deferral(attributes),
         )
         wire = ToolCallSpan(kind="tool_call", data=call, **base(name))
     else:

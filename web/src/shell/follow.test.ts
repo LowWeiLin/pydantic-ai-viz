@@ -20,6 +20,8 @@ const run = (
   spanCount: 1,
   usage: { input_tokens: 0, output_tokens: 0 },
   firstSeq,
+  waiting: [],
+  resumes: null,
 });
 
 const onRun = (traceId: string, spanId: string | null = null): Route => ({

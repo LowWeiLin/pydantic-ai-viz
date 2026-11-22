@@ -41,6 +41,7 @@ export const statusMeta: Record<Status, { label: string; icon: IconName; tone: T
   idle: { label: "Idle", icon: "idle", tone: "neutral" },
   running: { label: "Running", icon: "running", tone: "accent" },
   ok: { label: "OK", icon: "check", tone: "ok" },
+  waiting: { label: "Waiting", icon: "pause", tone: "retry" },
   retry: { label: "Retried", icon: "retry", tone: "retry" },
   error: { label: "Error", icon: "error", tone: "error" },
 };

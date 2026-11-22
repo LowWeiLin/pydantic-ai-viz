@@ -197,6 +197,13 @@
           ],
           "title": "Conversation Id"
         },
+        "deferred": {
+          "items": {
+            "$ref": "#/$defs/DeferredCall"
+          },
+          "title": "Deferred",
+          "type": "array"
+        },
         "instructions": {
           "anyOf": [
             {
@@ -253,7 +260,8 @@
         "instructions",
         "output",
         "usage",
-        "messages"
+        "messages",
+        "deferred"
       ],
       "title": "AgentRunData",
       "type": "object"
@@ -595,6 +603,42 @@
         "hooks"
       ],
       "title": "CapabilityInfo",
+      "type": "object"
+    },
+    "DeferredCall": {
+      "additionalProperties": false,
+      "description": "A tool call a run ended waiting on (its output was ``DeferredToolRequests``).",
+      "properties": {
+        "call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Call Id"
+        },
+        "kind": {
+          "enum": [
+            "approval",
+            "external"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "call_id",
+        "tool_name",
+        "kind"
+      ],
+      "title": "DeferredCall",
       "type": "object"
     },
     "Delegate": {
@@ -2434,6 +2478,21 @@
           ],
           "title": "Call Id"
         },
+        "deferral": {
+          "anyOf": [
+            {
+              "enum": [
+                "approval",
+                "external"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Deferral"
+        },
         "result": {
           "$ref": "#/$defs/JsonValue"
         },
@@ -2457,7 +2516,8 @@
         "call_id",
         "arguments",
         "result",
-        "retry"
+        "retry",
+        "deferral"
       ],
       "title": "ToolCallData",
       "type": "object"

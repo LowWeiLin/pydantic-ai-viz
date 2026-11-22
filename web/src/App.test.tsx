@@ -360,7 +360,7 @@ describe("boot modes and states", () => {
     expect(screen.getByRole("heading", { name: "Recordings" })).toBeInTheDocument();
     const play = screen.getByRole("link", { name: "Play A run that fails" });
     expect(play.getAttribute("href")).toMatch(/\?src=recordings%2Ffailed\.pviz\.jsonl#\/$/);
-    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.getAllByRole("listitem")).toHaveLength(4);
     expect(screen.getByRole("link", { name: "Gallery" })).toHaveAttribute("aria-current", "page");
   });
 

@@ -847,6 +847,11 @@ export function ToolInspector({ agent, tool }: { agent: AgentBlueprint; tool: To
                 <Facts
                   items={known([
                     ["Kind", tool.kind],
+                    tool.kind === "unapproved" && ["Approval", "asked before every call"],
+                    tool.kind === "external" && [
+                      "Runs outside the agent",
+                      "the caller supplies the result",
+                    ],
                     tool.is_async !== null && ["Call style", tool.is_async ? "async" : "sync"],
                     tool.takes_ctx !== null && [
                       "Run context",

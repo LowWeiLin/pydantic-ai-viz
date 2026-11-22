@@ -396,7 +396,14 @@ export type AgentRunData = {
   usage: Usage | null;
   /** Full conversation, end only. */
   messages: Message[] | null;
+  /** Tool calls the run ended waiting on (its output was `DeferredToolRequests`); `[]` otherwise. End only. */
+  deferred: DeferredCall[];
 };
+
+/** Why a tool call was left for the caller: it needs approval, or it runs outside the agent. */
+export type Deferral = "approval" | "external";
+
+export type DeferredCall = { call_id: string | null; tool_name: string; kind: Deferral };
 
 export type ModelRequestData = {
   /** From the span name at start, `gen_ai.request.model` at end. */
@@ -427,6 +434,8 @@ export type ToolCallData = {
   /** End only. */
   result: Json | null;
   retry: ToolRetry | null;
+  /** Set when the tool raised `ApprovalRequired` or `CallDeferred` instead of returning. End only. */
+  deferral: Deferral | null;
 };
 
 export type GraphRunData = {

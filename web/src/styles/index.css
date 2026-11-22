@@ -196,6 +196,16 @@
     );
   }
 
+  /* A tool call left waiting for approval or a result: an outline over a faint fill. */
+  .pviz-bar-waiting {
+    background-image: linear-gradient(
+      color-mix(in srgb, var(--surface) 75%, transparent),
+      color-mix(in srgb, var(--surface) 75%, transparent)
+    );
+    outline: 1.5px solid var(--tone);
+    outline-offset: -1.5px;
+  }
+
   .skeleton {
     border-radius: 6px;
     background: linear-gradient(

@@ -134,6 +134,7 @@ function barClass(span: Span): string {
   if (status === "running") return "tone-accent pviz-bar-running";
   if (status === "error") return "tone-error";
   if (status === "retry") return "tone-retry";
+  if (status === "waiting") return "tone-retry pviz-bar-waiting";
   return toneClass[kindMeta[span.kind].tone];
 }
 

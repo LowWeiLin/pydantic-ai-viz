@@ -14,8 +14,9 @@ import {
   started,
   stateOf,
   TRACE,
+  toolCall,
 } from "../test/factory";
-import type { AgentBlueprint, Capability, Envelope } from "../wire";
+import type { AgentBlueprint, Capability, Envelope, Span } from "../wire";
 import { initialData, reduce, reduceAll } from "./reduce";
 
 describe("reduce", () => {
@@ -176,6 +177,21 @@ describe("reduce", () => {
     ];
     const after = reduceAll(next, junk as unknown as Envelope[]);
     expect(after.spans).toBe(state.spans);
+  });
+
+  test("spans from a recording made before deferred tool calls were read get none", () => {
+    const run = agentRun({ id: "root", start: 0, end: 9 });
+    const tool = toolCall({ id: "t1", parent: "root", start: 1, end: 2, tool: "lookup" });
+    const { deferred: _deferred, ...oldRun } = run.data;
+    const { deferral: _deferral, ...oldTool } = tool.data;
+    const state = stateOf(
+      [2, { type: "span.ended", span: { ...tool, data: oldTool } as unknown as Span }],
+      [9, { type: "span.ended", span: { ...run, data: oldRun } as unknown as Span }],
+    );
+    const root = state.spans[sid("root")];
+    const call = state.spans[sid("t1")];
+    expect(root?.kind === "agent_run" && root.data.deferred).toEqual([]);
+    expect(call?.kind === "tool_call" && call.data.deferral).toBeNull();
   });
 
   test("reduce one at a time equals reduceAll", () => {

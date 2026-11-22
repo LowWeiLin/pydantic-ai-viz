@@ -326,7 +326,11 @@ type AgentRunData = {
   output: Json | null;               // final result; end only
   usage: Usage | null;               // this agent's own requests only; end only
   messages: Message[] | null;        // the full conversation; end only
+  deferred: DeferredCall[];          // tool calls the run ended waiting on; [] otherwise, and at start
 };
+
+// A tool call left for the caller: it needs approval, or it runs outside the agent.
+type DeferredCall = { call_id: string | null; tool_name: string; kind: "approval" | "external" };
 
 type ModelRequestData = {
   model_name: string;
@@ -345,6 +349,7 @@ type ToolCallData = {
   arguments: Json | null;            // available at start
   result: Json | null;               // end only
   retry: { cause: string; attempt: number; max_retries: number } | null;
+  deferral: "approval" | "external" | null; // the tool raised ApprovalRequired / CallDeferred; end only
 };
 
 type GraphRunData  = { graph_id: string; graph_name: string; inputs: Json | null; output: Json | null };
@@ -365,6 +370,7 @@ type Part =
 
 - **Retry or error.** A `tool_call` with `status: "error"` and a non-null `retry` is a retry: the tool asked the model to try again. Only an error with `retry: null` is a failure.
 - **Token totals.** A run's total is the sum of `usage` over the `model_request` spans of the trace. Do not add `agent_run` usages together; see [why](../concepts/how-capture-works.md#why-token-totals-come-from-model-requests).
+- **Waiting for the caller.** An `agent_run` with a non-empty `deferred` ended without running those tool calls: its output was `DeferredToolRequests`. A call to a tool that needs approval (`requires_approval=True`) has no span. A tool that raised `ApprovalRequired` or `CallDeferred` has an `ok` span with `deferral` set and no result. The run that resumes it (with `message_history` and `deferred_tool_results`) has the same `conversation_id`: an approved call runs there as a `tool_call` with the same `call_id`, and a denied call or a result the caller supplied is only a `tool_result` part in its first model request's input.
 - **Output tools.** A call to an output tool such as `final_result` has no span. It appears in `messages` only. An `agent_run` that ends with `status: "ok"` produced its output.
 - **Delegation.** An `agent_run` whose parent is a `tool_call` is a delegated run, started by that tool.
 - **Graph nesting.** An `agent_run` started inside a graph step has that `graph_node` as its parent, except in a parallel batch, where its parent is the `graph_run`.
@@ -394,6 +400,7 @@ Spans are produced by Pydantic AI as OpenTelemetry spans and converted to the sh
 | `AgentRunData.output` | `final_result` |
 | `AgentRunData.usage` | `gen_ai.aggregated_usage.input_tokens`, `.output_tokens` |
 | `AgentRunData.messages` | `pydantic_ai.all_messages` |
+| `AgentRunData.deferred` | the `calls` (`external`) and `approvals` (`approval`) of a `DeferredToolRequests` in `final_result`, names and ids only. Without content capture there is no `final_result`: the tool calls of the last model response that no tool result answers, `external` when their span raised `CallDeferred` or their tool is external, else `approval` |
 | `instructions` (agent run and model request) | `gen_ai.system_instructions`, a JSON list whose `content` values are joined with a blank line |
 | `ModelRequestData.model_name` | `gen_ai.request.model`, else the span name |
 | `ModelRequestData.provider` | `gen_ai.provider.name`, else `gen_ai.system` |
@@ -403,6 +410,7 @@ Spans are produced by Pydantic AI as OpenTelemetry spans and converted to the sh
 | `ModelRequestData.usage` | `gen_ai.usage.input_tokens`, `.output_tokens` |
 | `ToolCallData.call_id`, `arguments`, `result` | `gen_ai.tool.call.id`, `.arguments`, `.result` |
 | `ToolCallData.retry` | `pydantic_ai.tool.retry.cause`, `.attempt`, `.max_retries` |
+| `ToolCallData.deferral` | `pydantic_ai.tool.deferral.name`: `ApprovalRequired` gives `approval`, `CallDeferred` gives `external` |
 | `error` | the span's `exception` event (`exception.type`, `.message`, `.stacktrace`) |
 | `GraphRunData`, `GraphNodeData` | `pydantic_ai_viz.graph.id`, `.name`, `.node_id`, `.inputs`, `.output` |
 
@@ -450,7 +458,7 @@ A tool call that asks for a retry. At start, the arguments are known:
     "error": null, "attributes": {},
     "data": {
       "tool_name": "get_order", "call_id": "call_1",
-      "arguments": {"order_id": "1042"}, "result": null, "retry": null
+      "arguments": {"order_id": "1042"}, "result": null, "retry": null, "deferral": null
     }
   }
 }
@@ -478,7 +486,8 @@ At end, the same span carries its result, the error and the retry information:
       "tool_name": "get_order", "call_id": "call_1",
       "arguments": {"order_id": "1042"},
       "result": "Order ids look like 'A-1042'.",
-      "retry": {"cause": "model_retry", "attempt": 1, "max_retries": 2}
+      "retry": {"cause": "model_retry", "attempt": 1, "max_retries": 2},
+      "deferral": null
     }
   }
 }

@@ -373,6 +373,18 @@ class RetryInfo(WireModel):
     max_retries: int
 
 
+Deferral: TypeAlias = Literal["approval", "external"]
+"""Why a tool call was left for the caller: it needs approval, or it runs outside the agent."""
+
+
+class DeferredCall(WireModel):
+    """A tool call a run ended waiting on (its output was ``DeferredToolRequests``)."""
+
+    call_id: str | None
+    tool_name: str
+    kind: Deferral
+
+
 class AgentRunData(WireModel):
     model_name: str | None
     conversation_id: str | None
@@ -380,6 +392,8 @@ class AgentRunData(WireModel):
     output: JsonValue
     usage: Usage | None
     messages: list[Message] | None
+    deferred: list[DeferredCall]
+    """Empty unless the run ended waiting for approvals or external results."""
 
 
 class ModelRequestData(WireModel):
@@ -399,6 +413,8 @@ class ToolCallData(WireModel):
     arguments: JsonValue
     result: JsonValue
     retry: RetryInfo | None
+    deferral: Deferral | None
+    """Set when the tool raised ``ApprovalRequired`` or ``CallDeferred`` instead of returning."""
 
 
 class GraphRunData(WireModel):

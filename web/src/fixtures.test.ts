@@ -22,6 +22,7 @@ const blueprints = readdirSync(path.join(fixturesDir, "blueprint")).map(
 
 test("the expected fixtures exist", () => {
   expect(recordings.sort()).toEqual([
+    "approvals.pviz.jsonl",
     "failed.pviz.jsonl",
     "redacted.pviz.jsonl",
     "sample.pviz.jsonl",

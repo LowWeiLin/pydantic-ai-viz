@@ -134,11 +134,13 @@ class AgentRun {
     this.rec = rec;
     this.o = o;
     this.runId = rec.uuid();
-    this.conversationId = rec.uuid();
-    this.history = [];
+    // A run resumed with `message_history` continues that conversation and adds no prompt.
+    this.conversationId = o.conversationId ?? rec.uuid();
+    this.history = structuredClone(o.history ?? []);
     if (o.system)
       this.history.push({ role: "system", parts: [{ type: "text", content: rec.c(o.system) }] });
-    this.history.push({ role: "user", parts: [{ type: "text", content: rec.c(o.prompt) }] });
+    if (o.prompt !== undefined)
+      this.history.push({ role: "user", parts: [{ type: "text", content: rec.c(o.prompt) }] });
     this.results = [];
     this.usage = { input_tokens: 0, output_tokens: 0 };
     this.root = rec.span(
@@ -158,6 +160,7 @@ class AgentRun {
         output: null,
         usage: null,
         messages: null,
+        deferred: [],
       },
     );
     this.id = this.root.id;
@@ -266,8 +269,9 @@ class AgentRun {
       arguments: rec.c(call.args),
       result: null,
       retry: null,
+      deferral: null,
     });
-    const done = (end, { result, retry = null, error = null } = {}) => {
+    const done = (end, { result, retry = null, error = null, deferral = null } = {}) => {
       span.end(end, {
         status: error ? "error" : "ok",
         error,
@@ -275,10 +279,11 @@ class AgentRun {
           "gen_ai.operation.name": "execute_tool",
           "logfire.msg": `running tool: ${call.name}`,
         },
-        data: { result: rec.c(result ?? null), retry },
+        data: { result: rec.c(result ?? null), retry, deferral },
       });
-      // An unhandled tool exception ends the run; nothing is sent back to the model.
-      if (!error || retry) {
+      // An unhandled tool exception ends the run; nothing is sent back to the model, and
+      // a deferred call is answered by the caller in the next run.
+      if ((!error || retry) && !deferral) {
         this.results.push({
           type: "tool_result",
           id: call.id,
@@ -290,7 +295,20 @@ class AgentRun {
     return { id: span.id, done };
   }
 
-  finish(end, { output = null, error = null, usage = this.usage, finalResultId } = {}) {
+  /** A tool result the caller supplies when it resumes the run (an approval's outcome or an external result). */
+  answer(call, result) {
+    this.results.push({
+      type: "tool_result",
+      id: call.id,
+      name: call.name,
+      result: this.rec.c(result),
+    });
+  }
+
+  finish(
+    end,
+    { output = null, error = null, usage = this.usage, finalResultId, deferred = [] } = {},
+  ) {
     const { rec, o } = this;
     if (finalResultId) {
       this.results.push({
@@ -310,6 +328,7 @@ class AgentRun {
         output: rec.c(output),
         usage,
         messages: structuredClone(this.history),
+        deferred,
       },
     });
   }
@@ -1097,6 +1116,7 @@ function failed() {
       output: earlyOut,
       usage: { input_tokens: 64, output_tokens: 9 },
       messages: [...earlyMessages, ...earlyReply],
+      deferred: [],
     },
     { "gen_ai.operation.name": "invoke_agent", "logfire.msg": "digest run" },
   );
@@ -1260,6 +1280,123 @@ function redacted() {
   run.tool(1909.8, file).done(2377.1, { result: "redacted" });
   run.request(2384, 3120.6, { text: "redacted", usage: { input_tokens: 402, output_tokens: 27 } });
   run.finish(3126.2, { output: "redacted" });
+  return rec;
+}
+
+// ---------- approvals.pviz.jsonl ----------
+
+/**
+ * Tool calls left for the caller, and the run that answers them. Run 1 asks to delete two files
+ * (`delete_file` needs approval, so neither call runs) and to restart a service (the tool raises
+ * `CallDeferred`: it runs outside the agent). The run ends waiting on all three. Run 2 continues
+ * the same conversation: one deletion is approved and runs, the other is denied, and the caller
+ * supplies the restart's result.
+ */
+function approvals() {
+  const rec = new Recording({ title: "Ops with approvals", seed: 0x5eed0006, t0: 1795305600000 });
+  const pathSchema = objectSchema({ path: { type: "string" } });
+  const instructions = "Clean up the workspace. Deleting files needs a human's approval.";
+  rec.emit(1.2, {
+    type: "blueprint.agent",
+    agent: agent({
+      id: "a1",
+      name: "ops",
+      label: "ops",
+      description: "Housekeeping for the build machines",
+      model: offlineModel("ops_model"),
+      instructions: [{ kind: "instructions", dynamic: false, text: instructions, function: null }],
+      toolsets: [agentTools],
+      tools: [
+        tool("delete_file", "ts0", "Delete one file.", pathSchema, {
+          kind: "unapproved",
+          takes_ctx: true,
+          function: "ops.delete_file",
+        }),
+        tool(
+          "restart_service",
+          "ts0",
+          "Restart a service; the on-call engineer does it.",
+          objectSchema({ name: { type: "string" } }),
+          { function: "ops.restart_service" },
+        ),
+        tool("page_oncall", "ts0", "Page the on-call engineer.", objectSchema({}), {
+          kind: "external",
+        }),
+      ],
+      output: {
+        mode: "text",
+        allows_text: true,
+        type_name: "str | DeferredToolRequests",
+        json_schema: { type: "string" },
+        tool_names: [],
+      },
+    }),
+  });
+
+  const a = { id: "call_del_a", name: "delete_file", args: { path: "build/a.log" } };
+  const b = { id: "call_del_b", name: "delete_file", args: { path: "build/b.log" } };
+  const restart = { id: "call_restart", name: "restart_service", args: { name: "cache" } };
+  const first = new AgentRun(rec, {
+    trace: rec.hex(32),
+    agent: "ops",
+    model: "ops_model",
+    start: 400,
+    instructions,
+    prompt: "Delete the old build logs and restart the cache.",
+  });
+  first.request(402.5, 1210.8, {
+    text: "Deleting both logs and restarting the cache.",
+    calls: [a, b, restart],
+    usage: { input_tokens: 188, output_tokens: 52 },
+  });
+  // `delete_file` needs approval, so its calls get no span; `restart_service` raises CallDeferred.
+  first.tool(1216.4, restart).done(1219.9, { deferral: "external" });
+  first.finish(1224.6, {
+    output: {
+      calls: [
+        {
+          tool_name: restart.name,
+          args: restart.args,
+          tool_call_id: restart.id,
+          part_kind: "tool-call",
+        },
+      ],
+      approvals: [a, b].map((call) => ({
+        tool_name: call.name,
+        args: call.args,
+        tool_call_id: call.id,
+        part_kind: "tool-call",
+      })),
+      metadata: {},
+      validated_args: { [a.id]: a.args, [b.id]: b.args, [restart.id]: restart.args },
+    },
+    deferred: [
+      { call_id: restart.id, tool_name: restart.name, kind: "external" },
+      { call_id: a.id, tool_name: a.name, kind: "approval" },
+      { call_id: b.id, tool_name: b.name, kind: "approval" },
+    ],
+  });
+
+  // Later, the caller resumes with message_history and deferred_tool_results.
+  const second = new AgentRun(rec, {
+    trace: rec.hex(32),
+    agent: "ops",
+    model: "ops_model",
+    start: 9400,
+    instructions,
+    conversationId: first.conversationId,
+    history: first.history,
+  });
+  second.tool(9403.1, a).done(9411.7, { result: "deleted build/a.log" });
+  second.answer(b, "The tool call was denied.");
+  second.answer(restart, "cache restarted");
+  second.request(9413, 10021.4, {
+    text: "Deleted build/a.log. build/b.log was kept, as asked. The cache is restarted.",
+    usage: { input_tokens: 291, output_tokens: 24 },
+  });
+  second.finish(10025.2, {
+    output: "Deleted build/a.log. build/b.log was kept, as asked. The cache is restarted.",
+  });
   return rec;
 }
 
@@ -1838,6 +1975,7 @@ const files = {
   "sample.pviz.jsonl": sample().jsonl(),
   "failed.pviz.jsonl": failed().jsonl(),
   "redacted.pviz.jsonl": redacted().jsonl(),
+  "approvals.pviz.jsonl": approvals().jsonl(),
   "index.json": `${JSON.stringify(
     {
       recordings: [
@@ -1861,6 +1999,13 @@ const files = {
           description:
             "The same structure with include_content=False: no prompts, arguments or results are stored.",
           src: "redacted.pviz.jsonl",
+        },
+        {
+          id: "approvals",
+          title: "Approvals and deferred calls",
+          description:
+            "A run ends waiting for two approvals and an external result; the next run in the conversation approves one call, denies the other and supplies the result.",
+          src: "approvals.pviz.jsonl",
         },
       ],
     },

@@ -1152,3 +1152,48 @@ describe("skills, and what Pydantic AI adds by default", () => {
     expect(screen.queryByRole("button", { name: /^Pydantic AI defaults/ })).toBeNull();
   });
 });
+
+describe("tool calls left for the caller", () => {
+  const APPROVALS = "approvals.pviz.jsonl";
+  const spanDetails = (): HTMLElement =>
+    screen.getByRole("complementary", { name: "Span details" });
+
+  test("a tool that needs approval, and one that runs outside, say so on the canvas and in their panel", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/agents/a1";
+    render(<App plan={embedded(APPROVALS)} />);
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    await user.click(
+      await screen.findByRole("button", { name: "Tool delete_file, needs approval" }),
+    );
+    expect(within(details).getByText("asked before every call")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Tool page_oncall, runs outside the agent" }),
+    );
+    expect(within(details).getByText("the caller supplies the result")).toBeInTheDocument();
+  });
+
+  test("a run that ended waiting lists its calls, and the run that resumes it says what became of them", async () => {
+    const user = userEvent.setup();
+    render(<App plan={embedded(APPROVALS)} />);
+    const [second, first] = runs(useViewer.getState().data);
+    await openRun(first?.traceId, "ops");
+    await user.click(await screen.findByRole("button", { name: "Skip to end" }));
+    expect(screen.getAllByText("waiting for approval and results: 3 calls").length).toBeGreaterThan(
+      0,
+    );
+    await user.click(within(spanDetails()).getByRole("tab", { name: "Output" }));
+    const panel = within(spanDetails());
+    expect(
+      panel.getByText("approved: it ran in the run that resumed this one"),
+    ).toBeInTheDocument();
+    expect(panel.getByText("denied: the model was told it may not run")).toBeInTheDocument();
+    expect(panel.getByText("result supplied by the caller")).toBeInTheDocument();
+
+    await openRun(second?.traceId, "ops");
+    const back = screen.getByRole("link", {
+      name: /^resumes ops \d\d:\d\d:\d\d: 1 approved, 1 denied, 1 result supplied$/,
+    });
+    expect(back.getAttribute("href")).toBe(`#/runs/${first?.traceId}`);
+  });
+});
