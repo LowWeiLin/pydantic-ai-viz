@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import itertools
 import json
 import os
@@ -516,6 +517,7 @@ def test_seq_is_gapless_when_agents_run_in_concurrent_threads() -> None:
             start.wait()
             for _ in range(5):
                 agent.run_sync("hi")
+            asyncio.get_event_loop().close()  # the one run_sync made for this thread
         except BaseException as exc:
             failures.append(exc)
 

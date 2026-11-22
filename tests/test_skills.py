@@ -182,3 +182,10 @@ def test_reading_the_skills_changes_nothing_on_disk(tmp_path: Path) -> None:
         "skills/house-style",
         "skills/house-style/SKILL.md",
     ]
+
+
+def test_the_skills_chosen_are_listed_sorted_once_each() -> None:
+    included, _ = skills_capability(Agent(TestModel(), capabilities=[harness.Skills("sk", include=["y", "x", "y"])]))
+    excluded, _ = skills_capability(Agent(TestModel(), capabilities=[harness.Skills("sk", exclude=["y", "x", "y"])]))
+    assert included.details == {"directories": ["sk"], "include": ["x", "y"]}
+    assert excluded.details == {"directories": ["sk"], "exclude": ["x", "y"]}

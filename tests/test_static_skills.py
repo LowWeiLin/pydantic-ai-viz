@@ -380,3 +380,53 @@ def test_the_skills_read_from_source_are_those_the_live_agent_reads(tmp_path: Pa
     directories = [c.details["directories"] for a in (static, live) for c in a.capabilities if c.name == "Skills"]
     assert directories == [["skills"], ["skills"]]  # one directory by position is a list, as the harness holds it
     assert [s.name for s in skills_of(static.capabilities)] == ["archive", "house-style"]
+
+
+@pytest.mark.parametrize("key", ["include", "exclude"])
+def test_the_skills_chosen_are_listed_sorted_once_each(tmp_path: Path, key: str) -> None:
+    found = one_agent(
+        tmp_path,
+        f"""
+        from pydantic_ai import Agent
+        from pydantic_ai_harness import Skills
+
+        agent = Agent("test", capabilities=[Skills("sk", {key}=["y", "x", "y"])])
+        """,
+    )
+    (capability,) = found.capabilities
+    assert capability.details == {"directories": ["sk"], key: ["x", "y"]}
+
+
+@pytest.mark.skipif(find_spec("pydantic_ai_harness") is None, reason="needs pydantic-ai-harness")
+def test_the_skills_chosen_read_from_source_are_those_the_live_agent_holds(tmp_path: Path) -> None:
+    for name in ("one", "two", "three"):
+        write_skill(tmp_path / "skills", name, f"description: {name}.")
+    path = tmp_path / "team.py"
+    path.write_text(
+        textwrap.dedent(
+            """
+            import sys
+            from pathlib import Path
+
+            from pydantic_ai import Agent
+            from pydantic_ai.models.test import TestModel
+            from pydantic_ai.workspaces import LocalWorkspaceBackend, WindowsWorkspaceBackend
+            from pydantic_ai_harness import Skills
+
+            HERE = Path(__file__).parent
+            backend = WindowsWorkspaceBackend(HERE) if sys.platform == "win32" else LocalWorkspaceBackend(HERE)
+            writer = Agent(
+                TestModel(),
+                name="writer",
+                capabilities=[Skills("skills", exclude=["two", "one"], workspace=backend)],
+            )
+            """
+        ),
+        encoding="utf-8",
+    )
+    live = live_agents(path)["writer"]
+    (static,) = analyze(path).agents
+    (live_skills,) = (c for c in live.capabilities if c.name == "Skills")
+    (static_skills,) = (c for c in static.capabilities if c.name == "Skills")
+    assert static_skills.details["exclude"] == live_skills.details["exclude"] == ["one", "two"]
+    assert [s.name for s in static_skills.skills] == [s.name for s in live_skills.skills] == ["three"]

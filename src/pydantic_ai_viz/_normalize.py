@@ -259,10 +259,16 @@ def _error(span: ReadableSpan, status: Status) -> SpanError | None:
     for event in reversed(span.events):
         if event.name == "exception":
             details: Mapping[str, Any] = event.attributes or {}
+            kind = str(details.get("exception.type") or "Error")
+            attributes = span.attributes or {}
+            # A retry the model is asked for is expected: its message is shown, not where it was raised.
+            retried = kind.endswith("ToolRetryError") or any(
+                key in attributes for key in ("pydantic_ai.tool.retry.cause", "pydantic_ai.output.retry.cause")
+            )
             return SpanError(
-                type=str(details.get("exception.type") or "Error"),
+                type=kind,
                 message=_text(details.get("exception.message")),
-                stacktrace=_text(details.get("exception.stacktrace")),
+                stacktrace=None if retried else _text(details.get("exception.stacktrace")),
             )
     if status == "error":
         return SpanError(type="Error", message=_text(span.status.description), stacktrace=None)

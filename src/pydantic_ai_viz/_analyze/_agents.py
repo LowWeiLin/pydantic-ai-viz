@@ -1972,6 +1972,10 @@ class _AgentBuilder:
         self, call: ast.Call, target: Expression, details: dict[str, Any], expressions: dict[str, str]
     ) -> list[SkillInfo]:
         """The skills a harness ``Skills(...)`` offers, read from the ``SKILL.md`` files of the analysed directories."""
+        for key in ("include", "exclude"):
+            names = details.get(key)
+            if isinstance(names, list):  # sorted and once each, as the live capability holds them in a set
+                details[key] = sorted({str(name) for name in cast("list[Any]", names)})
         if "directories" in expressions:
             self.warn(
                 f"the skill directories are computed by `{brief(expressions['directories'])}`; the skills are only "

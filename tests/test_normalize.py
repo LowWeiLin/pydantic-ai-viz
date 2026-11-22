@@ -281,7 +281,7 @@ User is ann.\
             "error": {
                 "type": "pydantic_ai.exceptions.ToolRetryError",
                 "message": "x must be 2",
-                "stacktrace": "<stacktrace>",
+                "stacktrace": None,
             },
             "attributes": {
                 "gen_ai.operation.name": "execute_tool",
@@ -498,7 +498,7 @@ async def test_retry_span_has_retry_and_error() -> None:
     assert first["data"]["result"] == "x must be 2"
     assert first["error"]["type"] == "pydantic_ai.exceptions.ToolRetryError"
     assert first["error"]["message"] == "x must be 2"
-    assert first["error"]["stacktrace"].startswith("Traceback")
+    assert first["error"]["stacktrace"] is None  # an expected retry: its message is what the model was told
     assert second["status"] == "ok"
     assert second["data"]["retry"] is None
     assert second["error"] is None
@@ -621,6 +621,7 @@ async def test_failed_run_has_error_status_and_exception_details() -> None:
     run, _, tool = spans
     assert tool["data"]["retry"] is None  # a real error, not a retry
     assert tool["error"]["type"] == "ValueError"
+    assert tool["error"]["stacktrace"].startswith("Traceback")  # a real error keeps where it was raised
     assert run["error"]["type"] == "ValueError"
     assert run["error"]["message"] == "kaboom"
     assert run["data"]["output"] is None
@@ -648,6 +649,41 @@ def test_unknown_span_degrades_to_other_with_raw_attributes() -> None:
     assert wire["agent_name"] == "legacy"  # the pre-gen_ai key is the fallback
     assert wire["attributes"] == {"db.system": "sqlite", "rows": 3, "tags": ["a", "b"]}
     assert wire["end_ms"] >= wire["start_ms"] > 1_600_000_000_000  # epoch milliseconds
+
+
+def _failed(attributes: dict[str, Any], exception_type: str) -> dict[str, Any]:
+    """A tool span that ended with an exception event, as Pydantic AI records one."""
+    span = TracerProvider().get_tracer("test").start_span("running tool", attributes=attributes)
+    span.add_event(
+        "exception",
+        {
+            "exception.type": exception_type,
+            "exception.message": "x must be 2",
+            "exception.stacktrace": "Traceback (most recent call last): ...",
+        },
+    )
+    span.set_status(Status(StatusCode.ERROR))
+    span.end()
+    assert isinstance(span, ReadableSpan)
+    return to_wire(normalize(span, ended=True).span)
+
+
+@pytest.mark.parametrize(
+    ("exception_type", "attributes"),
+    [
+        ("pydantic_ai.exceptions.ToolRetryError", {}),
+        ("RuntimeError", {"pydantic_ai.tool.retry.cause": "model_retry"}),
+        ("RuntimeError", {"pydantic_ai.output.retry.cause": "model_retry"}),
+    ],
+)
+def test_an_expected_retry_has_no_stacktrace(exception_type: str, attributes: dict[str, Any]) -> None:
+    wire = _failed(attributes, exception_type)
+    assert wire["error"] == {"type": exception_type, "message": "x must be 2", "stacktrace": None}
+
+
+def test_a_real_error_keeps_its_stacktrace() -> None:
+    wire = _failed({}, "RuntimeError")
+    assert wire["error"]["stacktrace"].startswith("Traceback")
 
 
 def test_error_status_without_exception_event_uses_the_status_description() -> None:

@@ -18,7 +18,7 @@ from pydantic_ai import Agent
 from pydantic_graph import Graph
 from static_support import live_agents, without_titles
 
-from pydantic_ai_viz import AgentBlueprint, Analysis, GraphBlueprint, analyze, record
+from pydantic_ai_viz import AgentBlueprint, Analysis, GraphBlueprint, Limits, analyze, record
 
 DEMOS = ["support", "research", "pipeline"]
 ALL_DEMOS = [
@@ -43,7 +43,8 @@ def live_and_static(name: str) -> tuple[list[AgentBlueprint | GraphBlueprint], A
         elif event["type"] == "blueprint.graph":
             live.append(GraphBlueprint.model_validate(event["graph"]))
     assert len(live) == sum(isinstance(value, Agent | Graph) for value in vars(module).values())
-    return live, analyze(Path(module.__file__))
+    # These tests check accuracy, not speed: a slow machine must not cut the analysis short.
+    return live, analyze(Path(module.__file__), limits=Limits(max_seconds=600))
 
 
 @pytest.mark.parametrize("name", ALL_DEMOS)
@@ -58,6 +59,7 @@ def test_the_same_agents_and_graphs_are_found(name: str) -> None:
 @pytest.mark.parametrize("name", DEMOS)
 def test_agents_read_from_source_match_the_live_agents(name: str) -> None:
     live, static = live_and_static(name)
+    assert static.notices == []
     static_agents = {b.label: b for b in static.agents}
     live_agents = [b for b in live if isinstance(b, AgentBlueprint)]
     labels = {b.id: b.label for b in static.agents}

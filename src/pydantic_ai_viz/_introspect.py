@@ -724,6 +724,9 @@ def _detail_value(value: Any) -> Any | None:
         return model_id if isinstance(model_id, str) else _safe_getattr(model, "model_name")
     if inspect.isroutine(value) or isinstance(value, functools.partial):
         return qualified_name(cast("Callable[..., Any]", value))
+    if isinstance(value, set | frozenset):  # sorted: a set has no order of its own
+        items = [_detail_value(item) for item in cast("set[Any]", value)]
+        return None if any(item is None for item in items) else sorted(items, key=str)
     if isinstance(value, list | tuple):
         items = [_detail_value(item) for item in cast("list[Any]", value)]
         return None if any(item is None for item in items) else items
