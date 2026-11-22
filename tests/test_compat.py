@@ -279,6 +279,31 @@ def test_sub_agents_names_its_tool_delegate_task_by_default() -> None:
     assert inspect.signature(harness.SubAgents).parameters["tool_name"].default == _compat.SUB_AGENTS_TOOL_NAME
 
 
+def test_hooks_registers_each_keyword_and_decorator_for_the_point_named() -> None:
+    from pydantic_ai.capabilities import Hooks
+
+    def function(*args: Any, **kwargs: Any) -> None: ...
+
+    hook: Any = function  # each keyword and decorator takes a function of its own signature
+
+    assert Hooks.__module__ == _compat.HOOKS_MODULE
+    keywords = [name for name in inspect.signature(Hooks).parameters if name not in ("ordering", "id", "description")]
+    assert [name for name in keywords if name != "defer_loading"] == list(_compat.HOOK_KWARGS)
+    for name, point in _compat.HOOK_KWARGS.items():
+        by_keyword = Hooks(**{name: hook})
+        by_decorator = Hooks()
+        getattr(by_decorator.on, name)(hook)
+        for hooks in (by_keyword, by_decorator):
+            registry = getattr(hooks, _compat.HOOKS_REGISTRY)
+            assert list(registry) == [point], name
+            (entry,) = registry[point]
+            assert (entry.func, entry.timeout, getattr(entry, "tools", None)) == (hook, None, None)
+    tool_hooks = Hooks()
+    tool_hooks.on.before_tool_execute(tools=["b", "a"], timeout=5)(hook)
+    (entry,) = getattr(tool_hooks, _compat.HOOKS_REGISTRY)["before_tool_execute"]
+    assert (entry.tools, entry.timeout) == (frozenset({"a", "b"}), 5)
+
+
 def test_a_plain_capability_keeps_the_instructions_it_was_given() -> None:
     def extra() -> str:
         return "b"

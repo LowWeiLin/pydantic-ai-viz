@@ -1107,11 +1107,14 @@ export function CapabilityInspector({
   agent,
   index,
   capability,
+  reveal,
 }: {
   agent: AgentBlueprint;
   /** Its index in `blueprint.capabilities`. */
   index: number;
   capability: Capability;
+  /** A section to bring into view: "hooks" when one of its hooks was picked. */
+  reveal?: Reveal | null;
 }) {
   const facts = known([
     capability.deferred && ["Loaded", "On demand, when the model asks for it"],
@@ -1136,6 +1139,7 @@ export function CapabilityInspector({
       </InspectorHeader>
       <Sections
         label="Capability"
+        reveal={reveal}
         items={present([
           {
             id: "definition",
@@ -1171,6 +1175,43 @@ export function CapabilityInspector({
                         {firstLine(skill.description)}
                       </span>
                     </PickRow>
+                  </li>
+                ))}
+              </ul>
+            ),
+          },
+          capability.hooks.length > 0 && {
+            id: "hooks",
+            title: "Hooks",
+            aside: String(capability.hooks.length),
+            content: (
+              <ul
+                aria-label={`Hooks of ${capability.name}`}
+                className="m-0 flex list-none flex-col gap-2 p-0"
+              >
+                {capability.hooks.map((hook, ordinal) => (
+                  <li key={ordinal} className="flex flex-col gap-0.5">
+                    <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <code className="text-data text-fg">{hook.point}</code>
+                      <span className="text-faint text-meta">→</span>
+                      <code className="min-w-0 break-all text-data text-muted">
+                        {hook.function ?? "not named in the source"}
+                      </code>
+                    </span>
+                    {(hook.tools !== null || hook.timeout !== null) && (
+                      <span className="text-meta text-muted">
+                        {[
+                          hook.tools !== null &&
+                            (hook.tools.length > 0
+                              ? `Only for ${hook.tools.join(", ")}`
+                              : "For no tool"),
+                          hook.timeout !== null && `Times out after ${hook.timeout} s`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    )}
+                    <SourceRef location={hook.location} prefix="" />
                   </li>
                 ))}
               </ul>

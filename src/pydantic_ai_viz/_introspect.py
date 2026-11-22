@@ -55,6 +55,7 @@ from ._models import (
     GraphBlueprint,
     GraphEdge,
     GraphNode,
+    HookInfo,
     Instruction,
     ModelInfo,
     OutputInfo,
@@ -521,6 +522,7 @@ def _capabilities(agent: AnyAgent, walk: _ToolsetWalk, warnings: list[str]) -> l
                 capability_id=None,
                 stack=None,
                 skills=[],
+                hooks=[],
             )
             found.append(entry)
             continue
@@ -548,6 +550,7 @@ def _capabilities(agent: AnyAgent, walk: _ToolsetWalk, warnings: list[str]) -> l
                     capability_id=None,
                     stack=within,
                     skills=[],
+                    hooks=[],
                 )
             )
     return found
@@ -606,7 +609,36 @@ def _capability(
         capability_id=capability_id if isinstance(capability_id, str) else None,
         stack=stack,
         skills=skill_catalog(capability, capabilities, warnings) if is_skills(capability) else [],
+        hooks=_hooks(capability, warnings),
     )
+
+
+def _hooks(capability: Any, warnings: list[str]) -> list[HookInfo]:
+    """The functions a ``Hooks`` capability registers, by hook point in the order it registered the first of each."""
+    if not any(
+        base.__name__ == "Hooks" and base.__module__ == _compat.HOOKS_MODULE for base in type(capability).__mro__
+    ):
+        return []
+    registry: Any = _compat.get_private(capability, _compat.HOOKS_REGISTRY, {}, warnings, "the hooks of `Hooks`")
+    found: list[HookInfo] = []
+    for point, entries in cast("dict[str, list[Any]]", registry if isinstance(registry, dict) else {}).items():
+        for entry in entries:
+            tools: Any = _safe_getattr(entry, "tools")
+            timeout: Any = _safe_getattr(entry, "timeout")
+            found.append(
+                HookInfo(
+                    point=point,
+                    function=qualified_name(_safe_getattr(entry, "func")),
+                    tools=sorted(str(name) for name in cast("frozenset[Any]", tools))
+                    if isinstance(tools, set | frozenset)
+                    else None,
+                    timeout=float(timeout)
+                    if isinstance(timeout, int | float) and not isinstance(timeout, bool)
+                    else None,
+                    location=None,
+                )
+            )
+    return found
 
 
 def _owned_toolsets(capability: Any, walk: _ToolsetWalk, depth: int) -> list[str]:

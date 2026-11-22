@@ -67,13 +67,14 @@ describe("reduce", () => {
     expect(state.agents.a2?.capabilities).toEqual([current]);
   });
 
-  test("a recording made before skills, stacks and default settings were read has none", () => {
+  test("a recording made before skills, hooks, stacks and default settings were read has none", () => {
     const { settings, ...rest } = agentBlueprint({ id: "a1" });
     const { defaults: _defaults, ...olderSettings } = settings;
     const {
       capability_id: _id,
       stack: _stack,
       skills: _skills,
+      hooks: _hooks,
       ...olderCapability
     } = capability({
       name: "Skills",
@@ -85,6 +86,7 @@ describe("reduce", () => {
       capability_id: null,
       stack: null,
       skills: [],
+      hooks: [],
     });
     expect(state.agents.a1?.settings.defaults).toEqual([]);
     // What a newer recording says is kept.

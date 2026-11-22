@@ -197,6 +197,21 @@ export type Capability = {
   stack: string | null;
   /** The skills a harness `Skills` capability offers, in catalog order; [] for every other one. */
   skills: Skill[];
+  /** The functions a `Hooks` capability registers, in the order it runs them for each point; [] for every other one. */
+  hooks: Hook[];
+};
+
+/** One function a `Hooks` capability registers. */
+export type Hook = {
+  /** The capability method it stands for, as `Hooks` keys it: "before_model_request", "wrap_run", "on_run_error". */
+  point: string;
+  /** `module.qualname` of the function; null when the source does not name one. */
+  function: string | null;
+  /** For a tool hook, the tools it is limited to (`tools=`), sorted; null when it runs for every tool. */
+  tools: string[] | null;
+  timeout: number | null;
+  /** Where the function is defined (static analysis only). */
+  location: SourceLocation | null;
 };
 
 /** One skill a harness `Skills` capability offers. */

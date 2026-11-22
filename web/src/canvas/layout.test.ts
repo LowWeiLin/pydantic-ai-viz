@@ -6,6 +6,7 @@ import {
   capability,
   fixtureState,
   graphBlueprint,
+  hook,
   skill,
   stateOf,
 } from "../test/factory";
@@ -22,6 +23,7 @@ import {
   type LayoutNode,
   layoutAgentCanvas,
   layoutGraph,
+  MAX_HOOK_ROWS,
   MAX_SKILL_ROWS,
   nodeKind,
   SEEN_GROUP,
@@ -32,6 +34,7 @@ import {
   agentNodeId,
   capabilityNodeId,
   graphNodeId,
+  hookNodeId,
   outputNodeId,
   skillNodeId,
   toolNodeId,
@@ -513,6 +516,32 @@ describe("capabilities on the agent canvas", () => {
     // Thinking (reasoning) comes before Skills (knowledge) in the docs' order.
     const thinking = find(layout.nodes, capabilityNodeId("a1", 1));
     expect(thinking.y + thinking.height).toBeLessThanOrEqual(owner.y);
+  });
+
+  test("hooks are rows under the Hooks capability that registers them, eight at most", () => {
+    const hooks = Array.from({ length: 10 }, (_, i) => hook({ point: `before_run_${i}` }));
+    const { layout } = layoutOf(
+      agentBlueprint({
+        id: "a1",
+        capabilities: [
+          capability({ name: "Thinking", category: "reasoning" }),
+          capability({ name: "Hooks", category: "loop", hooks }),
+        ],
+      }),
+    );
+    const box = find(layout.nodes, "capabilities:a1");
+    const owner = find(layout.nodes, capabilityNodeId("a1", 1));
+    const rows = layout.nodes.filter((n) => n.kind === "hook");
+    expect(rows).toHaveLength(MAX_HOOK_ROWS);
+    expect(rows.map((n) => n.ref)).toEqual(hooks.slice(0, 8).map((_, i) => `1:${i}`));
+    expect(rows[0]?.id).toBe(hookNodeId("a1", 1, 0));
+    for (const [i, row] of rows.entries()) {
+      expect(row.parentId).toBe(box.id);
+      expect(row.height).toBe(SIZE.skillHeight);
+      expect(row.x).toBe(owner.x + SIZE.skillInset);
+      expect(row.y).toBe(owner.y + owner.height + SIZE.rowGap + i * (row.height + SIZE.rowGap));
+      expect(row.y + row.height).toBeLessThanOrEqual(box.height);
+    }
   });
 
   test("what Pydantic AI added is laid out only while defaults are shown", () => {

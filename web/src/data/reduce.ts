@@ -17,7 +17,8 @@ import type {
 
 /**
  * Recordings made before capabilities were grouped (pydantic-ai-viz 0.1.0) give only a name and
- * the builtin flag; those made before skills and harness stacks were read lack the last three.
+ * the builtin flag; those made before skills and harness stacks were read lack the last three, and those made
+ * before hooks were read lack `hooks`.
  */
 const CAPABILITY_DEFAULTS = {
   category: "custom",
@@ -30,6 +31,7 @@ const CAPABILITY_DEFAULTS = {
   capability_id: null,
   stack: null,
   skills: [],
+  hooks: [],
 } satisfies Omit<Capability, "name" | "builtin">;
 
 const withCapabilityDefaults = (list: Capability[] | undefined): Capability[] =>

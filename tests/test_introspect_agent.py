@@ -322,6 +322,7 @@ def test_full_agent_blueprint() -> None:
                     "capability_id": "tool_search",
                     "stack": None,
                     "skills": [],
+                    "hooks": [],
                 },
                 {
                     "name": "PendingMessageDrainCapability",
@@ -336,6 +337,7 @@ def test_full_agent_blueprint() -> None:
                     "capability_id": None,
                     "stack": None,
                     "skills": [],
+                    "hooks": [],
                 },
             ],
             "settings": {
@@ -908,6 +910,7 @@ def test_builtin_capabilities_are_flagged() -> None:
                 "capability_id": "tool_search",
                 "stack": None,
                 "skills": [],
+                "hooks": [],
             },
             {
                 "name": "PendingMessageDrainCapability",
@@ -922,6 +925,7 @@ def test_builtin_capabilities_are_flagged() -> None:
                 "capability_id": None,
                 "stack": None,
                 "skills": [],
+                "hooks": [],
             },
             {
                 "name": "Hooks",
@@ -936,6 +940,7 @@ def test_builtin_capabilities_are_flagged() -> None:
                 "capability_id": None,
                 "stack": None,
                 "skills": [],
+                "hooks": [],
             },
         ]
     )
@@ -1192,6 +1197,37 @@ def test_a_capability_says_the_id_pydantic_ai_knows_it_by() -> None:
         ("WebSearch", "search"),
         ("Hooks", None),
     ]
+
+
+async def _log_request(ctx: Any, request_context: Any) -> Any:
+    return request_context
+
+
+async def _guard(ctx: Any, *, call: Any, tool_def: Any, args: Any) -> Any:
+    return args
+
+
+async def _on_error(ctx: Any, *, error: BaseException) -> Any:
+    raise error
+
+
+async def _trace(ctx: Any, request_context: Any) -> Any:
+    return request_context
+
+
+def test_hooks_lists_the_functions_it_registers_by_point() -> None:
+    hooks = Hooks(run_error=_on_error, before_model_request=_log_request)
+    hooks.on.before_tool_execute(tools=["delete_file", "move_file"], timeout=5)(_guard)
+    hooks.on.before_model_request(_trace)
+    (found,) = _agent_blueprint(Agent(TestModel(), capabilities=[hooks])).capabilities[2:]
+    assert (found.details, found.expressions) == ({}, {})
+    assert [(h.point, h.function, h.tools, h.timeout, h.location) for h in found.hooks] == [
+        ("on_run_error", f"{MODULE}._on_error", None, None, None),
+        ("before_model_request", f"{MODULE}._log_request", None, None, None),
+        ("before_model_request", f"{MODULE}._trace", None, None, None),
+        ("before_tool_execute", f"{MODULE}._guard", ["delete_file", "move_file"], 5.0, None),
+    ]
+    assert all(c.hooks == [] for c in _agent_blueprint(Agent(TestModel(), capabilities=[Thinking()])).capabilities)
 
 
 def test_settings_say_which_values_are_pydantic_ais_defaults() -> None:

@@ -188,6 +188,21 @@ class SkillInfo(WireModel):
     """The Markdown after the frontmatter, as written: what the model gets when it loads the skill."""
 
 
+class HookInfo(WireModel):
+    """One function a ``Hooks`` capability registers."""
+
+    point: str
+    """Where it hooks in: the capability method it stands for, as ``Hooks`` keys it (``"before_model_request"``,
+    ``"wrap_run"``, ``"on_run_error"``)."""
+    function: str | None
+    """``module.qualname`` of the function; ``None`` when the source does not name one."""
+    tools: list[str] | None
+    """For a tool hook, the tools it is limited to (``tools=``), sorted; ``None`` when it runs for every tool."""
+    timeout: float | None
+    location: SourceLocation | None
+    """Where the function is defined. Static analysis only."""
+
+
 class CapabilityInfo(WireModel):
     name: str
     """The class name; for a capability static analysis cannot name, the source text that builds it."""
@@ -216,6 +231,9 @@ class CapabilityInfo(WireModel):
     agent was given it otherwise. Read from a live object only: from source it is ``None``."""
     skills: list[SkillInfo]
     """For a harness ``Skills`` capability, the skills it offers, in the order of the model's catalog; ``[]`` for
+    every other capability."""
+    hooks: list[HookInfo]
+    """For a ``Hooks`` capability, the functions it registers, in the order it runs them for each point; ``[]`` for
     every other capability."""
 
 

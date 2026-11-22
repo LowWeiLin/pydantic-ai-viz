@@ -10,6 +10,7 @@ import type {
   Envelope,
   Event,
   GraphBlueprint,
+  Hook,
   Json,
   ModelRequestSpan,
   SessionStarted,
@@ -176,6 +177,15 @@ export const capability = (fields: Partial<Capability> & { name: string }): Capa
   capability_id: null,
   stack: null,
   skills: [],
+  hooks: [],
+  ...fields,
+});
+
+export const hook = (fields: Partial<Hook> & { point: string }): Hook => ({
+  function: `app.${fields.point}_hook`,
+  tools: null,
+  timeout: null,
+  location: null,
   ...fields,
 });
 

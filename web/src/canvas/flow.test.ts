@@ -6,6 +6,7 @@ import {
   agentRun,
   capability,
   fixtureState,
+  hook,
   lifecycle,
   sid,
   skill,
@@ -22,6 +23,7 @@ import {
   capabilityName,
   capabilityRollup,
   graphNodeState,
+  hookName,
   modelIsComputed,
   type SkillNodeData,
   skillName,
@@ -33,6 +35,7 @@ import {
   type CanvasTarget,
   capabilityNodeId,
   graphNodeId,
+  hookNodeId,
   latestSpanFor,
   outputNodeId,
   parsePart,
@@ -503,6 +506,65 @@ describe("skills and what Pydantic AI adds, on the agent canvas", () => {
     expect(capabilityName(shell, [], { default: true })).toBe(
       "Capability Shell, via Coder, a Pydantic AI default",
     );
+  });
+});
+
+describe("hooks and the Advisor's model, on the agent canvas", () => {
+  const guard = hook({
+    point: "before_tool_execute",
+    function: "app.guard",
+    tools: ["delete_file"],
+    timeout: 5,
+  });
+  const blueprint = agentBlueprint({
+    id: "a1",
+    capabilities: [
+      capability({
+        name: "Advisor",
+        category: "reasoning",
+        package: "pydantic_ai_harness",
+        details: { model: "test" },
+      }),
+      capability({
+        name: "Hooks",
+        category: "loop",
+        package: "pydantic_ai",
+        hooks: [hook({ point: "before_model_request", function: "app.log_request" }), guard],
+      }),
+    ],
+  });
+  const state = stateOf([0, { type: "blueprint.agent", agent: blueprint }]);
+  const found = canvasModel(state, "a1", null);
+  if (!found) throw new Error("expected a model");
+  const { nodes } = buildAgentFlow(found, false, [
+    { kind: "hook", agentId: "a1", index: 1, ordinal: 1 },
+  ]);
+
+  test("a hook is a row under its capability with where it hooks in and its function", () => {
+    const row = nodes.find((n) => n.id === hookNodeId("a1", 1, 1));
+    expect(row).toMatchObject({
+      type: "hook",
+      parentId: "capabilities:a1",
+      data: { agentId: "a1", index: 1, ordinal: 1, owner: "Hooks", hook: guard, selected: true },
+    });
+    expect(nodes.filter((n) => n.type === "hook")).toHaveLength(2);
+    expect(hookName(guard, "Hooks")).toBe(
+      "Hook before_tool_execute of Hooks: guard, for delete_file, times out after 5 s",
+    );
+    expect(hookName(hook({ point: "wrap_run", function: null }), "Hooks")).toBe(
+      "Hook wrap_run of Hooks: a function the source does not name",
+    );
+  });
+
+  test("the capability rows count the hooks and name the Advisor's model", () => {
+    const [advisor, hooks] = blueprint.capabilities;
+    if (!advisor || !hooks) throw new Error("expected capabilities");
+    expect(capabilityRollup(hooks, null, 0)).toBe("2 hooks");
+    expect(capabilityRollup(advisor, null, 0)).toBe("model test");
+    expect(capabilityName(hooks, [])).toBe("Capability Hooks, Loop customization, 2 hooks");
+    expect(capabilityName(advisor, [])).toMatch(/^Capability Advisor, .*, model test$/);
+    // Only the harness's Advisor: another class of that name says nothing of a model.
+    expect(capabilityRollup({ ...advisor, package: null }, null, 0)).toBeNull();
   });
 });
 

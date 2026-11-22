@@ -12,8 +12,15 @@ import { Badge, Chip, StatusDot } from "../ui/Badge";
 import { Icon } from "../ui/Icon";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { cx, statusMeta, toneClass } from "../ui/tone";
-import type { Capability, ModelInfo, Skill, Toolset } from "../wire";
-import { DELEGATION_INLET, graphNodeLabel, MAX_SKILL_ROWS, nodeKind, SIZE } from "./layout";
+import type { Capability, Hook, ModelInfo, Skill, Toolset } from "../wire";
+import {
+  DELEGATION_INLET,
+  graphNodeLabel,
+  MAX_HOOK_ROWS,
+  MAX_SKILL_ROWS,
+  nodeKind,
+  SIZE,
+} from "./layout";
 import type { CanvasTarget } from "./targets";
 
 /** How nodes report clicks. Provided by the canvas frame. */
@@ -468,17 +475,32 @@ export type CapabilityNodeData = {
 const listed = (one: string, many: string, items: readonly string[]): string =>
   `${items.length === 1 ? one : many} ${items.join(", ")}`;
 
-/** What a capability row has in it that is drawn elsewhere or hidden: "2 skills · 4 tools". */
+/** The model an `Advisor` of the harness consults, as it was given. */
+const advisorModel = (capability: Capability): string | null =>
+  capability.name === "Advisor" &&
+  capability.package === "pydantic_ai_harness" &&
+  typeof capability.details.model === "string"
+    ? capability.details.model
+    : null;
+
+/** "2 skills", or "10 skills · 8 shown" when there are more than the canvas draws. */
+const counted = (count: number, word: string, max: number): string | false =>
+  count > max ? `${plural(count, word)} · ${max} shown` : count > 0 && plural(count, word);
+
+/**
+ * What a capability row has in it that is drawn elsewhere or hidden: "2 skills · 4 tools", and
+ * the model of an `Advisor`.
+ */
 export function capabilityRollup(
   capability: Capability,
   hiddenTools: string | null,
   inside: number,
 ): string | null {
-  const count = capability.skills.length;
+  const model = advisorModel(capability);
   const parts = [
-    count > MAX_SKILL_ROWS
-      ? `${plural(count, "skill")} · ${MAX_SKILL_ROWS} shown`
-      : count > 0 && plural(count, "skill"),
+    model !== null && `model ${model}`,
+    counted(capability.skills.length, "skill", MAX_SKILL_ROWS),
+    counted(capability.hooks.length, "hook", MAX_HOOK_ROWS),
     inside > 0 && `${inside} inside`,
     hiddenTools,
   ].filter((part): part is string => typeof part === "string");
@@ -503,7 +525,10 @@ export function capabilityName(
   if (capability.native_tools.length > 0) {
     parts.push(listed("provider-side tool", "provider-side tools", capability.native_tools));
   }
+  const model = advisorModel(capability);
+  if (model !== null) parts.push(`model ${model}`);
   if (capability.skills.length > 0) parts.push(plural(capability.skills.length, "skill"));
+  if (capability.hooks.length > 0) parts.push(plural(capability.hooks.length, "hook"));
   if (hidden.inside) parts.push(`${plural(hidden.inside, "capability", "capabilities")} inside`);
   if (capability.deferred) parts.push("on demand");
   return `${parts.join(", ")}${hidden.default ? DEFAULT_WORDS : ""}`;
@@ -625,6 +650,64 @@ export function SkillNode({ data }: NodeProps<Node<SkillNodeData, "skill">>) {
         <MiddleTruncate text={skill.name} className="min-w-0 flex-1 font-mono text-data text-fg" />
         {!skill.model_invocable && <span className="shrink-0 text-faint text-meta">hidden</span>}
         {overlay && <RowActivity activity={activity} />}
+      </div>
+    </div>
+  );
+}
+
+export type HookNodeData = {
+  agentId: string;
+  /** Index into `blueprint.capabilities` of the `Hooks` capability that registers it. */
+  index: number;
+  /** Index into that capability's `hooks`. */
+  ordinal: number;
+  /** That capability's name. */
+  owner: string;
+  hook: Hook;
+  selected: boolean;
+};
+
+/** The name of a hook's function without its module: "guard" for "app.guard". */
+export const hookFunction = (hook: Hook): string =>
+  hook.function === null
+    ? "a function the source does not name"
+    : (hook.function.split(".").at(-1) ?? "");
+
+/** "Hook before_tool_execute of Hooks: guard, for delete_file, times out after 5 s". */
+export function hookName(hook: Hook, owner: string): string {
+  const parts = [`Hook ${hook.point} of ${owner}: ${hookFunction(hook)}`];
+  if (hook.tools !== null) {
+    parts.push(hook.tools.length > 0 ? `for ${hook.tools.join(", ")}` : "for no tool");
+  }
+  if (hook.timeout !== null) parts.push(`times out after ${hook.timeout} s`);
+  return parts.join(", ");
+}
+
+/**
+ * A function a `Hooks` capability registers, in a row under the capability's: where it hooks in
+ * and the function. Picking it opens the capability's panel at its hooks.
+ */
+export function HookNode({ data }: NodeProps<Node<HookNodeData, "hook">>) {
+  const { hook } = data;
+  const name = hookName(hook, data.owner);
+  return (
+    <div
+      className={cx(
+        "tone-capability relative size-full rounded-control border border-line bg-surface",
+        data.selected && "pviz-selected",
+      )}
+    >
+      <Cover
+        label={name}
+        title={name}
+        target={{ kind: "hook", agentId: data.agentId, index: data.index, ordinal: data.ordinal }}
+      />
+      <div className="pointer-events-none relative flex h-full items-center gap-1.5 px-2">
+        <Icon name="span" size={12} className="shrink-0 tone-text" />
+        <MiddleTruncate text={hook.point} className="min-w-0 flex-1 font-mono text-data text-fg" />
+        <span className="min-w-0 shrink-[2] truncate font-mono text-faint text-meta">
+          {hook.function === null ? "?" : hookFunction(hook)}
+        </span>
       </div>
     </div>
   );
@@ -790,6 +873,7 @@ export const agentNodeTypes = {
   capabilities: CapabilitiesBox,
   capability: CapabilityNode,
   skill: SkillNode,
+  hook: HookNode,
 };
 
 export const graphNodeTypes = {

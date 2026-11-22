@@ -520,6 +520,13 @@
           "title": "Expressions",
           "type": "object"
         },
+        "hooks": {
+          "items": {
+            "$ref": "#/$defs/HookInfo"
+          },
+          "title": "Hooks",
+          "type": "array"
+        },
         "name": {
           "title": "Name",
           "type": "string"
@@ -584,7 +591,8 @@
         "native_tools",
         "capability_id",
         "stack",
-        "skills"
+        "skills",
+        "hooks"
       ],
       "title": "CapabilityInfo",
       "type": "object"
@@ -1171,6 +1179,71 @@
         "data"
       ],
       "title": "GraphRunSpan",
+      "type": "object"
+    },
+    "HookInfo": {
+      "additionalProperties": false,
+      "description": "One function a ``Hooks`` capability registers.",
+      "properties": {
+        "function": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Function"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceLocation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "point": {
+          "title": "Point",
+          "type": "string"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Timeout"
+        },
+        "tools": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tools"
+        }
+      },
+      "required": [
+        "point",
+        "function",
+        "tools",
+        "timeout",
+        "location"
+      ],
+      "title": "HookInfo",
       "type": "object"
     },
     "Instruction": {

@@ -67,6 +67,50 @@ SKILLS_SOURCES = "_sources"
 """Private field of ``Skills`` holding each configuration it serves; each has a ``workspace`` (``None`` for the run's
 workspace)."""
 
+HOOKS_MODULE = "pydantic_ai.capabilities.hooks"
+"""Module of ``pydantic_ai.capabilities.Hooks``, whose registered functions a blueprint lists."""
+HOOKS_REGISTRY = "_registry"
+"""Private field of ``Hooks``: hook point -> the entries registered for it, each with a ``func`` and a ``timeout``,
+and a ``tools`` (a ``frozenset`` or ``None``) for a tool hook."""
+HOOK_KWARGS: dict[str, str] = {
+    "before_run": "before_run",
+    "after_run": "after_run",
+    "run": "wrap_run",
+    "run_error": "on_run_error",
+    "before_node_run": "before_node_run",
+    "after_node_run": "after_node_run",
+    "node_run": "wrap_node_run",
+    "node_run_error": "on_node_run_error",
+    "run_event_stream": "wrap_run_event_stream",
+    "event": "on_event",
+    "before_model_request": "before_model_request",
+    "prepare_model_request": "prepare_model_request",
+    "after_model_request": "after_model_request",
+    "model_request": "wrap_model_request",
+    "model_request_error": "on_model_request_error",
+    "prepare_tools": "prepare_tools",
+    "prepare_output_tools": "prepare_output_tools",
+    "before_tool_validate": "before_tool_validate",
+    "after_tool_validate": "after_tool_validate",
+    "tool_validate": "wrap_tool_validate",
+    "tool_validate_error": "on_tool_validate_error",
+    "before_tool_execute": "before_tool_execute",
+    "after_tool_execute": "after_tool_execute",
+    "tool_execute": "wrap_tool_execute",
+    "tool_execute_error": "on_tool_execute_error",
+    "before_output_validate": "before_output_validate",
+    "after_output_validate": "after_output_validate",
+    "output_validate": "wrap_output_validate",
+    "output_validate_error": "on_output_validate_error",
+    "before_output_process": "before_output_process",
+    "after_output_process": "after_output_process",
+    "output_process": "wrap_output_process",
+    "output_process_error": "on_output_process_error",
+    "deferred_tool_calls": "handle_deferred_tool_calls",
+}
+"""Keyword arguments of ``Hooks(...)`` -> the hook point each registers its function for, in the order ``Hooks``
+registers them. The decorators of ``hooks.on`` have the same names and register for the same points."""
+
 SUB_AGENTS_TOOL_NAME = "delegate_task"
 """The default ``tool_name`` of the harness ``SubAgents``: the tool the model delegates a task with."""
 

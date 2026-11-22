@@ -225,6 +225,7 @@ def test_a_blueprint_read_from_code_carries_locations_and_expressions() -> None:
             "capability_id": "docs",
             "stack": None,
             "skills": [],
+            "hooks": [],
         }
     )
     assert to_wire(parse_envelope(json.dumps(line))) == line
@@ -246,29 +247,42 @@ def _with_skills() -> dict[str, Any]:
         "path": "_skills/house-style/SKILL.md",
         "body": "# House style",
     }
+    hook = {
+        "point": "before_tool_execute",
+        "function": "app.guard",
+        "tools": ["delete_file"],
+        "timeout": 5.0,
+        "location": {"file": "app.py", "line": 12},
+    }
     base = {"builtin": False, "deferred": False, "details": {}, "expressions": {}, "toolsets": [], "native_tools": []}
     line["agent"]["capabilities"] += [
         {**base, "name": "Skills", "category": "knowledge", "package": "pydantic_ai_harness"}
-        | {"capability_id": "skills", "stack": None, "skills": [skill]},
+        | {"capability_id": "skills", "stack": None, "skills": [skill], "hooks": []},
         {**base, "name": "Shell", "category": "environment", "package": "pydantic_ai_harness"}
-        | {"capability_id": None, "stack": "Coder", "skills": []},
+        | {"capability_id": None, "stack": "Coder", "skills": [], "hooks": []},
+        {**base, "name": "Hooks", "category": "custom", "package": "pydantic_ai"}
+        | {"capability_id": None, "stack": None, "skills": [], "hooks": [hook]},
     ]
     line["agent"]["settings"]["defaults"] = ["end_strategy", "tool_retries"]
     return line
 
 
-def test_skills_stacks_and_default_settings_round_trip_and_every_field_of_a_skill_is_required() -> None:
+def test_skills_hooks_stacks_and_default_settings_round_trip_and_every_field_of_a_skill_and_hook_is_required() -> None:
     line = _with_skills()
     assert to_wire(parse_envelope(json.dumps(line))) == line
-    skill = line["agent"]["capabilities"][-2]["skills"][0]
-    for key in list(skill):
-        broken = copy.deepcopy(line)
-        del broken["agent"]["capabilities"][-2]["skills"][0][key]
-        with pytest.raises(ValidationError):
-            parse_envelope(json.dumps(broken))
+    skill = line["agent"]["capabilities"][-3]["skills"][0]
+    hook = line["agent"]["capabilities"][-1]["hooks"][0]
+    for field, item in (("skills", skill), ("hooks", hook)):
+        for key in list(item):
+            broken = copy.deepcopy(line)
+            index = -3 if field == "skills" else -1
+            del broken["agent"]["capabilities"][index][field][0][key]
+            with pytest.raises(ValidationError):
+                parse_envelope(json.dumps(broken))
     schema = envelope_json_schema()["$defs"]
     assert sorted(schema["SkillInfo"]["required"]) == sorted(skill)
-    assert {"capability_id", "stack", "skills"} <= set(schema["CapabilityInfo"]["required"])
+    assert sorted(schema["HookInfo"]["required"]) == sorted(hook)
+    assert {"capability_id", "stack", "skills", "hooks"} <= set(schema["CapabilityInfo"]["required"])
     assert "defaults" in schema["AgentSettings"]["required"]
 
 

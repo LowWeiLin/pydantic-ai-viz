@@ -17,6 +17,7 @@ import {
   agentRun,
   capability,
   fixture,
+  hook,
   lifecycle,
   log,
   sessionStarted,
@@ -885,6 +886,66 @@ describe("the capabilities of an agent", () => {
         "pviz-selected",
       );
     });
+  });
+});
+
+describe("the hooks of a Hooks capability", () => {
+  const agent = agentBlueprint({
+    id: "a1",
+    capabilities: [
+      capability({
+        name: "Hooks",
+        category: "loop",
+        package: "pydantic_ai",
+        hooks: [
+          hook({
+            point: "before_model_request",
+            function: "app.log_request",
+            location: { file: "app.py", line: 9 },
+          }),
+          hook({
+            point: "before_tool_execute",
+            function: "app.guard",
+            tools: ["delete_file"],
+            timeout: 5,
+            location: { file: "app.py", line: 14 },
+          }),
+        ],
+      }),
+    ],
+  });
+
+  test("a hook picked on the canvas opens its capability's panel at its hooks", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/agents/a1";
+    render(
+      <App
+        plan={{
+          kind: "embedded",
+          events: log(
+            [0, { ...sessionStarted(), mode: "blueprint" }],
+            [1, { type: "blueprint.agent", agent }],
+          ),
+        }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /^Capability Hooks, .*2 hooks$/ })).toBeVisible();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Hook before_tool_execute of Hooks: guard, for delete_file, times out after 5 s",
+      }),
+    );
+    expect(window.location.hash).toBe("#/agents/a1?part=hook%3A0%3A1");
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    expect(within(details).getByRole("heading", { level: 3 }).textContent).toBe("Hooks");
+    const hooks = within(details).getByRole("list", { name: "Hooks of Hooks" });
+    const items = within(hooks).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      expect.stringMatching(/^before_model_request→app\.log_requestapp\.py:9/),
+      expect.stringMatching(
+        /^before_tool_execute→app\.guardOnly for delete_file · Times out after 5 sapp\.py:14/,
+      ),
+    ]);
   });
 });
 

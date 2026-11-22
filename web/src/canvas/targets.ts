@@ -25,6 +25,8 @@ export type CanvasTarget =
   | { kind: "capability"; agentId: string; index: number }
   /** A skill of the capability at `index`, by its name. */
   | { kind: "skill"; agentId: string; index: number; name: string }
+  /** A function the `Hooks` capability at `index` registers; `ordinal` is into its `hooks`. */
+  | { kind: "hook"; agentId: string; index: number; ordinal: number }
   | { kind: "graphNode"; nodeId: string };
 
 export const agentNodeId = (agentId: string): string => `agent:${agentId}`;
@@ -36,6 +38,8 @@ export const capabilityNodeId = (agentId: string, index: number): string =>
   `capability:${agentId}:${index}`;
 export const skillNodeId = (agentId: string, index: number, name: string): string =>
   `skill:${agentId}:${index}:${name}`;
+export const hookNodeId = (agentId: string, index: number, ordinal: number): string =>
+  `hook:${agentId}:${index}:${ordinal}`;
 export const graphNodeId = (nodeId: string): string => `node:${nodeId}`;
 
 /** The canvas node a target lives on. The model chip is part of its agent's card. */
@@ -54,6 +58,8 @@ export function targetNodeId(target: CanvasTarget): string {
       return capabilityNodeId(target.agentId, target.index);
     case "skill":
       return skillNodeId(target.agentId, target.index, target.name);
+    case "hook":
+      return hookNodeId(target.agentId, target.index, target.ordinal);
     case "graphNode":
       return graphNodeId(target.nodeId);
   }
@@ -64,8 +70,8 @@ export const sameTarget = (a: CanvasTarget | null, b: CanvasTarget | null): bool
 
 /**
  * A part of an agent as the `?part=` of the agent's link: "tool:<name>", "toolset:<id>",
- * "capability:<index>", "skill:<index>:<name>", "model" or "output". The agent itself, and a
- * graph node, have none.
+ * "capability:<index>", "skill:<index>:<name>", "hook:<index>:<ordinal>", "model" or "output". The
+ * agent itself, and a graph node, have none.
  */
 export function partOf(target: CanvasTarget): string | undefined {
   switch (target.kind) {
@@ -77,6 +83,8 @@ export function partOf(target: CanvasTarget): string | undefined {
       return `capability:${target.index}`;
     case "skill":
       return `skill:${target.index}:${target.name}`;
+    case "hook":
+      return `hook:${target.index}:${target.ordinal}`;
     case "model":
     case "output":
       return target.kind;
@@ -105,11 +113,19 @@ export function parsePart(agentId: string, part: string | undefined): CanvasTarg
     const index = Number(skill[1]);
     return Number.isSafeInteger(index) ? { kind: "skill", agentId, index, name: skill[2] } : null;
   }
+  const hook = kind === "hook" ? /^(\d+):(\d+)$/.exec(name) : null;
+  if (hook?.[1] && hook[2]) {
+    const index = Number(hook[1]);
+    const ordinal = Number(hook[2]);
+    return Number.isSafeInteger(index) && Number.isSafeInteger(ordinal)
+      ? { kind: "hook", agentId, index, ordinal }
+      : null;
+  }
   return null;
 }
 
 /**
- * Whether the agent has the tool, toolset, capability or skill a target names. A link from another
+ * Whether the agent has the tool, toolset, capability, skill or hook a target names. A link from another
  * session, or one edited by hand, may name one that is not there; the agent itself is shown
  * instead.
  */
@@ -125,6 +141,11 @@ export function agentHas(agent: AgentBlueprint, target: CanvasTarget): boolean {
       return (
         target.agentId === agent.id &&
         (agent.capabilities[target.index]?.skills.some((s) => s.name === target.name) ?? false)
+      );
+    case "hook":
+      return (
+        target.agentId === agent.id &&
+        target.ordinal < (agent.capabilities[target.index]?.hooks.length ?? 0)
       );
     case "graphNode":
       return false;
@@ -196,11 +217,12 @@ function agentActivity(model: CanvasModel, target: CanvasTarget): Activity | nul
   const agent = model.agents.find((a) => a.blueprint.id === target.agentId);
   if (!agent) return null;
   switch (target.kind) {
-    // A toolset, a capability or a skill is never a span of its own: picking one shows its
-    // blueprint, also in a run.
+    // A toolset, a capability, a skill or a hook is never a span of its own: picking one shows
+    // its blueprint, also in a run.
     case "toolset":
     case "capability":
     case "skill":
+    case "hook":
       return null;
     case "agent":
     case "output":

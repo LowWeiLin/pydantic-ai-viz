@@ -688,6 +688,158 @@ def test_the_agents_sub_agents_holds_are_delegates_through_its_tool(tmp_path: Pa
     assert (agent(found, "none").delegates, agent(found, "none").toolsets) == ([], [])
 
 
+def test_what_sub_agents_holds_reads_as_the_live_capability(tmp_path: Path) -> None:
+    pytest.importorskip("pydantic_ai_harness")
+    path = tmp_path / "subs.py"
+    path.write_text(
+        textwrap.dedent(
+            """
+            from pydantic_ai import Agent
+            from pydantic_ai_harness import SubAgent, SubAgents
+
+            helper = Agent("test", name="helper")
+            unnamed = Agent("test")
+            boss = Agent(
+                "test",
+                name="boss",
+                capabilities=[
+                    SubAgents(
+                        agents=[
+                            SubAgent(helper, name="h", description="Helps.", models=["test"]),
+                            SubAgent(agent=unnamed, name="anon", description="Has no name."),
+                        ],
+                        models={"test": "test"},
+                    )
+                ],
+            )
+            computed = Agent("test", name="computed", capabilities=[SubAgents([SubAgent(helper, name=str(1))])])
+            """
+        ),
+        encoding="utf-8",
+    )
+    found = analyze(path)
+    live = live_agents(path)
+
+    def shown(blueprint: AgentBlueprint) -> list[tuple[object, ...]]:
+        return [(c.details, c.expressions) for c in blueprint.capabilities if c.name == "SubAgents"]
+
+    assert shown(agent(found, "boss")) == shown(live["boss"])
+    assert shown(agent(found, "boss")) == [
+        (
+            {
+                "agents": [
+                    {"agent": "helper", "name": "h", "description": "Helps.", "models": ["test"]},
+                    {"name": "anon", "description": "Has no name."},
+                ],
+                "models": {"test": "test"},
+            },
+            {},
+        )
+    ]
+    assert shown(agent(found, "computed")) == [({}, {"agents": "[SubAgent(helper, name=str(1))]"})]
+
+
+def test_the_functions_hooks_registers_read_as_the_live_capability(tmp_path: Path) -> None:
+    path = tmp_path / "hooked.py"
+    path.write_text(
+        textwrap.dedent(
+            """
+            from pydantic_ai import Agent
+            from pydantic_ai.capabilities import Hooks
+
+            LIMIT = 5
+
+
+            async def log_request(ctx, request_context):
+                return request_context
+
+
+            async def on_error(ctx, *, error):
+                raise error
+
+
+            hooks = Hooks(run_error=on_error, before_model_request=log_request, id="mine")
+
+
+            @hooks.on.before_tool_execute(tools=["delete_file", "move_file", "delete_file"], timeout=LIMIT)
+            async def guard(ctx, *, call, tool_def, args):
+                return args
+
+
+            @hooks.on.before_model_request
+            async def trace(ctx, request_context):
+                return request_context
+
+
+            other = Hooks()
+
+
+            @other.on.after_run
+            async def unrelated(ctx, *, result):
+                return result
+
+
+            agent = Agent("test", name="hooked", capabilities=[hooks])
+            """
+        ),
+        encoding="utf-8",
+    )
+    (static,) = (b for b in analyze(path).agents if b.label == "hooked")
+    live = live_agents(path)["hooked"]
+    (found,) = static.capabilities
+    expected = live.capabilities[-1]
+    assert (found.details, found.expressions) == (expected.details, expected.expressions) == ({}, {})
+    # The live file is imported under another module name.
+    assert [(h.point, h.function, h.tools, h.timeout) for h in found.hooks] == [
+        (h.point, (h.function or "").removeprefix("live_"), h.tools, h.timeout) for h in expected.hooks
+    ]
+    assert [(h.point, h.function, h.tools, h.timeout, h.location) for h in found.hooks] == [
+        ("on_run_error", "hooked.on_error", None, None, SourceLocation(file="hooked.py", line=12)),
+        ("before_model_request", "hooked.log_request", None, None, SourceLocation(file="hooked.py", line=8)),
+        ("before_model_request", "hooked.trace", None, None, SourceLocation(file="hooked.py", line=25)),
+        (
+            "before_tool_execute",
+            "hooked.guard",
+            ["delete_file", "move_file"],
+            5.0,
+            SourceLocation(file="hooked.py", line=20),
+        ),
+    ]
+    assert static.warnings == []
+
+
+def test_a_hook_the_source_does_not_spell_out_is_not_guessed(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        import os
+        from pydantic_ai import Agent
+        from pydantic_ai.capabilities import Hooks
+
+        hooks = Hooks(before_run=lambda ctx: None)
+
+        @hooks.on.before_tool_execute(tools=os.environ["TOOLS"].split(), timeout=float(os.environ["LIMIT"]))
+        async def guard(ctx, *, call, tool_def, args):
+            return args
+
+        agent = Agent("test", capabilities=[hooks])
+        """,
+    )
+    (hooks,) = found.capabilities
+    assert [(h.point, h.function, h.tools, h.timeout) for h in hooks.hooks] == [
+        ("before_run", None, None, None),
+        ("before_tool_execute", "module.guard", None, None),
+    ]
+    assert (hooks.details, hooks.expressions) == ({}, {})
+    assert found.warnings == [
+        "the `before_run` hook of `Hooks` is `lambda ctx: None`, which is not read",
+        'the `tools=` of hook `guard` is computed by `os.environ["TOOLS"].split()`; it is only known when the code '
+        "runs",
+        'the `timeout=` of hook `guard` is computed by `float(os.environ["LIMIT"])`; it is only known when the code '
+        "runs",
+    ]
+
+
 def test_a_constraint_only_the_provider_side_tool_honours_leaves_no_local_tool(tmp_path: Path) -> None:
     found = one_agent(
         tmp_path,

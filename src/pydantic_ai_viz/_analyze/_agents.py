@@ -29,6 +29,7 @@ from .._models import (
     CapabilityInfo,
     Delegate,
     EnvironmentValue,
+    HookInfo,
     Instruction,
     ModelInfo,
     OutputInfo,
@@ -1872,6 +1873,7 @@ class _AgentBuilder:
                         capability_id=None,
                         stack=None,
                         skills=[],
+                        hooks=[],
                     )
                 )
                 keys.append(None)
@@ -1883,11 +1885,19 @@ class _AgentBuilder:
             native_tools: list[str] | None = None
             capability_id: str | None = None
             skills: list[SkillInfo] = []
+            hooks: list[HookInfo] = []
             if call is not None and isinstance(target, Expression):
                 deferred, native = self._capability_arguments(callee, call, target, details, expressions)
                 capability_id = self._keyword_string(call, "id", target)
                 if isinstance(callee, External) and callee.comes_from("pydantic_ai_harness", "Skills"):
                     skills = self._skills(call, target, details, expressions)
+                if isinstance(callee, External) and callee.comes_from("pydantic_ai_harness", "SubAgents"):
+                    agents = self._sub_agents(call, target) if "agents" in expressions else None
+                    if agents is not None:
+                        details["agents"] = agents
+                        del expressions["agents"]
+                if isinstance(callee, External) and callee.comes_from("pydantic_ai", "Hooks"):
+                    hooks = self._hooks(call, target, details, expressions)
                 if _is_combined(callee):
                     # Kept as one entry: it shows what it holds by class, as the live agent does, and gives
                     # what they give. Their source is not shown, as it may hold a key.
@@ -1914,6 +1924,7 @@ class _AgentBuilder:
                     capability_id=capability_id,
                     stack=None,
                     skills=skills,
+                    hooks=hooks,
                 )
             )
             key = self._merge_key(callee, call, target)
@@ -2032,6 +2043,115 @@ class _AgentBuilder:
         for warning in catalog.warnings:
             self.warn(warning)
         return catalog.skills
+
+    def _sub_agents(self, call: ast.Call, target: Expression) -> list[dict[str, Any]] | None:
+        """What each ``SubAgent(...)`` that ``SubAgents(agents=[...])`` holds is given, as the live capability shows
+        it: the name of its agent, and its ``name``, ``description`` and ``models``. ``None`` unless all are read."""
+        node = call.args[0] if call.args and not isinstance(call.args[0], ast.Starred) else None
+        node = next((keyword.value for keyword in call.keywords if keyword.arg == "agents"), node)
+        listed = None if node is None else self._listed(node, target.scope, target.line, "sub-agents")
+        if listed is None:
+            return None
+        found: list[dict[str, Any]] = []
+        for item in listed:
+            made = self.resolver.resolve(item.node, item.scope, item.line)
+            if not isinstance(made, Expression) or not isinstance(made.node, ast.Call):
+                return None
+            sub = self.resolver.callee(made.node, made.scope, made.line)
+            if not (isinstance(sub, External) and sub.comes_from("pydantic_ai_harness", "SubAgent")):
+                return None
+            if any(isinstance(argument, ast.Starred) for argument in made.node.args) or any(
+                keyword.arg is None for keyword in made.node.keywords
+            ):
+                return None
+            positional = zip(("agent", "name", "description", "models"), made.node.args, strict=False)
+            given: dict[str, ast.expr] = dict(positional)
+            given.update((keyword.arg, keyword.value) for keyword in made.node.keywords if keyword.arg is not None)
+            agent = given.get("agent")
+            sites = [] if agent is None else self.extractor.agents_at(agent, made.scope, made.line)
+            if len(sites) != 1:
+                return None
+            shown: dict[str, Any] = {}
+            site = sites[0].site
+            named = next((keyword.value for keyword in site.node.keywords if keyword.arg == "name"), None)
+            if named is not None and not (isinstance(named, ast.Constant) and named.value is None):
+                name = string(self.resolver, named, site.scope, site.node.lineno)
+                if name is None:
+                    return None
+                shown["agent"] = name
+            for key in ("name", "description", "models"):
+                if key not in given:
+                    continue
+                try:
+                    value = _detail(literal(self.resolver, given[key], made.scope, made.line))
+                except NotLiteral:
+                    return None
+                if value is not None:
+                    shown[key] = value
+            found.append(shown)
+        return found
+
+    def _hooks(
+        self, call: ast.Call, target: Expression, details: dict[str, Any], expressions: dict[str, str]
+    ) -> list[HookInfo]:
+        """The functions a ``Hooks(...)`` registers: by its keyword arguments, then by the ``@hooks.on.<point>``
+        decorators of its module, grouped by point as ``Hooks`` keeps them."""
+        by_point: dict[str, list[HookInfo]] = {}
+        given = {keyword.arg: keyword.value for keyword in call.keywords if keyword.arg in _compat.HOOK_KWARGS}
+        for key, point in _compat.HOOK_KWARGS.items():
+            details.pop(key, None)
+            expressions.pop(key, None)
+            node = given.get(key)
+            if node is None or (isinstance(node, ast.Constant) and node.value is None):
+                continue
+            function = self.resolver.resolve(node, target.scope, target.line)
+            if not isinstance(function, Definition) or isinstance(function.node, ast.ClassDef):
+                self.warn(f"the `{key}` hook of `Hooks` is `{brief(target.module.text(node))}`, which is not read")
+                function = None
+            by_point.setdefault(point, []).append(self._hook(point, function, [], target.scope, target.line))
+        for item in sorted(target.module.decorated, key=lambda decorated: decorated.node.lineno):
+            for decorator in item.node.decorator_list:
+                method = decorator.func if isinstance(decorator, ast.Call) else decorator
+                if not (
+                    isinstance(method, ast.Attribute)
+                    and method.attr in _compat.HOOK_KWARGS
+                    and isinstance(method.value, ast.Attribute)
+                    and method.value.attr == "on"
+                ):
+                    continue
+                made = self.resolver.resolve(method.value.value, item.scope, item.node.lineno)
+                if not (isinstance(made, Expression) and made.node is call):
+                    continue
+                point = _compat.HOOK_KWARGS[method.attr]
+                keywords = decorator.keywords if isinstance(decorator, ast.Call) else []
+                hook = self._hook(point, Definition(item.node, item.scope), keywords, item.scope, item.node.lineno)
+                by_point.setdefault(point, []).append(hook)
+        return [hook for hooks in by_point.values() for hook in hooks]
+
+    def _hook(
+        self, point: str, function: Definition | None, keywords: list[ast.keyword], scope: Scope, line: int
+    ) -> HookInfo:
+        """One registered hook; ``keywords`` are what its decorator is given (``tools=``, ``timeout=``)."""
+        values: dict[str, Any] = {}
+        for keyword in keywords:
+            if keyword.arg not in ("tools", "timeout"):
+                continue
+            try:
+                values[keyword.arg] = literal(self.resolver, keyword.value, scope, line)
+            except NotLiteral:
+                name = "a hook" if function is None else f"hook `{function.node.name}`"
+                self.warn(
+                    f"the `{keyword.arg}=` of {name} is computed by `{brief(scope.module.text(keyword.value))}`; "
+                    "it is only known when the code runs"
+                )
+        tools, timeout = values.get("tools"), values.get("timeout")
+        return HookInfo(
+            point=point,
+            function=None if function is None else function.qualified_name,
+            tools=sorted({str(name) for name in cast("list[Any]", tools)}) if isinstance(tools, list | tuple) else None,
+            timeout=float(timeout) if isinstance(timeout, int | float) and not isinstance(timeout, bool) else None,
+            location=None if function is None else location(function.module, function.node),
+        )
 
     def _skills_root(self, call: ast.Call, target: Expression, home: Path) -> Path | list[Path] | None:
         """Where the libraries of ``Skills(...)`` are: its ``workspace=``, else the agent's ``LocalWorkspace``.

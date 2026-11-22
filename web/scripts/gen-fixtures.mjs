@@ -364,6 +364,7 @@ const BUILTIN_CAPABILITIES = [
     capability_id: null,
     stack: null,
     skills: [],
+    hooks: [],
   },
   {
     name: "PendingMessageDrainCapability",
@@ -378,6 +379,7 @@ const BUILTIN_CAPABILITIES = [
     capability_id: null,
     stack: null,
     skills: [],
+    hooks: [],
   },
 ];
 
@@ -1650,7 +1652,8 @@ function newsroom() {
  * One agent read from source whose capabilities span eight docs categories: a configured one,
  * one that offers skills, ones that give the agent toolsets (a drawn one with a tool, and
  * harness ones whose tools are only known at run time), one that gives provider-side tools only,
- * and the built-in one that stays folded away. The skills are the capabilities demo's.
+ * a `Hooks` with two hooks, and the built-in one that stays folded away. The skills are the
+ * capabilities demo's.
  */
 function capabilities() {
   const rec = new Recording({
@@ -1675,6 +1678,7 @@ function capabilities() {
     capability_id: null,
     stack: null,
     skills: [],
+    hooks: [],
     ...fields,
   });
   const harness = { package: "pydantic_ai_harness" };
@@ -1802,6 +1806,24 @@ function capabilities() {
       capability("Planning", "reasoning", { ...harness, toolsets: ["ts4"] }),
       capability("InputGuardrail", "safety", { ...harness, expressions: { guard: "check_topic" } }),
       capability("ModelFallback", "loop", { expressions: { models: "[backup_model]" } }),
+      capability("Hooks", "loop", {
+        hooks: [
+          {
+            point: "before_model_request",
+            function: "briefing.log_request",
+            tools: null,
+            timeout: null,
+            location: at(44),
+          },
+          {
+            point: "before_tool_execute",
+            function: "briefing.guard",
+            tools: ["fetch_page"],
+            timeout: 5,
+            location: at(49),
+          },
+        ],
+      }),
     ],
     warnings: [unknownTools("Memory(store=InMemoryMemoryStore())"), unknownTools("Planning()")],
   });

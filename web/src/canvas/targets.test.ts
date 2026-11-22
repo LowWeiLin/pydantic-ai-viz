@@ -1,11 +1,12 @@
 // @vitest-environment node
-/** Skills as parts of an agent, and where the spans that load them or use hidden tools show. */
+/** Skills and hooks as parts of an agent, and where the spans that load them or use hidden tools show. */
 import { describe, expect, test } from "vitest";
 import { canvasModel, runView } from "../data/selectors";
 import {
   agentBlueprint,
   agentRun,
   capability,
+  hook,
   lifecycle,
   sid,
   skill,
@@ -18,6 +19,7 @@ import { buildAgentFlow } from "./AgentCanvas";
 import {
   agentHas,
   type CanvasTarget,
+  hookNodeId,
   latestSpanFor,
   parsePart,
   partOf,
@@ -87,6 +89,11 @@ const briefing = agentBlueprint({
       stack: "Coder",
       toolsets: ["ts2"],
     }),
+    capability({
+      name: "Hooks",
+      category: "loop",
+      hooks: [hook({ point: "before_model_request" }), hook({ point: "before_tool_execute" })],
+    }),
   ],
 });
 
@@ -146,6 +153,33 @@ describe("a skill as a part of its agent", () => {
     const model = canvasModel(state, "a1", view);
     if (!model) throw new Error("expected a model");
     expect(latestSpanFor(model, house)).toBeNull();
+  });
+});
+
+describe("a hook as a part of its agent", () => {
+  const guard = { kind: "hook", agentId: "a1", index: 6, ordinal: 1 } as const;
+
+  test("is written into the agent's link and read back from it", () => {
+    expect(partOf(guard)).toBe("hook:6:1");
+    expect(parsePart("a1", "hook:6:1")).toEqual(guard);
+    for (const part of ["hook:", "hook:6", "hook:6:", "hook:x:1", "hook:6:guard", "hook::1"]) {
+      expect(parsePart("a1", part)).toBeNull();
+    }
+    expect(targetNodeId(guard)).toBe(hookNodeId("a1", 6, 1));
+    expect(hookNodeId("a1", 6, 1)).toBe("hook:a1:6:1");
+  });
+
+  test("counts only when that capability registers a hook at that place", () => {
+    expect(agentHas(briefing, guard)).toBe(true);
+    expect(agentHas(briefing, { ...guard, ordinal: 2 })).toBe(false);
+    expect(agentHas(briefing, { ...guard, index: 1 })).toBe(false);
+    expect(agentHas(briefing, { ...guard, agentId: "a2" })).toBe(false);
+  });
+
+  test("is no span of its own: picking it in a run shows its blueprint", () => {
+    const model = canvasModel(state, "a1", view);
+    if (!model) throw new Error("expected a model");
+    expect(latestSpanFor(model, guard)).toBeNull();
   });
 });
 

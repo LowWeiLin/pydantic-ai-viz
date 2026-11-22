@@ -23,6 +23,7 @@ import {
   agentNodeTypes,
   type CapabilitiesNodeData,
   type CapabilityNodeData,
+  type HookNodeData,
   Legend,
   type OutputNodeData,
   type PlaceholderNodeData,
@@ -212,6 +213,20 @@ function nodeData(
         overlay,
         selected: isChosen,
       } satisfies SkillNodeData;
+    }
+    case "hook": {
+      const [index = -1, ordinal = -1] = node.ref.split(":").map(Number);
+      const owner = agent.blueprint.capabilities[index];
+      const hook = owner?.hooks[ordinal];
+      if (!owner || !hook) return null;
+      return {
+        agentId: node.agentId,
+        index,
+        ordinal,
+        owner: owner.name,
+        hook,
+        selected: isChosen,
+      } satisfies HookNodeData;
     }
   }
 }

@@ -16,6 +16,7 @@ import {
   agentNodeId,
   capabilityNodeId,
   graphNodeId,
+  hookNodeId,
   outputNodeId,
   skillNodeId,
   toolNodeId,
@@ -42,6 +43,8 @@ export const SIZE = {
 
 /** A capability lists this many of its skills on the canvas at most; its panel lists them all. */
 export const MAX_SKILL_ROWS = 8;
+/** The same for the hooks of a `Hooks` capability. */
+export const MAX_HOOK_ROWS = MAX_SKILL_ROWS;
 /** How far under every block in its way a delegation arc runs. */
 export const ARC_CLEARANCE = 16;
 
@@ -73,7 +76,8 @@ export type AgentNodeKind =
   | "output"
   | "capabilities"
   | "capability"
-  | "skill";
+  | "skill"
+  | "hook";
 
 export type LayoutNode = {
   id: string;
@@ -81,7 +85,8 @@ export type LayoutNode = {
   agentId: string;
   /**
    * Toolset id for `toolset` and `placeholder`, tool name for `tool`, the index into
-   * `blueprint.capabilities` for `capability`, "<index>:<name>" for `skill`, else "".
+   * `blueprint.capabilities` for `capability`, "<index>:<name>" for `skill`, "<index>:<ordinal>"
+   * for `hook`, else "".
    */
   ref: string;
   /** Top-left corner; relative to the parent when `parentId` is set. */
@@ -180,20 +185,28 @@ const groupHeight = (rows: number): number =>
 export type CapabilityRow =
   | { kind: "capability"; index: number; capability: Capability }
   /** One of the skills of the capability at `index`, right under its row. */
-  | { kind: "skill"; index: number; name: string };
+  | { kind: "skill"; index: number; name: string }
+  /** One of the hooks of the `Hooks` capability at `index`; `ordinal` is into its `hooks`. */
+  | { kind: "hook"; index: number; ordinal: number };
 
-/** The rows of the box of capabilities: each capability drawn, the skills it offers under it. */
+/**
+ * The rows of the box of capabilities: each capability drawn, the skills it offers or the hooks
+ * it registers under it.
+ */
 export function capabilityRows(agent: AgentBlueprint, showDefaults = false): CapabilityRow[] {
   return shownCapabilities(agent, showDefaults).flatMap(({ index, capability }) => [
     { kind: "capability" as const, index, capability },
     ...capability.skills
       .slice(0, MAX_SKILL_ROWS)
       .map((skill) => ({ kind: "skill" as const, index, name: skill.name })),
+    ...capability.hooks
+      .slice(0, MAX_HOOK_ROWS)
+      .map((_, ordinal) => ({ kind: "hook" as const, index, ordinal })),
   ]);
 }
 
 const rowHeightOf = (row: CapabilityRow): number =>
-  row.kind === "skill" ? SIZE.skillHeight : SIZE.rowHeight;
+  row.kind === "capability" ? SIZE.rowHeight : SIZE.skillHeight;
 
 /** Changes exactly when `layoutAgentCanvas` would return something different. */
 export function agentLayoutKey(model: CanvasModel, showDefaults = false): string {
@@ -206,7 +219,9 @@ export function agentLayoutKey(model: CanvasModel, showDefaults = false): string
       capabilityRows(agent.blueprint, showDefaults).map((row) =>
         row.kind === "skill"
           ? [row.index, row.name]
-          : [row.index, row.capability.category, row.capability.toolsets],
+          : row.kind === "hook"
+            ? [row.index, row.ordinal]
+            : [row.index, row.capability.category, row.capability.toolsets],
       ),
     ]),
     model.delegations.map((d) => [d.fromAgentId, d.toolName, d.toAgentId]),
@@ -477,6 +492,21 @@ export function layoutAgentCanvas(model: CanvasModel, showDefaults = false): Age
             kind: "skill",
             agentId,
             ref: `${row.index}:${row.name}`,
+            x: indent,
+            y: at,
+            width: SIZE.agentWidth - inset - indent,
+            height,
+            parentId: box,
+          });
+          continue;
+        }
+        if (row.kind === "hook") {
+          const indent = inset + SIZE.skillInset;
+          nodes.push({
+            id: hookNodeId(agentId, row.index, row.ordinal),
+            kind: "hook",
+            agentId,
+            ref: `${row.index}:${row.ordinal}`,
             x: indent,
             y: at,
             width: SIZE.agentWidth - inset - indent,
