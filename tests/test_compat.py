@@ -287,9 +287,17 @@ def test_hooks_registers_each_keyword_and_decorator_for_the_point_named() -> Non
     hook: Any = function  # each keyword and decorator takes a function of its own signature
 
     assert Hooks.__module__ == _compat.HOOKS_MODULE
-    keywords = [name for name in inspect.signature(Hooks).parameters if name not in ("ordering", "id", "description")]
-    assert [name for name in keywords if name != "defer_loading"] == list(_compat.HOOK_KWARGS)
-    for name, point in _compat.HOOK_KWARGS.items():
+    keywords = [
+        name
+        for name in inspect.signature(Hooks).parameters
+        if name not in ("ordering", "id", "description", "defer_loading")
+    ]
+    # Every keyword of the installed Hooks is known, in its order. The hooks Pydantic AI added after 2.60 are
+    # missing from older versions; source written for a newer one is still read.
+    assert keywords == [name for name in _compat.HOOK_KWARGS if name in keywords]
+    assert set(_compat.HOOK_KWARGS) - set(keywords) <= {"prepare_model_request", "deferred_tool_calls"}
+    for name in keywords:
+        point = _compat.HOOK_KWARGS[name]
         by_keyword = Hooks(**{name: hook})
         by_decorator = Hooks()
         getattr(by_decorator.on, name)(hook)
