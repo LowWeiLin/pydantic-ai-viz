@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 The wire format has its own version number (`pviz`, currently `1`), recorded in the first line of every recording. A change to it is always called out here.
 
-## [Unreleased]
+## [0.2.0] - 2026-11-23
 
 ### Added
 
@@ -82,4 +82,5 @@ pydantic-ai-viz is an unofficial community project. It is not affiliated with or
 - Blueprint fields that depend on private Pydantic AI attributes degrade to a warning in the viewer when an attribute is missing.
 - Documentation site, with a page on how `view` works, one on the real-world set and its results, and a roadmap of what was left for later. A hosted demo replays recordings of the three demos in the browser, and shows the demos' source code as `view` reads it.
 
+[0.2.0]: https://github.com/LowWeiLin/pydantic-ai-viz/releases/tag/v0.2.0
 [0.1.0]: https://github.com/LowWeiLin/pydantic-ai-viz/releases/tag/v0.1.0
