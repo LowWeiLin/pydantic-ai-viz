@@ -52,7 +52,7 @@ jobs:
           pnpm --dir web install --frozen-lockfile
           pnpm --dir web build
 
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv sync --locked --group docs
