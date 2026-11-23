@@ -126,8 +126,16 @@ convention = "google"
 [tool.pyright]
 include = ["src", "tests", "scripts", "examples"]
 # with_logfire.py imports logfire, which is not a dependency of this project.
+# mkdocs_local_demo.py imports mkdocs, which only the docs group installs.
 # tests/fixtures/static is input for the static analyser, not code of this project.
-exclude = ["**/node_modules", "**/__pycache__", "**/.*", "examples/with_logfire.py", "tests/fixtures/static"]
+exclude = [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+    "examples/with_logfire.py",
+    "scripts/mkdocs_local_demo.py",
+    "tests/fixtures/static",
+]
 pythonVersion = "3.11"
 # Import roots: src, as pyright assumes when none are named, and scripts, from which tests/realworld imports
 # realworld_report by name, as the pythonpath of pytest lets it.
