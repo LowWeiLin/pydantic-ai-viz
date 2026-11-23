@@ -182,7 +182,7 @@ A file that is read only because another one imports it contributes its definiti
 
 An import is looked up the way Python would look it up from the importing file: relative imports from its package, absolute ones from the directories above it up to the **project root**. The project root is the nearest directory above the target that holds a project file (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, a lock file, or `.git`), or the directory above the outermost package when there is none. Your home directory, the directory for temporary files and the root of a drive are never taken for one, since many projects live below them: for a file directly in one of them, no import is followed. A `src` layout works. Imports never leave the project: installed packages, virtual environments and `site-packages` are never opened, even when a copy of a package lies inside the project. The one exception is the source of the installed Pydantic AI, for the [tools it defines](#tools-that-pydantic-ai-defines).
 
-Run this to see it on the demos that ship with pydantic-ai-viz: seven agents and a graph, defined in three files. The summary line counts more files than that, because the demos import the rest of the package and those imports are followed:
+Run this to see it on the demos that ship with pydantic-ai-viz: ten agents and a graph, defined in five files. The summary line counts more files than that, because the demos import the rest of the package and those imports are followed:
 
 ```bash
 pydantic-ai-viz view src/pydantic_ai_viz/demos

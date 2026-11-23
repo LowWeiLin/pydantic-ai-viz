@@ -24,7 +24,7 @@ See what your [Pydantic AI](https://ai.pydantic.dev/) agents **are** (the bluepr
     uvx pydantic-ai-viz demo
     ```
 
-    Plays a scripted support agent in your browser: streamed tokens, parallel tool calls, a retry, a delegation and a structured result. The model is scripted, so there is no API key and no network call.
+    Plays a scripted support agent in your browser: streamed tokens, parallel tool calls, a retry, a delegation and a structured result. The model is scripted, so there is no API key and no network call. `demo --list` shows four more, among them a [capabilities tour](demos.md#capabilities) and an [on-call agent that waits for approval](demos.md#operations).
 
 -   **See your own agents, with nothing executed**
 
@@ -84,6 +84,14 @@ Blueprint from source
 Live runs
 
 :   Model requests, tool calls, retries and sub-agent runs light up on the blueprint and stack up in a span timeline as they happen. You do not change how you call the agent. [Watch live runs](guides/live-runs.md)
+
+Capabilities
+
+:   An agent's capabilities in a box under its card, in the order of the Pydantic AI capabilities docs, each linked to the toolsets it gives: skills you can read, the hooks a `Hooks` capability registers, sub-agents of `SubAgents`. [Reading the canvas](guides/visualize-an-agent.md#reading-the-canvas), [the capabilities demo](demos.md#capabilities)
+
+Approvals and events
+
+:   A tool that needs approval is tagged on the canvas. A run that stops for approval says what it waits for, and the run that answers it is linked to it. Capability and custom events show up on the timeline with `CaptureEvents`. [Approvals and events](guides/live-runs.md#approvals-and-events), [the operations demo](demos.md#operations)
 
 Inspector
 
