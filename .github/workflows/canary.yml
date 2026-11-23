@@ -26,7 +26,7 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
 
       # The harness group pins pydantic-ai-slim to the version it was released with, and the lock file
       # resolves every group together, so pydantic-ai-slim is upgraded outside the lock without that group.

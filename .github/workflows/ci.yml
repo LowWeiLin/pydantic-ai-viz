@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv sync --locked
@@ -55,7 +55,7 @@ jobs:
       UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv sync --locked
@@ -71,7 +71,7 @@ jobs:
       UV_RESOLUTION: lowest-direct
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
       # Not uv sync: the lock file resolves every group together, and the harness group pins one
       # pydantic-ai-slim, which would hold the floor up. Without that group the floor is tested.
       - run: uv venv
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
       # The harness group pins pydantic-ai-slim to the version it was released with, and the lock file
       # resolves every group together, so pydantic-ai-slim is upgraded outside the lock without that group.
       - run: uv sync --no-group harness
@@ -101,7 +101,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv sync --locked
@@ -149,7 +149,7 @@ jobs:
           path: web/dist
       - name: Put the viewer where the Python package looks for it
         run: cp web/dist/viewer.html src/pydantic_ai_viz/_static/viewer.html
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
       - run: uv sync --locked
@@ -200,7 +200,7 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm --dir web install --frozen-lockfile
       - run: pnpm --dir web build
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
       - run: uv build
       - name: The viewer is inside the wheel
         run: uv run --no-project python .github/scripts/check_wheel.py dist
