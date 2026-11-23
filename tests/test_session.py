@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+import asyncio
 import itertools
 import json
 import os
 import threading
 import types
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
-from pydantic_ai import Agent, InstrumentationSettings
+from pydantic_ai import (
+    Agent,
+    CallDeferred,
+    DeferredToolRequests,
+    DeferredToolResults,
+    InstrumentationSettings,
+    ToolDenied,
+)
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import ExternalToolset
 from pydantic_graph import GraphBuilder, StepContext
 from scenarios import PROMPT, Deps, build_team
 
@@ -424,7 +437,11 @@ def test_a_blueprint_session_of_the_demos_has_no_warnings() -> None:
     with blueprint_session(analyze(demos)) as session:
         agents = [envelope["agent"] for envelope in session.events if envelope["type"] == "blueprint.agent"]
     assert agents
-    assert [a["warnings"] for a in agents] == [[]] * len(agents)
+    # The capabilities demo's skills live in a workspace chosen at run time, so source analysis says where it looked.
+    guess = (
+        "`Skills` reads `_skills` from a workspace decided when the code runs; the skills shown are those in `_skills`"
+    )
+    assert {a["name"]: a["warnings"] for a in agents if a["warnings"]} == {"briefing": [guess]}
 
 
 def test_a_blueprint_session_of_an_analysis_is_titled_after_its_file_and_carries_its_notices(tmp_path: Path) -> None:
@@ -512,6 +529,7 @@ def test_seq_is_gapless_when_agents_run_in_concurrent_threads() -> None:
             start.wait()
             for _ in range(5):
                 agent.run_sync("hi")
+            asyncio.get_event_loop().close()  # the one run_sync made for this thread
         except BaseException as exc:
             failures.append(exc)
 
@@ -651,3 +669,86 @@ def test_an_instrumenting_session_quiets_the_pydantic_ai_banner_unless_the_user_
     monkeypatch.setenv("PYDANTIC_AI_NO_BANNER", "0")
     with record():
         assert os.environ["PYDANTIC_AI_NO_BANNER"] == "0"
+
+
+def _approvals_agent() -> Agent[None, str | DeferredToolRequests]:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart("delete_file", {"path": "a.txt"}, tool_call_id="c1"),
+                    ToolCallPart("delete_file", {"path": "b.txt"}, tool_call_id="c2"),
+                    ToolCallPart("restart", {}, tool_call_id="c3"),
+                ]
+            )
+        return ModelResponse(parts=[TextPart("done")])
+
+    agent = Agent(FunctionModel(respond), name="ops", output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:  # pyright: ignore[reportUnusedFunction]
+        return f"deleted {path}"
+
+    @agent.tool_plain
+    def restart() -> str:  # pyright: ignore[reportUnusedFunction]
+        raise CallDeferred
+
+    return agent
+
+
+@pytest.mark.parametrize("include_content", [True, False])
+def test_a_run_that_waits_for_approval_and_the_run_that_resumes_it(include_content: bool) -> None:
+    agent = _approvals_agent()
+    with record(agent, include_content=include_content) as session:
+        first = agent.run_sync("clean up")
+        assert isinstance(first.output, DeferredToolRequests)
+        results = DeferredToolResults(approvals={"c1": True, "c2": ToolDenied("no")}, calls={"c3": "restarted"})
+        agent.run_sync(message_history=first.all_messages(), deferred_tool_results=results)
+    validate(session.events)
+    ended = [event["span"] for event in session.events if event["type"] == "span.ended"]
+    runs = [span for span in ended if span["kind"] == "agent_run"]
+    assert [sorted((c["call_id"], c["kind"]) for c in run["data"]["deferred"]) for run in runs] == [
+        [("c1", "approval"), ("c2", "approval"), ("c3", "external")],
+        [],
+    ]
+    assert runs[0]["data"]["conversation_id"] == runs[1]["data"]["conversation_id"]
+    tools = [
+        (span["trace_id"] == runs[1]["trace_id"], span["data"]["call_id"], span["data"]["deferral"])
+        for span in ended
+        if span["kind"] == "tool_call"
+    ]
+    # The deferred call has a span that says so; only the approved call runs, in the second run.
+    assert sorted(tools) == [(False, "c3", "external"), (True, "c1", None)]
+
+
+def test_without_content_a_call_to_an_external_tool_waits_for_its_result() -> None:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart("page", {}, tool_call_id="e1")])
+
+    tools = ExternalToolset([ToolDefinition(name="page", parameters_json_schema={"type": "object", "properties": {}})])
+    agent = Agent(FunctionModel(respond), name="ops", output_type=[str, DeferredToolRequests], toolsets=[tools])
+    with record(agent, include_content=False) as session:
+        agent.run_sync("go")
+    (run,) = [e["span"] for e in session.events if e["type"] == "span.ended" and e["span"]["kind"] == "agent_run"]
+    assert run["data"]["deferred"] == [{"call_id": "e1", "tool_name": "page", "kind": "external"}]
+
+
+def test_without_content_a_streamed_run_that_ends_on_text_waits_for_nothing() -> None:
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        yield "hello "
+        yield {0: DeltaToolCall(name="t", tool_call_id="t1")}
+
+    agent = Agent(FunctionModel(stream_function=stream), name="talker")
+
+    @agent.tool_plain
+    def t() -> str:  # pyright: ignore[reportUnusedFunction]
+        return "ran"
+
+    async def main() -> str:
+        async with agent.run_stream("hi") as result:
+            return await result.get_output()
+
+    with record(agent, include_content=False) as session:
+        assert asyncio.run(main()) == "hello "
+    (run,) = [e["span"] for e in session.events if e["type"] == "span.ended" and e["span"]["kind"] == "agent_run"]
+    assert run["data"]["deferred"] == []

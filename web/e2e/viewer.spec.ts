@@ -10,6 +10,7 @@ import {
   canvasNode,
   dropConnection,
   FX,
+  finalSpans,
   fixturePath,
   LIVE_WORDS,
   manyBlueprints,
@@ -32,7 +33,7 @@ const TRIAGE_SPANS = 14;
 /** Spans started in the first 56 events of the live mock (`/live-hold-56/`). */
 const HELD_SPANS = 8;
 
-const runLink = (page: Page, name: string) =>
+const runLink = (page: Page, name: string | RegExp) =>
   page.getByRole("navigation", { name: /^Runs/ }).getByRole("link", { name });
 
 const theme = (page: Page): Promise<string> =>
@@ -63,7 +64,7 @@ test.describe("gallery and loading", () => {
     const errors = trackErrors(page);
     await page.goto(FX);
     await expect(page.getByRole("heading", { name: "Recordings" })).toBeVisible();
-    await expect(page.getByRole("link", { name: /^Play / })).toHaveCount(3);
+    await expect(page.getByRole("link", { name: /^Play / })).toHaveCount(4);
 
     await page.getByRole("link", { name: "Play Support triage and a graph pipeline" }).click();
     await page.waitForURL(/\?src=recordings%2Fsample\.pviz\.jsonl#\/runs\//);
@@ -471,6 +472,15 @@ test.describe("navigation", () => {
 
     await test.step("f fits the canvas after a zoom", async () => {
       const viewport = page.locator(".react-flow__viewport");
+      // The run's figures can wrap the bar above the canvas when it ends, which resizes the
+      // canvas and fits it again: wait until the fit holds still.
+      await expect
+        .poll(async () => {
+          const before = await viewport.getAttribute("style");
+          await page.waitForTimeout(300);
+          return before === (await viewport.getAttribute("style"));
+        })
+        .toBe(true);
       const fitted = await viewport.getAttribute("style");
       await page.getByRole("button", { name: "Zoom in" }).click();
       await expect(viewport).not.toHaveAttribute("style", fitted ?? "");
@@ -1234,5 +1244,34 @@ test.describe("blueprint-only view", () => {
     await expect(page.locator("[data-mode]")).toHaveText("Recording");
     await expect(page.getByRole("region", { name: "About this view" })).toHaveCount(0);
     await expect(runLink(page, "triage")).toBeVisible();
+  });
+});
+
+test.describe("approvals and deferred calls", () => {
+  const [waited, resumed] = finalSpans(readRecording(fixturePath("approvals")))
+    .filter((span) => span.parent_id === null)
+    .sort((a, b) => a.start_ms - b.start_ms);
+
+  test("a run that ended waiting, and the run that resumes it", async ({ page }) => {
+    const errors = trackErrors(page);
+    await openRun(page, "approvals", waited?.trace_id ?? "");
+    await skipToEnd(page);
+    await expect(
+      canvasNode(page, /^Tool delete_file, needs approval, 2 calls, waiting/),
+    ).toBeVisible();
+    await expect(page.getByText("waiting for approval and results: 3 calls").first()).toBeVisible();
+    await expect(
+      page.getByRole("treeitem", { name: /restart_service.*Waiting for a result/ }),
+    ).toBeVisible();
+
+    await runLink(page, /resumes ops/).click();
+    await page.waitForURL(new RegExp(`#/runs/${resumed?.trace_id}`));
+    const back = page.getByRole("link", {
+      name: /^resumes ops \d\d:\d\d:\d\d: 1 approved, 1 denied, 1 result supplied$/,
+    });
+    await expect(back).toBeVisible();
+    await back.click();
+    await page.waitForURL(new RegExp(`#/runs/${waited?.trace_id}`));
+    expect(errors).toEqual([]);
   });
 });

@@ -1,13 +1,25 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
+import pydantic_ai.capabilities
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_ai import Agent, NativeOutput, PromptedOutput, RunContext, TextOutput, ToolOutput
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import (
+    MCP,
+    AbstractCapability,
+    Capability,
+    Hooks,
+    PrefixTools,
+    Thinking,
+    Toolset,
+    WebFetch,
+    WebSearch,
+)
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -16,6 +28,7 @@ from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ExternalTools
 
 import pydantic_ai_viz
 from pydantic_ai_viz import AgentBlueprint, blueprint
+from pydantic_ai_viz._capabilities import _GROUPS
 from pydantic_ai_viz._introspect import agent_closure, find_delegates, introspect_agent
 from pydantic_ai_viz._models import Delegate, ModelInfo
 
@@ -293,11 +306,40 @@ def test_full_agent_blueprint() -> None:
                     "type": "object",
                 },
                 "tool_names": ["final_result"],
+                "validators": [],
                 "location": None,
             },
             "capabilities": [
-                {"name": "ToolSearch", "builtin": True},
-                {"name": "PendingMessageDrainCapability", "builtin": True},
+                {
+                    "name": "ToolSearch",
+                    "builtin": True,
+                    "category": "context",
+                    "package": "pydantic_ai",
+                    "deferred": False,
+                    "details": {},
+                    "expressions": {},
+                    "toolsets": [],
+                    "native_tools": ["tool_search"],
+                    "capability_id": "tool_search",
+                    "stack": None,
+                    "skills": [],
+                    "hooks": [],
+                },
+                {
+                    "name": "PendingMessageDrainCapability",
+                    "builtin": True,
+                    "category": "runtime",
+                    "package": "pydantic_ai",
+                    "deferred": False,
+                    "details": {},
+                    "expressions": {},
+                    "toolsets": [],
+                    "native_tools": [],
+                    "capability_id": None,
+                    "stack": None,
+                    "skills": [],
+                    "hooks": [],
+                },
             ],
             "settings": {
                 "model_settings": {"temperature": 0.2},
@@ -306,8 +348,10 @@ def test_full_agent_blueprint() -> None:
                 "output_retries": 3,
                 "tool_timeout": 30.0,
                 "expressions": {},
+                "defaults": ["end_strategy"],
             },
             "delegates": [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "object"}],
+            "wrapper": None,
             "warnings": [],
         }
     )
@@ -380,6 +424,21 @@ def shout(text: str) -> str:
     return text.upper()
 
 
+def test_output_validators_are_listed_in_order() -> None:
+    agent = Agent()
+
+    @agent.output_validator
+    def first(output: str) -> str:
+        return output
+
+    @agent.output_validator
+    async def second(output: str) -> str:
+        return output
+
+    names = _agent_blueprint(agent).output.validators
+    assert [name.rsplit(".", 1)[-1] for name in names] == ["first", "second"]
+
+
 def test_text_output() -> None:
     assert _agent_blueprint(Agent()).output.model_dump() == snapshot(
         {
@@ -388,6 +447,7 @@ def test_text_output() -> None:
             "type_name": "str",
             "json_schema": {"type": "string"},
             "tool_names": [],
+            "validators": [],
             "location": None,
         }
     )
@@ -406,6 +466,7 @@ def test_structured_output() -> None:
                 "type": "object",
             },
             "tool_names": ["final_result"],
+            "validators": [],
             "location": None,
         }
     )
@@ -434,6 +495,7 @@ def test_multi_output() -> None:
                 ]
             },
             "tool_names": ["final_result_Left", "final_result_Right"],
+            "validators": [],
             "location": None,
         }
     )
@@ -450,6 +512,7 @@ def test_multi_output() -> None:
                     "allows_text": True,
                     "type_name": "Left | Right",
                     "tool_names": ["final_result_Left", "final_result_Right"],
+                    "validators": [],
                     "location": None,
                 }
             ),
@@ -462,13 +525,23 @@ def test_multi_output() -> None:
                     "allows_text": False,
                     "type_name": "Left",
                     "tool_names": ["give_left"],
+                    "validators": [],
                     "location": None,
                 }
             ),
         ),
         (
             NativeOutput(Left),
-            snapshot({"mode": "native", "allows_text": True, "type_name": "Left", "tool_names": [], "location": None}),
+            snapshot(
+                {
+                    "mode": "native",
+                    "allows_text": True,
+                    "type_name": "Left",
+                    "tool_names": [],
+                    "validators": [],
+                    "location": None,
+                }
+            ),
         ),
         (
             PromptedOutput([Left, Right]),
@@ -478,13 +551,23 @@ def test_multi_output() -> None:
                     "allows_text": True,
                     "type_name": "Left | Right",
                     "tool_names": [],
+                    "validators": [],
                     "location": None,
                 }
             ),
         ),
         (
             TextOutput(shout),
-            snapshot({"mode": "text", "allows_text": True, "type_name": "shout", "tool_names": [], "location": None}),
+            snapshot(
+                {
+                    "mode": "text",
+                    "allows_text": True,
+                    "type_name": "shout",
+                    "tool_names": [],
+                    "validators": [],
+                    "location": None,
+                }
+            ),
         ),
         (
             [ToolOutput(Left, name="give_left"), Right, shout],
@@ -494,6 +577,7 @@ def test_multi_output() -> None:
                     "allows_text": False,
                     "type_name": "Left | Right | shout",
                     "tool_names": ["give_left", "final_result_Right", "final_result_shout"],
+                    "validators": [],
                     "location": None,
                 }
             ),
@@ -506,6 +590,7 @@ def test_multi_output() -> None:
                     "allows_text": True,
                     "type_name": "list[Left]",
                     "tool_names": ["final_result"],
+                    "validators": [],
                     "location": None,
                 }
             ),
@@ -602,6 +687,7 @@ def test_agent_without_prompts_or_settings() -> None:
             "output_retries": 1,
             "tool_timeout": None,
             "expressions": {},
+            "defaults": ["end_strategy", "tool_retries", "output_retries"],
         }
     )
     assert result.deps_type is None
@@ -854,12 +940,363 @@ def test_builtin_capabilities_are_flagged() -> None:
     result = _agent_blueprint(Agent(capabilities=[Hooks()]))
     assert [c.model_dump() for c in result.capabilities] == snapshot(
         [
-            {"name": "ToolSearch", "builtin": True},
-            {"name": "PendingMessageDrainCapability", "builtin": True},
-            {"name": "Hooks", "builtin": False},
+            {
+                "name": "ToolSearch",
+                "builtin": True,
+                "category": "context",
+                "package": "pydantic_ai",
+                "deferred": False,
+                "details": {},
+                "expressions": {},
+                "toolsets": [],
+                "native_tools": ["tool_search"],
+                "capability_id": "tool_search",
+                "stack": None,
+                "skills": [],
+                "hooks": [],
+            },
+            {
+                "name": "PendingMessageDrainCapability",
+                "builtin": True,
+                "category": "runtime",
+                "package": "pydantic_ai",
+                "deferred": False,
+                "details": {},
+                "expressions": {},
+                "toolsets": [],
+                "native_tools": [],
+                "capability_id": None,
+                "stack": None,
+                "skills": [],
+                "hooks": [],
+            },
+            {
+                "name": "Hooks",
+                "builtin": False,
+                "category": "loop",
+                "package": "pydantic_ai",
+                "deferred": False,
+                "details": {},
+                "expressions": {},
+                "toolsets": [],
+                "native_tools": [],
+                "capability_id": None,
+                "stack": None,
+                "skills": [],
+                "hooks": [],
+            },
         ]
     )
     assert result.native_tools == snapshot(["tool_search"])
+
+
+def _double(x: int) -> int:
+    return x * 2
+
+
+def test_capabilities_say_what_they_are_given_and_what_they_give_the_agent() -> None:
+    result = _agent_blueprint(
+        Agent(
+            TestModel(),
+            capabilities=[
+                Thinking(effort="high"),
+                WebSearch(),
+                MCP(url="https://h.example/mcp?k=1", native=True, local=False, authorization_token="s"),
+                PrefixTools(WebFetch(), "w"),
+                Capability(tools=[_double], id="mine"),
+                Toolset(FunctionToolset([_double], id="kb")),
+                Thinking(effort="low", id="t2", defer_loading=True),
+                Hooks(),
+            ],
+        )
+    )
+    shown = {(c.name, c.deferred): c for c in result.capabilities[2:]}
+    assert {c.package for c in result.capabilities} == {"pydantic_ai"}
+    thinking = shown["Thinking", False]
+    assert (thinking.category, thinking.details) == ("reasoning", {"effort": "high"})
+    search = shown["WebSearch", False]
+    assert (search.category, search.details, search.native_tools) == ("web", {}, ["web_search"])
+    mcp = shown["MCP", False]
+    assert (mcp.category, mcp.details["url"], mcp.native_tools) == ("tools", "https://h.example/mcp", ["mcp_server"])
+    assert "authorization_token" not in mcp.details
+    prefixed = shown["PrefixTools", False]
+    assert (prefixed.category, prefixed.details, prefixed.native_tools) == (
+        "loop",
+        {"wrapped": "WebFetch", "prefix": "w"},
+        ["web_fetch"],
+    )
+    labels = {t.id: t.label for t in result.toolsets}
+    capability = shown["Capability", False]
+    assert (capability.category, [labels[i] for i in capability.toolsets]) == ("custom", ["FunctionToolset 'mine'"])
+    assert capability.details == {"tools": [f"{MODULE}._double"]}
+    toolset = shown["Toolset", False]
+    assert (toolset.category, [labels[i] for i in toolset.toolsets]) == ("tools", ["FunctionToolset 'kb'"])
+    assert shown["Thinking", True].details == {"effort": "low"}
+    hooks = shown["Hooks", False]
+    assert (hooks.category, hooks.details) == ("loop", {})
+    assert all(c.expressions == {} for c in result.capabilities)
+    assert result.native_tools == ["tool_search", "web_search", "mcp_server", "web_fetch"]
+    assert result.warnings == []
+
+
+def test_the_native_tool_of_a_capability_loaded_on_demand_is_named_by_its_kind() -> None:
+    result = _agent_blueprint(Agent(TestModel(), capabilities=[WebSearch(local=_double, defer_loading=True, id="ws")]))
+    assert result.native_tools == ["tool_search", "web_search"]
+    assert result.warnings == []
+
+
+def test_a_harness_stack_is_one_entry_beside_the_capabilities_it_holds() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    for stack, members in [
+        ("Coder", ["FileSystem", "Shell", "RepoContext", "SubAgents", "ClearToolResults", "RepairToolArguments"]),
+        ("Researcher", ["WebSearch", "WebFetch", "SubAgents", "ToolOutputLimits"]),
+    ]:
+        result = _agent_blueprint(Agent(TestModel(), capabilities=[getattr(harness, stack)()]))
+        shown = [(c.name, c.category, c.package) for c in result.capabilities[2:]]
+        assert shown[0] == (stack, "harness", "pydantic_ai_harness")
+        # The stack's helpers are left out: private classes, and Researcher's instructions as a plain Capability.
+        assert [name for name, _, _ in shown[1:]] == members
+
+
+def test_a_capability_with_the_id_of_a_stack_helper_is_listed_without_that_stack() -> None:
+    result = _agent_blueprint(Agent(TestModel(), capabilities=[Capability(id="researcher_instructions")]))
+    assert [c.name for c in result.capabilities[2:]] == ["Capability"]
+
+
+def test_a_capability_a_stack_puts_there_names_that_stack() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    for given, expected in [
+        (
+            [harness.Researcher(), Thinking()],
+            [("Researcher", None), *[(n, "Researcher") for n in _RESEARCHER], ("Thinking", None)],
+        ),
+        ([harness.Coder(), harness.Memory()], [("Coder", None), *[(n, "Coder") for n in _CODER], ("Memory", None)]),
+    ]:
+        result = _agent_blueprint(Agent(TestModel(), capabilities=given))
+        assert [(c.name, c.stack) for c in result.capabilities[2:]] == expected
+    assert [c.stack for c in _agent_blueprint(Agent(TestModel(), capabilities=[WebSearch()])).capabilities] == [
+        None,
+        None,
+        None,
+    ]
+
+
+def test_a_capability_the_author_gives_after_a_stack_is_not_one_the_stack_put_there() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    helper = [harness.SubAgent(Agent(TestModel(), name="helper"), name="h", description="d")]
+    for given, members in [
+        ([harness.Coder(), harness.Shell(default_timeout=5)], _CODER),  # a class the stack put there already
+        ([harness.Coder(), harness.FileSystem(id="mine")], _CODER),
+        ([harness.Researcher(), harness.SubAgents(agents=helper, id="mine")], _RESEARCHER),
+        # Merged with the stack's own of the same id, it moves to the author's place: out of the stack's order.
+        ([harness.Researcher(), harness.SubAgents(agents=helper)], ["WebSearch", "WebFetch", "ToolOutputLimits"]),
+        ([harness.Researcher(), WebSearch(local=_double)], ["WebFetch", "SubAgents", "ToolOutputLimits"]),
+    ]:
+        result = _agent_blueprint(Agent(TestModel(), capabilities=given))
+        assert [c.name for c in result.capabilities if c.stack is not None] == members
+        assert result.capabilities[-1].stack is None  # the author's
+
+
+def test_an_author_tool_output_limits_merged_into_a_researcher_is_the_authors() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    from pydantic_ai_harness.tool_output_limits import Band, LocalFileOverflowStore, Truncate
+
+    bands = [Band(over=10, action=Truncate(max_chars=5))]
+    for given, stack in [
+        ([harness.Researcher()], "Researcher"),
+        ([harness.Researcher(), harness.ToolOutputLimits()], "Researcher"),  # states nothing the stack's does not
+        ([harness.Researcher(), harness.ToolOutputLimits(strip_ansi=True)], None),
+        ([harness.ToolOutputLimits(bands=bands), harness.Researcher()], None),  # merged in, at the stack's place
+        ([harness.ToolOutputLimits(store=LocalFileOverflowStore()), harness.Researcher()], None),  # another store
+        ([harness.ToolOutputLimits(strip_ansi=True), harness.Researcher()], "Researcher"),  # the stack's value wins
+    ]:
+        result = _agent_blueprint(Agent(TestModel(), capabilities=given))
+        limits = [c for c in result.capabilities if c.name == "ToolOutputLimits"]
+        assert [c.stack for c in limits] == [stack]
+        assert [c.name for c in result.capabilities if c.stack is not None] == _RESEARCHER[: 4 if stack else 3]
+
+
+def test_a_stack_entry_gives_the_toolsets_of_its_helpers() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    result = _agent_blueprint(Agent(TestModel(), capabilities=[harness.Researcher()]))
+    labels = {t.id: t.label for t in result.toolsets}
+    entry = next(c for c in result.capabilities if c.name == "Researcher")
+    assert [labels[i] for i in entry.toolsets] == ["FunctionToolset 'researcher_instructions'"]
+    given = {t for c in result.capabilities for t in c.toolsets}
+    assert {t.id for t in result.toolsets} <= given  # every toolset has a capability that gives it
+
+
+_CODER = ["FileSystem", "Shell", "RepoContext", "SubAgents", "ClearToolResults", "RepairToolArguments"]
+_RESEARCHER = ["WebSearch", "WebFetch", "SubAgents", "ToolOutputLimits"]
+
+
+def test_a_researcher_that_needs_no_workspace_leaves_nothing_to_tell_it_by() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    from pydantic_ai_harness.tool_output_limits import LocalFileOverflowStore
+
+    researcher = harness.Researcher(instructions=None, store=LocalFileOverflowStore())
+    result = _agent_blueprint(Agent(TestModel(), capabilities=[researcher]))
+    assert [c.name for c in result.capabilities[2:]] == ["WebSearch", "WebFetch", "SubAgents", "ToolOutputLimits"]
+
+
+def test_a_model_fallback_shows_its_chain_of_models() -> None:
+    model_fallback: Any = getattr(pydantic_ai.capabilities, "ModelFallback", None)
+    if model_fallback is None:
+        pytest.skip("ModelFallback is not in this release")
+    (fallback,) = _agent_blueprint(Agent(capabilities=[model_fallback("openai:gpt-5", "test")])).capabilities[2:]
+    assert (fallback.category, fallback.details["models"]) == ("loop", ["openai:gpt-5", "test"])
+
+
+@pytest.mark.parametrize(("category", "name"), [(category, names[0]) for category, names in _GROUPS.items()])
+def test_a_capability_of_each_group_of_the_docs_is_put_in_it(category: str, name: str) -> None:
+    # Only the name and the package count, so a stand-in for a class of the harness, which is not installed, does.
+    stand_in = type(name, (AbstractCapability,), {"__module__": "pydantic_ai_harness.stand_in"})
+    (found,) = _agent_blueprint(Agent(capabilities=[stand_in()])).capabilities[2:]
+    assert (found.name, found.category, found.package) == (name, category, "pydantic_ai_harness")
+
+
+@dataclass
+class Memory(AbstractCapability[Any]):
+    size: int = 10
+    api_key: str | None = None
+
+
+Memory.__module__ = "pydantic_ai_harness.memory._capability"
+
+
+class MyMCP(Thinking):
+    pass
+
+
+class Audit(AbstractCapability[Any]):
+    pass
+
+
+def test_a_capability_is_placed_by_the_class_of_pydantic_ai_it_is() -> None:
+    result = _agent_blueprint(Agent(capabilities=[Memory(size=20, api_key="sk"), MyMCP(), Audit()]))
+    assert [(c.name, c.category, c.package, c.details) for c in result.capabilities[2:]] == [
+        ("Memory", "knowledge", "pydantic_ai_harness", {"size": 20}),
+        ("MyMCP", "reasoning", None, {}),  # a class of the project, in the group of the class it derives from
+        ("Audit", "custom", None, {}),
+    ]
+
+
+@dataclass
+class Flaky(AbstractCapability[Any]):
+    fail: bool = False
+
+    def get_native_tools(self) -> list[Any]:
+        if self.fail:
+            raise RuntimeError("boom")
+        return []
+
+
+def test_a_capability_that_fails_to_say_its_native_tools_is_still_shown() -> None:
+    flaky = Flaky()
+    agent = Agent(capabilities=[flaky])
+    flaky.fail = True  # Pydantic AI asks once, when the agent is made
+    result = _agent_blueprint(agent)
+    (found,) = result.capabilities[2:]
+    assert (found.name, found.native_tools, found.details) == ("Flaky", [], {"fail": True})
+    assert result.warnings == ["capability Flaky could not be read (RuntimeError: boom)"]
+
+
+@dataclass(init=False)
+class Window(AbstractCapability[Any]):
+    size: int
+    ratio: float
+
+    def __init__(self, size: int = 10, ratio: float = 0.5) -> None:
+        self.size = size
+        self.ratio = ratio
+
+
+def test_a_capability_with_its_own_init_leaves_out_its_defaults_and_writes_valid_json() -> None:
+    result = _agent_blueprint(Agent(capabilities=[Window(), Window(size=20, ratio=float("inf"))]))
+    assert [c.details for c in result.capabilities[2:]] == [{}, {"size": 20, "ratio": "inf"}]
+    json.dumps(result.model_dump(mode="json"), allow_nan=False)  # ``Infinity`` is not JSON
+    retry: Any = getattr(pydantic_ai.capabilities, "RetryOnModelErrors", None)
+    if retry is not None:
+        (found,) = _agent_blueprint(Agent(capabilities=[retry()])).capabilities[2:]
+        assert found.details == {}
+
+
+def test_values_the_class_fills_in_itself_are_left_out() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    cases: list[tuple[Any, dict[str, Any]]] = [
+        (harness.Shell(), {}),
+        (harness.Advisor("test"), {"model": "test"}),  # what the class requires is shown, default or not
+        (harness.BackgroundTools(), {}),
+        (harness.Shell(denied_commands=["rm"]), {"denied_commands": ["rm"]}),
+        (Thinking(effort="high"), {"effort": "high"}),
+    ]
+    for capability, expected in cases:
+        (found,) = _agent_blueprint(Agent(TestModel(), capabilities=[capability])).capabilities[2:]
+        assert found.details == expected, type(capability).__name__
+
+
+def _extra_instructions() -> str:
+    return "Be brief."
+
+
+def test_a_plain_capability_shows_the_instructions_it_was_given() -> None:
+    one = _agent_blueprint(Agent(TestModel(), capabilities=[Capability(instructions="Be kind.")]))
+    several = _agent_blueprint(
+        Agent(TestModel(), capabilities=[Capability(instructions=["Be kind.", _extra_instructions])])
+    )
+    assert one.capabilities[-1].details == {"instructions": "Be kind."}
+    assert several.capabilities[-1].details == {"instructions": ["Be kind.", f"{MODULE}._extra_instructions"]}
+
+
+def test_a_capability_says_the_id_pydantic_ai_knows_it_by() -> None:
+    result = _agent_blueprint(
+        Agent(TestModel(), capabilities=[Thinking(), WebSearch(id="search", defer_loading=True), Hooks()])
+    )
+    assert [(c.name, c.capability_id) for c in result.capabilities] == [
+        ("ToolSearch", "tool_search"),
+        ("PendingMessageDrainCapability", None),
+        ("Thinking", "thinking"),
+        ("WebSearch", "search"),
+        ("Hooks", None),
+    ]
+
+
+async def _log_request(ctx: Any, request_context: Any) -> Any:
+    return request_context
+
+
+async def _guard(ctx: Any, *, call: Any, tool_def: Any, args: Any) -> Any:
+    return args
+
+
+async def _on_error(ctx: Any, *, error: BaseException) -> Any:
+    raise error
+
+
+async def _trace(ctx: Any, request_context: Any) -> Any:
+    return request_context
+
+
+def test_hooks_lists_the_functions_it_registers_by_point() -> None:
+    hooks = Hooks(run_error=_on_error, before_model_request=_log_request)
+    hooks.on.before_tool_execute(tools=["delete_file", "move_file"], timeout=5)(_guard)
+    hooks.on.before_model_request(_trace)
+    (found,) = _agent_blueprint(Agent(TestModel(), capabilities=[hooks])).capabilities[2:]
+    assert (found.details, found.expressions) == ({}, {})
+    assert [(h.point, h.function, h.tools, h.timeout, h.location) for h in found.hooks] == [
+        ("on_run_error", f"{MODULE}._on_error", None, None, None),
+        ("before_model_request", f"{MODULE}._log_request", None, None, None),
+        ("before_model_request", f"{MODULE}._trace", None, None, None),
+        ("before_tool_execute", f"{MODULE}._guard", ["delete_file", "move_file"], 5.0, None),
+    ]
+    assert all(c.hooks == [] for c in _agent_blueprint(Agent(TestModel(), capabilities=[Thinking()])).capabilities)
+
+
+def test_settings_say_which_values_are_pydantic_ais_defaults() -> None:
+    assert _agent_blueprint(Agent("test")).settings.defaults == ["end_strategy", "tool_retries", "output_retries"]
+    assert _agent_blueprint(Agent("test", retries=3)).settings.defaults == ["end_strategy"]
+    given = Agent("test", end_strategy="exhaustive", retries=3, tool_timeout=5)
+    assert _agent_blueprint(given).settings.defaults == []
 
 
 # ---------------------------------------------------------------- delegation
@@ -870,6 +1307,33 @@ def test_delegation_through_a_global() -> None:
         [Delegate(tool_name="delegate_research", agent_id="a2", evidence="object")]
     )
     assert find_delegates(main_agent) == [("delegate_research", researcher)]
+
+
+def test_the_agents_of_sub_agents_are_delegates_through_its_tool() -> None:
+    harness = pytest.importorskip("pydantic_ai_harness")
+    helper = Agent(TestModel(), name="helper")
+    boss = Agent(
+        TestModel(),
+        name="boss",
+        capabilities=[harness.SubAgents(agents=[harness.SubAgent(helper, name="h", description="Helps.")])],
+    )
+    renamed = Agent(
+        TestModel(),
+        capabilities=[harness.SubAgents([harness.SubAgent(helper)], tool_name="hand_off", include_self=True)],
+    )
+    assert find_delegates(boss) == [("delegate_task", helper)]
+    assert agent_closure(boss) == [boss, helper]
+    result = _agent_blueprint(boss)
+    assert result.delegates == [Delegate(tool_name="delegate_task", agent_id="a2", evidence="object")]
+    (sub_agents,) = result.capabilities[2:]
+    assert sub_agents.details == {"agents": [{"agent": "helper", "name": "h", "description": "Helps."}]}
+    assert _agent_blueprint(renamed).delegates == [Delegate(tool_name="hand_off", agent_id="a2", evidence="object")]
+    with pydantic_ai_viz.record(boss, instrument=False) as session:
+        agents = [event["agent"] for event in session.events if event["type"] == "blueprint.agent"]
+    assert [(a["label"], a["delegates"]) for a in agents] == [
+        ("boss", [{"tool_name": "delegate_task", "agent_id": agents[1]["id"], "evidence": "object"}]),
+        ("helper", []),
+    ]
 
 
 def _closure_agents() -> tuple[Agent[None, str], Agent[None, str], Agent[None, str]]:

@@ -110,6 +110,8 @@ export type AgentBlueprint = {
   capabilities: Capability[];
   settings: AgentSettings;
   delegates: Delegate[];
+  /** Class name of the durable-execution wrapper around the agent, e.g. "TemporalAgent". */
+  wrapper: string | null;
   /** Human-readable degradations. */
   warnings: string[];
 };
@@ -150,11 +152,88 @@ export type OutputInfo = {
   json_schema: Json | null;
   /** e.g. ["final_result"]; may be filled from observed runs. */
   tool_names: string[];
+  /** The functions registered with `@agent.output_validator`, in registration order. */
+  validators: string[];
   /** Where the output type is defined. */
   location: SourceLocation | null;
 };
 
-export type Capability = { name: string; builtin: boolean };
+/** The group of the Pydantic AI capabilities docs, in the docs' order; "custom" for any other. Open set: read an unknown value as "custom". */
+export type CapabilityCategory =
+  | "harness"
+  | "environment"
+  | "tools"
+  | "integration"
+  | "web"
+  | "reasoning"
+  | "context"
+  | "knowledge"
+  | "safety"
+  | "self_extension"
+  | "runtime"
+  | "loop"
+  | "custom";
+
+export type Capability = {
+  /** Class name; for one static analysis cannot name, the source text that builds it. */
+  name: string;
+  /** Added by Pydantic AI to every agent; shown folded away. */
+  builtin: boolean;
+  category: CapabilityCategory;
+  /** Where the class is defined, when it is Pydantic AI ("Core") or the harness ("Harness"). */
+  package: "pydantic_ai" | "pydantic_ai_harness" | null;
+  /** defer_loading=True: loaded when the model asks for it. */
+  deferred: boolean;
+  /** What it was given, by parameter name; secrets and defaults are left out. */
+  details: { [k: string]: Json };
+  /** Parameters the source computes at run time: name -> source text (static analysis only). */
+  expressions: { [k: string]: string };
+  /** `Toolset.id`s of the toolsets it gives the agent. */
+  toolsets: string[];
+  /** Provider-side tool kinds it gives the agent, e.g. "web_search". */
+  native_tools: string[];
+  /**
+   * The id Pydantic AI knows it by, the one `load_capability` takes for a deferred capability;
+   * from source only a literal `id=`.
+   */
+  capability_id: string | null;
+  /** The harness stack that put it on the agent ("Coder", "Researcher"); null from source. */
+  stack: string | null;
+  /** The skills a harness `Skills` capability offers, in catalog order; [] for every other one. */
+  skills: Skill[];
+  /** The functions a `Hooks` capability registers, in the order it runs them for each point; [] for every other one. */
+  hooks: Hook[];
+};
+
+/** One function a `Hooks` capability registers. */
+export type Hook = {
+  /** The capability method it stands for, as `Hooks` keys it: "before_model_request", "wrap_run", "on_run_error". */
+  point: string;
+  /** `module.qualname` of the function; null when the source does not name one. */
+  function: string | null;
+  /** For a tool hook, the tools it is limited to (`tools=`), sorted; null when it runs for every tool. */
+  tools: string[] | null;
+  timeout: number | null;
+  /** Where the function is defined (static analysis only). */
+  location: SourceLocation | null;
+};
+
+/** One skill a harness `Skills` capability offers. */
+export type Skill = {
+  /** The frontmatter name, else the directory name: the id `load_capability` takes. */
+  name: string;
+  description: string;
+  when_to_use: string | null;
+  /** False with `disable-model-invocation: true`: left out of the model's catalog. */
+  model_invocable: boolean;
+  /**
+   * Its SKILL.md, with forward slashes, relative to the workspace root it was read from (object)
+   * or to the analysed root (code); never absolute.
+   */
+  path: string;
+  /** The Markdown after the frontmatter, as written: what the model gets when it loads the skill. */
+  body: string;
+};
 
 export type AgentSettings = {
   model_settings: { [k: string]: Json } | null;
@@ -167,6 +246,11 @@ export type AgentSettings = {
    * field of this object, or `model_settings.<key>` for one model setting; the field itself is null.
    */
   expressions: { [k: string]: string };
+  /**
+   * The settings whose value is the one Pydantic AI gives an agent that sets none (field names
+   * of this object); [] from source, where a setting the code does not set is null.
+   */
+  defaults: string[];
 };
 
 export type Delegate = {
@@ -284,6 +368,22 @@ export type SpanBase = {
   error: SpanError | null;
   /** Leftover raw OTel attributes; `{}` on span.started. */
   attributes: { [k: string]: Json };
+  /** Events `pydantic_ai_viz.CaptureEvents` recorded in this span, in order; `[]` until it ends. */
+  events: RunEvent[];
+};
+
+/** A `CapabilityEvent` or `CustomEvent` of a run. */
+export type RunEvent = {
+  /** The event's kind (`"planning.plan_updated"`); for a custom event, its name. */
+  kind: string;
+  event_kind: "capability" | "custom";
+  /** The id of the capability that emitted it, when one did. */
+  capability_id: string | null;
+  tool_call_id: string | null;
+  tool_name: string | null;
+  ts_ms: number;
+  /** The event's own fields; `null` when content is not captured. */
+  data: Json | null;
 };
 
 export type AgentRunSpan = SpanBase & { kind: "agent_run"; data: AgentRunData };
@@ -316,7 +416,14 @@ export type AgentRunData = {
   usage: Usage | null;
   /** Full conversation, end only. */
   messages: Message[] | null;
+  /** Tool calls the run ended waiting on (its output was `DeferredToolRequests`); `[]` otherwise. End only. */
+  deferred: DeferredCall[];
 };
+
+/** Why a tool call was left for the caller: it needs approval, or it runs outside the agent. */
+export type Deferral = "approval" | "external";
+
+export type DeferredCall = { call_id: string | null; tool_name: string; kind: Deferral };
 
 export type ModelRequestData = {
   /** From the span name at start, `gen_ai.request.model` at end. */
@@ -347,6 +454,8 @@ export type ToolCallData = {
   /** End only. */
   result: Json | null;
   retry: ToolRetry | null;
+  /** Set when the tool raised `ApprovalRequired` or `CallDeferred` instead of returning. End only. */
+  deferral: Deferral | null;
 };
 
 export type GraphRunData = {

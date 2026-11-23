@@ -179,6 +179,10 @@ def test_the_packages_of_the_pydantic_ai_project_are_known_by_name(tmp_path: Pat
         """,
     )
     assert [c.name for c in agent(found, "agent").capabilities] == ["CodeMode", "OnlineEvaluation"]
+    assert [(c.category, c.package) for c in agent(found, "agent").capabilities] == [
+        ("context", "pydantic_ai_harness"),
+        ("custom", None),  # Pydantic Evals' own: not one the capabilities docs list
+    ]
     assert agent(found, "agent").warnings == []
 
 

@@ -185,7 +185,8 @@ def serving(argv: list[str], *, cwd: Path) -> Iterator[tuple[str, list[str]]]:
             if match:
                 found.put(match.group(0).rstrip("/"))
 
-    threading.Thread(target=pump, daemon=True).start()
+    pump_thread = threading.Thread(target=pump, daemon=True)
+    pump_thread.start()
     try:
         try:
             url = found.get(timeout=60)
@@ -198,6 +199,10 @@ def serving(argv: list[str], *, cwd: Path) -> Iterator[tuple[str, list[str]]]:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             process.kill()
+            process.wait()
+        pump_thread.join(timeout=5)
+        if process.stdout is not None:
+            process.stdout.close()
 
 
 def get(url: str) -> tuple[int, dict[str, str], bytes]:

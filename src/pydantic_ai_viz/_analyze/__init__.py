@@ -32,6 +32,7 @@ from ._installed import InstalledPydanticAI
 from ._locate import Place, Source, TargetError, is_remote, place, sources_of
 from ._resolve import END_OF_MODULE, Project, Resolver
 from ._source import Module, SkippedFile, read_module
+from ._spec import FORMATS, spec_target
 
 __all__ = ["Analysis", "Limits", "TargetError", "analyze", "is_remote"]
 
@@ -184,7 +185,10 @@ def _read(places: list[Place], limits: Limits) -> Analysis:
         if len(project.modules) >= limits.max_files or time.monotonic() >= deadline:
             notices.append(f"stopped reading files at the limit; {rel} and what follows were not analysed")
             break
-        result = read_module(source.path, rel, max_bytes=limits.max_file_bytes)
+        if source.path.suffix.lower() in FORMATS:
+            result = spec_target(source.path, rel, max_bytes=limits.max_file_bytes)
+        else:
+            result = read_module(source.path, rel, max_bytes=limits.max_file_bytes)
         if isinstance(result, SkippedFile):
             notices.append(f"skipped {result.rel}: {result.reason}")
             continue
@@ -197,7 +201,9 @@ def _read(places: list[Place], limits: Limits) -> Analysis:
     if title is None and len(files) == 1:
         title = Path(files[0]).stem  # several targets, of which one file could be read
     resolver = Resolver(project, deadline=deadline)
-    agents = AgentExtractor(project, resolver, InstalledPydanticAI(max_bytes=limits.max_file_bytes))
+    agents = AgentExtractor(
+        project, resolver, InstalledPydanticAI(max_bytes=limits.max_file_bytes), max_file_bytes=limits.max_file_bytes
+    )
     graphs = GraphExtractor(project, resolver)
     try:
         agents.find()

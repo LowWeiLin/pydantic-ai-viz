@@ -3,15 +3,16 @@
  * hosted demo serves. The fixtures are written by hand from the wire contract; these recordings
  * come out of the Python backend, so this is where the two halves are proven to agree.
  *
- *   PVIZ_RECORDINGS_DIR   directory with support, research and pipeline `.pviz.jsonl` and their
- *                         `index.json`. Not set: every test here is skipped.
+ *   PVIZ_RECORDINGS_DIR   directory with support, research, pipeline, capabilities and operations
+ *                         `.pviz.jsonl` and their `index.json`. Not set: every test here is skipped.
  *
  * Expected numbers are computed from the recording itself, never typed in, so a change to a demo
  * script does not break the spec unless the viewer shows something the recording does not say.
  */
 import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
-import type { Envelope, Span } from "../src/wire";
+import { defaultsOf, LOAD_CAPABILITY, libraryToolsets, shownCapabilities } from "../src/data/model";
+import type { AgentBlueprint, Envelope, Span } from "../src/wire";
 import {
   canvasNode,
   finalSpans,
@@ -63,7 +64,7 @@ const subject = (page: Page, name: string) =>
 test.describe("real demo recordings", () => {
   test.skip(!dir, "PVIZ_RECORDINGS_DIR is not set; build it with scripts/build_demo_site.py");
 
-  test("the gallery lists the three demos and their source, and plays one, asking for nothing else", async ({
+  test("the gallery lists the five demos and their source, and plays one, asking for nothing else", async ({
     page,
     baseURL,
   }) => {
@@ -71,7 +72,13 @@ test.describe("real demo recordings", () => {
     const requests = trackRequests(page);
     await page.goto(MOUNT);
     await expect(page.getByRole("heading", { name: "Recordings" })).toBeVisible();
-    for (const title of ["Support triage", "Research team", "Article pipeline"]) {
+    for (const title of [
+      "Support triage",
+      "Research team",
+      "Article pipeline",
+      "Capabilities tour",
+      "On-call operations",
+    ]) {
       await expect(page.getByRole("link", { name: `Play ${title}` })).toBeVisible();
     }
     // The demos' source, as `view` reads it, has no run to play: it is opened.
@@ -185,6 +192,171 @@ test.describe("real demo recordings", () => {
     await expect(page.locator("main")).toContainText(totals(recording));
     await subject(page, "searcher").click();
     await expect(canvasNode(page, /^Tool search_library, 3 calls, OK$/)).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  /** The blueprint of the capabilities demo's agent, as the viewer keeps it: the last one. */
+  function briefing(recording: Recording): AgentBlueprint {
+    let agent: AgentBlueprint | null = null;
+    for (const event of recording.events) {
+      if (event.type === "blueprint.agent" && event.agent.name === recording.root.agent_name) {
+        agent = event.agent;
+      }
+    }
+    if (!agent) throw new Error("the capabilities recording has no blueprint for its agent");
+    return agent;
+  }
+
+  test("capabilities: drawn under the agent and linked to the toolsets they give", async ({
+    page,
+  }) => {
+    const errors = trackErrors(page);
+    const recording = load("capabilities");
+    const agent = briefing(recording);
+    await page.goto(src(recording, `#/agents/${agent.id}`));
+    // What Pydantic AI added on its own is hidden until asked for; every other one has a row.
+    const shown = shownCapabilities(agent).map((entry) => entry.capability);
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.length).toBeLessThan(agent.capabilities.length);
+    await expect(canvasNode(page, /^Capability /)).toHaveCount(shown.length);
+    for (const capability of shown) {
+      await expect(canvasNode(page, new RegExp(`^Capability ${capability.name}, `))).toBeVisible();
+    }
+    await expect(page.getByText("capability gives toolset")).toBeVisible();
+
+    // The toolset a capability gives is one link away from it.
+    const library = libraryToolsets(agent);
+    const giver = shown.find((capability) => capability.toolsets.some((id) => !library.has(id)));
+    const toolset = agent.toolsets.find((candidate) => candidate.id === giver?.toolsets[0]);
+    if (!giver || !toolset) throw new Error("no capability in the recording gives a toolset");
+    await canvasNode(page, new RegExp(`^Capability ${giver.name}, `)).click();
+    const inspector = page.getByRole("complementary", { name: /details/ });
+    await inspector.getByRole("button", { name: toolset.label }).click();
+    await expect(inspector.getByRole("list", { name: `Tools of ${toolset.label}` })).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test("capabilities: its skills are rows, and a picked one shows its instructions", async ({
+    page,
+  }) => {
+    const errors = trackErrors(page);
+    const recording = load("capabilities");
+    const agent = briefing(recording);
+    const owner = agent.capabilities.find((capability) => capability.skills.length > 0);
+    if (!owner) throw new Error("no capability in the recording offers skills");
+    await page.goto(src(recording, `#/agents/${agent.id}`));
+    for (const skill of owner.skills) {
+      await expect(
+        canvasNode(page, `Skill ${skill.name} of ${owner.name}, loaded on demand`),
+      ).toBeVisible();
+    }
+    await canvasNode(page, /^Skill house-style of /).click();
+    const inspector = page.getByRole("complementary", { name: /details/ });
+    await expect(inspector.getByRole("heading", { level: 3, name: "house-style" })).toBeVisible();
+    await expect(inspector).toContainText("House style for briefings");
+    expect(errors).toEqual([]);
+  });
+
+  test("capabilities: what Pydantic AI added is hidden, and the toggle shows it", async ({
+    page,
+  }) => {
+    const errors = trackErrors(page);
+    const recording = load("capabilities");
+    const agent = briefing(recording);
+    const { count } = defaultsOf(agent);
+    // Two built-ins, the ten tools of Memory and Planning, and the load_capability the run called.
+    expect(count).toBe(13);
+    await page.goto(src(recording, `#/agents/${agent.id}`));
+    const toggle = page.getByRole("button", { name: `Pydantic AI defaults +${count}` });
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await expect(canvasNode(page, /^Capability Memory, .*from Pydantic AI, hidden/)).toBeVisible();
+    await expect(canvasNode(page, /^Toolset MemoryToolset/)).toHaveCount(0);
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expect(canvasNode(page, /^Toolset MemoryToolset/)).toBeVisible();
+    await expect(canvasNode(page, /^Toolset PlanningToolset/)).toBeVisible();
+    await expect(
+      canvasNode(page, /^Capability ToolSearch, .*a Pydantic AI default$/),
+    ).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test("capabilities: the load_capability call outlines the skill it loaded", async ({ page }) => {
+    const errors = trackErrors(page);
+    const recording = load("capabilities");
+    const call = recording.spans.find(
+      (span) =>
+        span.kind === "tool_call" &&
+        span.data.tool_name === LOAD_CAPABILITY &&
+        JSON.stringify(span.data.arguments).includes("house-style"),
+    );
+    if (!call) throw new Error("the recording has no load_capability call for house-style");
+    await openRun(page, recording, call.span_id);
+    await skipToEnd(page);
+    await expect(page.locator(".react-flow .pviz-selected")).toHaveCount(1);
+    await expect(page.locator(".react-flow .pviz-selected")).toContainText("house-style");
+    await expect(page.getByRole("complementary", { name: /details/ })).toContainText(
+      "Loads skill house-style of",
+    );
+    expect(errors).toEqual([]);
+  });
+
+  test("operations: a run waits for approval and the next run resumes it", async ({ page }) => {
+    const errors = trackErrors(page);
+    const recording = load("operations");
+    const [waited, resumed] = recording.spans
+      .filter((span) => span.kind === "agent_run" && span.parent_id === null)
+      .sort((a, b) => a.start_ms - b.start_ms);
+    if (waited?.kind !== "agent_run" || !resumed) throw new Error("operations has no resumed run");
+    const calls = waited.data.deferred.length;
+    await openRun(page, { ...recording, root: waited });
+    await skipToEnd(page);
+    await expect(
+      canvasNode(
+        page,
+        new RegExp(`^Tool restart_service, needs approval, ${calls} calls, waiting`),
+      ),
+    ).toBeVisible();
+    await expect(page.getByText(`waiting for approval: ${calls} calls`).first()).toBeVisible();
+    await expect(
+      canvasNode(page, /^Hook before_tool_execute of Hooks: guard_restart/),
+    ).toBeVisible();
+
+    const link = page
+      .getByRole("navigation", { name: /^Runs/ })
+      .getByRole("link", { name: /resumes oncall \d\d:\d\d:\d\d: 1 approved, 1 denied$/ });
+    await link.click();
+    await page.waitForURL(new RegExp(`#/runs/${resumed.trace_id}`));
+    expect(errors).toEqual([]);
+  });
+
+  test("operations: the hook rows and the SubAgents panel can be read", async ({ page }) => {
+    const errors = trackErrors(page);
+    const recording = load("operations");
+    const agent = briefing(recording);
+    await page.goto(src(recording, `#/agents/${agent.id}`));
+    // Where a hook hooks in is shown whole, inside its row.
+    for (const point of ["before_tool_execute", "after_model_request"]) {
+      const text = page.locator(".react-flow").getByText(point, { exact: true });
+      const fits = await text.evaluate((element) => {
+        const row = element.closest(".react-flow__node")?.getBoundingClientRect();
+        const own = element.getBoundingClientRect();
+        return (
+          row !== undefined && own.right <= row.right && element.scrollWidth <= element.clientWidth
+        );
+      });
+      expect(fits, point).toBe(true);
+    }
+
+    const inspector = page.getByRole("complementary", { name: /details/ });
+    await canvasNode(page, /^Capability Hooks, /).click();
+    await expect(inspector.getByRole("list", { name: "Hooks of Hooks" })).toBeVisible();
+    await expect(inspector).not.toContainText("given nothing the blueprint records");
+
+    await canvasNode(page, /^Capability SubAgents, /).click();
+    await expect(inspector.getByRole("link", { name: "log_reader" })).toBeVisible();
+    await expect(inspector).toContainText("Reads service logs");
+    await expect(inspector).not.toContainText('"agent":');
     expect(errors).toEqual([]);
   });
 

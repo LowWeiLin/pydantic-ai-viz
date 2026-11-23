@@ -1,8 +1,8 @@
 /**
- * The docs screenshots (spec section 7): eight PNGs at 1440x900, device scale 2.
+ * The docs screenshots (spec section 7): thirteen PNGs at 1440x900, device scale 2.
  *
- *   PVIZ_RECORDINGS_DIR   directory holding the real demo recordings (support, research and
- *                         pipeline `.pviz.jsonl`, and `source.pviz.jsonl`, the demos read from
+ *   PVIZ_RECORDINGS_DIR   directory holding the real demo recordings (support, research, pipeline,
+ *                         capabilities and operations `.pviz.jsonl`, and `source.pviz.jsonl`, the demos read from
  *                         source), as written by `scripts/build_demo_site.py`.
  *                         Not set: the committed fixtures stand in, so the spec always runs.
  *   PVIZ_SCREENSHOTS_DIR  where to write. Default: `docs/assets/screenshots` when the real
@@ -15,7 +15,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
-import type { Envelope, Span } from "../src/wire";
+import type { AgentBlueprint, Envelope, Span } from "../src/wire";
 import {
   canvasNode,
   finalSpans,
@@ -55,6 +55,9 @@ function load(...names: string[]): Recording {
 const support = () => load("support", "sample");
 const research = () => load("research", "sample");
 const pipeline = () => load("pipeline", "sample");
+const operations = () => load("operations", "approvals");
+/** The tool that needs approval: the demo's, or the approvals fixture's. */
+const approvedTool = real ? "restart_service" : "delete_file";
 
 /**
  * The demos' source code as `pydantic-ai-viz view` reads it (`source.pviz.jsonl`, written by
@@ -71,20 +74,51 @@ function source(): { url: string; hash: string } {
   return { url: "/fx/?src=recordings/blueprint/newsroom.pviz.jsonl", hash: "#/agents/a1" };
 }
 
+/**
+ * The capabilities demo's agent, its house-style skill picked: the real recording, or the
+ * blueprint-only fixture, which the server keeps apart.
+ */
+function capabilities(): string {
+  const recording: Recording = real
+    ? load("capabilities")
+    : {
+        file: "blueprint/capabilities.pviz.jsonl",
+        events: readRecording(path.join(fixturesDir, "blueprint", "capabilities.pviz.jsonl")),
+        spans: [],
+      };
+  const agent = blueprint(recording, "briefing");
+  const index = agent.capabilities.findIndex((capability) => capability.name === "Skills");
+  const hash = `#/agents/${agent.id}?part=skill%3A${index}%3Ahouse-style`;
+  return real ? src(recording, hash) : `/fx/?src=recordings/${recording.file}${hash}`;
+}
+
+/**
+ * The on-call agent of the operations demo, its Hooks capability picked: the real recording, or
+ * the approvals fixture's agent, which has a tool that needs approval but no hooks.
+ */
+function operationsAgent(recording: Recording): string {
+  const agent = blueprint(recording, real ? "oncall" : "ops");
+  const index = agent.capabilities.findIndex((capability) => capability.name === "Hooks");
+  return src(recording, `#/agents/${agent.id}${index < 0 ? "" : `?part=capability%3A${index}`}`);
+}
+
 const agentRun = (recording: Recording): Span =>
   rootSpan(recording.events, (span) => span.kind === "agent_run");
 const graphRun = (recording: Recording): Span =>
   rootSpan(recording.events, (span) => span.kind === "graph_run");
 
-/** Id of the blueprint for an agent name (the last one emitted wins, as in the viewer). */
-function blueprintId(recording: Recording, agentName: string | null): string {
-  let id: string | null = null;
+/** The blueprint for an agent name (the last one emitted wins, as in the viewer). */
+function blueprint(recording: Recording, agentName: string | null): AgentBlueprint {
+  let found: AgentBlueprint | null = null;
   for (const event of recording.events) {
-    if (event.type === "blueprint.agent" && event.agent.name === agentName) id = event.agent.id;
+    if (event.type === "blueprint.agent" && event.agent.name === agentName) found = event.agent;
   }
-  if (!id) throw new Error(`${recording.file} has no blueprint for agent ${agentName}`);
-  return id;
+  if (!found) throw new Error(`${recording.file} has no blueprint for agent ${agentName}`);
+  return found;
 }
+
+const blueprintId = (recording: Recording, agentName: string | null): string =>
+  blueprint(recording, agentName).id;
 
 /**
  * How many "step forward" presses from the start reach the busiest moment of a run: the span
@@ -178,6 +212,39 @@ for (const scheme of ["dark", "light"] as const) {
       await shoot(page, `view-${scheme}.png`);
     });
   });
+
+  test.describe(`capabilities, ${scheme}`, () => {
+    test.use({ colorScheme: scheme });
+    // An agent built from capabilities: grouped by kind under its card, the toolsets they give
+    // linked to them, the skills under the capability that offers them, and the picked skill's
+    // instructions in the inspector.
+    test(`capabilities-${scheme}.png`, async ({ page }) => {
+      await page.goto(capabilities());
+      await expect(canvasNode(page, /^Skill house-style of Skills/)).toBeVisible();
+      const inspector = page.getByRole("complementary", { name: /details/ });
+      await expect(inspector.getByRole("heading", { name: "house-style" })).toBeVisible();
+      await shoot(page, `capabilities-${scheme}.png`);
+    });
+  });
+
+  test.describe(`operations, ${scheme}`, () => {
+    test.use({ colorScheme: scheme });
+    // An agent that delegates through SubAgents, is watched by hooks and has a tool that needs
+    // approval: the delegation edge, the hook rows and the "approval" tag on one canvas.
+    test(`operations-${scheme}.png`, async ({ page }) => {
+      await page.goto(operationsAgent(operations()));
+      await expect(
+        canvasNode(page, new RegExp(`^Tool ${approvedTool}, needs approval`)),
+      ).toBeVisible();
+      if (real) {
+        await expect(
+          canvasNode(page, /^Hook before_tool_execute of Hooks: guard_restart/),
+        ).toBeVisible();
+        await expect(canvasNode(page, /^Agent log_reader/)).toBeVisible();
+      }
+      await shoot(page, `operations-${scheme}.png`);
+    });
+  });
 }
 
 test.describe("docs images", () => {
@@ -214,6 +281,22 @@ test.describe("docs images", () => {
       "true",
     );
     await shoot(page, "inspector.png");
+  });
+
+  test("approvals.png", async ({ page }) => {
+    // A run that ended waiting for a human to approve its restarts, and the link to the run
+    // that resumes it.
+    const recording = operations();
+    const waited = recording.spans.find(
+      (span) => span.kind === "agent_run" && span.data.deferred.length > 0,
+    );
+    if (!waited) throw new Error(`${recording.file} has no run that waits for approval`);
+    await openRun(page, recording, waited.trace_id);
+    await skipToEnd(page);
+    await expect(
+      canvasNode(page, new RegExp(`^Tool ${approvedTool}, needs approval, [0-9]+ calls?, waiting`)),
+    ).toBeVisible();
+    await shoot(page, "approvals.png");
   });
 
   test("graph.png", async ({ page }) => {

@@ -199,6 +199,7 @@ User is ann.\
                 "type_name": None,
                 "json_schema": None,
                 "tool_names": ["final_result"],
+                "validators": [],
                 "location": None,
             },
             "capabilities": [],
@@ -209,8 +210,10 @@ User is ann.\
                 "output_retries": None,
                 "tool_timeout": None,
                 "expressions": {},
+                "defaults": [],
             },
             "delegates": [{"tool_name": "delegate_research", "agent_id": "a2", "evidence": "observed"}],
+            "wrapper": None,
             "warnings": [],
         }
     )
@@ -245,6 +248,7 @@ User is ann.\
             "type_name": None,
             "json_schema": None,
             "tool_names": [],
+            "validators": [],
             "location": None,
         }
     )
@@ -584,6 +588,7 @@ def test_observed_blueprint_shape() -> None:
                 "type_name": None,
                 "json_schema": None,
                 "tool_names": [],
+                "validators": [],
                 "location": None,
             },
             "capabilities": [],
@@ -594,8 +599,10 @@ def test_observed_blueprint_shape() -> None:
                 "output_retries": None,
                 "tool_timeout": None,
                 "expressions": {},
+                "defaults": [],
             },
             "delegates": [],
+            "wrapper": None,
             "warnings": [],
         }
     )
@@ -671,6 +678,7 @@ def test_merge_request_into_an_observed_blueprint() -> None:
             "type_name": None,
             "json_schema": None,
             "tool_names": ["final_result", "final_result_B"],
+            "validators": [],
             "location": None,
         }
     )

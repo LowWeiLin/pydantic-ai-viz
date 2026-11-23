@@ -54,7 +54,7 @@ END_OF_MODULE = 10**9
 
 _BUILTINS = frozenset(dir(builtins))
 _CASTS = frozenset({"typing.cast", "typing_extensions.cast"})
-_LIBRARIES = frozenset({"pydantic_ai", "pydantic_ai_slim", "pydantic_graph", "pydantic_evals", "pydantic_ai_harness"})
+_LIBRARIES = frozenset({"pydantic_ai", "pydantic_graph", "pydantic_evals", "pydantic_ai_harness"})
 """The packages of the Pydantic AI project, whose public API the analysis knows."""
 _NEVER_PROJECT = _LIBRARIES | {"pydantic", "pydantic_core", "pydantic_settings", "typing_extensions"}
 """Packages whose names are recognised by the analysis. A project file never stands in for one of them."""

@@ -12,8 +12,21 @@ import { runs } from "../data/selectors";
 import { useViewer } from "../data/store";
 import { firstLine, parameterCount, trimBlankLines } from "../inspector/BlueprintInspector";
 import { SourceRef } from "../inspector/source";
-import { agentBlueprint, fixture, log, sessionStarted } from "../test/factory";
-import type { AgentBlueprint } from "../wire";
+import {
+  agentBlueprint,
+  agentRun,
+  capability,
+  fixture,
+  hook,
+  lifecycle,
+  log,
+  sessionStarted,
+  sid,
+  skill,
+  TRACE,
+  toolCall,
+} from "../test/factory";
+import type { AgentBlueprint, Toolset } from "../wire";
 
 const NEWSROOM = "blueprint/newsroom.pviz.jsonl";
 const embedded = (name: string): BootPlan => ({ kind: "embedded", events: fixture(name) });
@@ -596,5 +609,681 @@ describe("a model the code works out", () => {
       "title",
       "From environment variable MODEL at run time; no default",
     );
+  });
+});
+
+describe("the capabilities of an agent", () => {
+  const toolset: Toolset = {
+    id: "ts0",
+    toolset_id: null,
+    label: "FunctionToolset 'kb'",
+    kind: "function",
+    wrappers: [],
+    opaque: false,
+    expression: null,
+    location: null,
+  };
+
+  test("are grouped as the Pydantic AI docs group them, with what each one was given", async () => {
+    const user = userEvent.setup();
+    const agent = agentBlueprint({
+      id: "a1",
+      toolsets: [toolset],
+      capabilities: [
+        capability({ name: "AuditTrail" }),
+        capability({
+          name: "Thinking",
+          category: "reasoning",
+          package: "pydantic_ai",
+          details: { effort: "high" },
+        }),
+        capability({
+          name: "ModelFallback",
+          category: "loop",
+          package: "pydantic_ai",
+          details: { models: ["openai:gpt-5", "test"] },
+        }),
+        capability({
+          name: "Memory",
+          category: "knowledge",
+          package: "pydantic_ai_harness",
+          toolsets: ["ts0"],
+          deferred: true,
+        }),
+        capability({
+          name: "MCP",
+          category: "tools",
+          expressions: { url: "os.environ['URL']" },
+          native_tools: ["mcp_server"],
+        }),
+        capability({ name: "Future", category: "quantum" as never }),
+        capability({ name: "ToolSearch", builtin: true, category: "context" }),
+      ],
+    });
+    const events = log(
+      [0, { ...sessionStarted(), mode: "blueprint" }],
+      [1, { type: "blueprint.agent", agent }],
+    );
+    window.location.hash = "#/agents/a1";
+    render(<App plan={{ kind: "embedded", events }} />);
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    const panel = within(details).getByRole("region", { name: "Agent blueprint" });
+    expect(
+      within(panel).getByRole("heading", { level: 4, name: /^Capabilities/ }),
+    ).toHaveTextContent("Capabilities6");
+
+    const groups = within(panel).getAllByRole("heading", { level: 5 });
+    expect(groups.map((h) => h.textContent)).toEqual([
+      "Tools & native abilities 1",
+      "Reasoning, planning & delegation 1",
+      "Knowledge & memory 1",
+      "Loop customization 1",
+      "Custom 2",
+    ]);
+    const custom = within(panel).getByRole("region", { name: "Custom" });
+    expect(within(custom).getByText("AuditTrail")).toBeInTheDocument();
+    expect(within(custom).getByText("Future")).toBeInTheDocument();
+
+    expect(within(panel).getAllByText("Core")).toHaveLength(2);
+    expect(within(panel).getByText("Harness")).toBeInTheDocument();
+    expect(within(panel).getByText("on demand")).toBeInTheDocument();
+    expect(within(panel).getByText("high")).toBeInTheDocument();
+    expect(within(panel).getByText("openai:gpt-5")).toBeInTheDocument();
+    expect(within(panel).getByText("test")).toBeInTheDocument();
+    expect(within(panel).getByText("os.environ['URL']").tagName).toBe("CODE");
+    expect(within(panel).getByText("mcp_server")).toBeInTheDocument();
+    expect(within(panel).getByText("ToolSearch")).not.toBeVisible();
+
+    const link = within(panel).getAllByRole("button", { name: "FunctionToolset 'kb'" });
+    await user.click(link[link.length - 1] as HTMLElement);
+    const toolsetPanel = await screen.findByRole("region", { name: "Toolset" });
+    expect(within(toolsetPanel).getByText("Given by")).toBeInTheDocument();
+    expect(within(toolsetPanel).getByText("Memory")).toBeInTheDocument();
+  });
+
+  test("list a built-in one the agent configures under its group, and fold the plain ones", () => {
+    const agent = agentBlueprint({
+      id: "a1",
+      capabilities: [
+        capability({
+          name: "ToolSearch",
+          builtin: true,
+          category: "context",
+          details: { max_results: 3 },
+          native_tools: ["tool_search"],
+        }),
+        capability({
+          name: "PendingMessageDrainCapability",
+          builtin: true,
+          category: "runtime",
+          native_tools: ["tool_search"],
+        }),
+      ],
+    });
+    const events = log(
+      [0, { ...sessionStarted(), mode: "blueprint" }],
+      [1, { type: "blueprint.agent", agent }],
+    );
+    window.location.hash = "#/agents/a1";
+    render(<App plan={{ kind: "embedded", events }} />);
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    const panel = within(details).getByRole("region", { name: "Agent blueprint" });
+    const context = within(panel).getByRole("region", { name: "Context management" });
+    expect(within(context).getByText("ToolSearch")).toBeVisible();
+    expect(within(context).getByText("3")).toBeVisible();
+    expect(within(panel).getByText("PendingMessageDrainCapability")).not.toBeVisible();
+  });
+
+  describe("on the canvas", () => {
+    const withTools: Toolset = { ...toolset, label: "MemoryToolset 'memory'" };
+    const agent = agentBlueprint({
+      id: "a1",
+      toolsets: [withTools],
+      tools: [
+        {
+          name: "write_memory",
+          toolset: "ts0",
+          description: null,
+          parameters_schema: {},
+          return_schema: null,
+          kind: "function",
+          takes_ctx: null,
+          is_async: null,
+          max_retries: null,
+          function: null,
+          origin: "object",
+          location: null,
+          library_version: null,
+        },
+      ],
+      capabilities: [
+        capability({ name: "ToolSearch", builtin: true, category: "context" }),
+        capability({ name: "Thinking", category: "reasoning", details: { effort: "high" } }),
+        capability({ name: "AuditTrail" }),
+        capability({
+          name: "Memory",
+          category: "knowledge",
+          package: "pydantic_ai_harness",
+          toolsets: ["ts0"],
+          deferred: true,
+        }),
+      ],
+    });
+    const open = (hash: string) => {
+      window.location.hash = hash;
+      return render(
+        <App
+          plan={{
+            kind: "embedded",
+            events: log(
+              [0, { ...sessionStarted(), mode: "blueprint" }],
+              [1, { type: "blueprint.agent", agent }],
+            ),
+          }}
+        />,
+      );
+    };
+    const details = (): HTMLElement =>
+      screen.getByRole("complementary", { name: "Blueprint details" });
+    const title = (): string | null =>
+      within(details()).getByRole("heading", { level: 3 }).textContent;
+
+    test("a capability picked on the canvas opens its panel, and its link opens on it", async () => {
+      const user = userEvent.setup();
+      const first = open("#/agents/a1");
+      // The built-in one is not drawn.
+      expect(screen.queryByRole("button", { name: /^Capability ToolSearch/ })).toBeNull();
+      await user.click(
+        screen.getByRole("button", {
+          name: "Capability Memory, Knowledge & memory, gives toolset MemoryToolset 'memory', on demand",
+        }),
+      );
+      expect(window.location.hash).toBe("#/agents/a1?part=capability%3A3");
+      expect(title()).toBe("Memory");
+      expect(within(details()).getByText("Capability")).toBeInTheDocument();
+      expect(within(details()).getByText("Harness")).toBeInTheDocument();
+      expect(within(details()).getByText("on demand")).toBeInTheDocument();
+      expect(within(details()).getByText("Knowledge & memory")).toBeInTheDocument();
+      expect(within(details()).getByText("Loaded")).toBeInTheDocument();
+      // Its toolset leads on, and the toolset leads back.
+      await user.click(within(details()).getByRole("button", { name: "MemoryToolset 'memory'" }));
+      expect(title()).toBe("MemoryToolset 'memory'");
+      await user.click(within(details()).getByRole("button", { name: "Memory" }));
+      expect(title()).toBe("Memory");
+      // Back up to the agent, and down again from its list of capabilities.
+      await user.click(within(details()).getByRole("button", { name: "a1" }));
+      expect(window.location.hash).toBe("#/agents/a1");
+      await user.click(within(details()).getByRole("button", { name: "Thinking" }));
+      expect(window.location.hash).toBe("#/agents/a1?part=capability%3A1");
+      expect(within(details()).getByText("high")).toBeInTheDocument();
+      first.unmount();
+
+      const second = open("#/agents/a1?part=capability%3A2");
+      expect(title()).toBe("AuditTrail");
+      expect(
+        screen.getByRole("button", { name: "Capability AuditTrail, Custom" }).parentElement,
+      ).toHaveClass("pviz-selected");
+      expect(within(details()).getByText(/gives the agent no toolset/)).toBeInTheDocument();
+      second.unmount();
+
+      // A built-in one has a panel too, though the canvas does not draw it.
+      const third = open("#/agents/a1?part=capability%3A0");
+      expect(title()).toBe("ToolSearch");
+      expect(within(details()).getByText("Added by Pydantic AI to every agent.")).toBeVisible();
+      third.unmount();
+
+      // An index the agent does not have shows the agent.
+      open("#/agents/a1?part=capability%3A9");
+      expect(title()).toBe("a1");
+    });
+
+    test("the canvas explains the dashed edge from a capability to its toolset", () => {
+      open("#/agents/a1");
+      expect(screen.getByText("capability gives toolset")).toBeInTheDocument();
+      expect(screen.queryByText("delegation found in code")).toBeNull();
+    });
+
+    test("a sub-agent's capability picked on the canvas opens on that agent, not this one's of its index", async () => {
+      const user = userEvent.setup();
+      const tool = (name: string) =>
+        ({ ...agent.tools[0], name }) as AgentBlueprint["tools"][number];
+      const hub = agentBlueprint({
+        id: "hub",
+        toolsets: [toolset],
+        tools: [tool("ask_worker")],
+        delegates: [{ tool_name: "ask_worker", agent_id: "worker", evidence: "object" }],
+        capabilities: [
+          capability({ name: "Thinking", category: "reasoning" }),
+          capability({ name: "HubOnly", category: "safety" }),
+        ],
+      });
+      const worker = agentBlueprint({
+        id: "worker",
+        toolsets: [toolset],
+        tools: [tool("work")],
+        capabilities: [
+          capability({ name: "WorkerA", category: "reasoning" }),
+          capability({ name: "WorkerB", category: "safety" }),
+        ],
+      });
+      window.location.hash = "#/agents/hub";
+      render(
+        <App
+          plan={{
+            kind: "embedded",
+            events: log(
+              [0, { ...sessionStarted(), mode: "blueprint" }],
+              [1, { type: "blueprint.agent", agent: hub }],
+              [2, { type: "blueprint.agent", agent: worker }],
+            ),
+          }}
+        />,
+      );
+      await user.click(screen.getByRole("button", { name: /^Capability WorkerB/ }));
+      expect(window.location.hash).toBe("#/agents/worker?part=capability%3A1");
+      await screen.findByRole("heading", { level: 3, name: "WorkerB" });
+      expect(screen.getByRole("button", { name: /^Capability WorkerB/ }).parentElement).toHaveClass(
+        "pviz-selected",
+      );
+    });
+  });
+});
+
+describe("the hooks of a Hooks capability", () => {
+  const agent = agentBlueprint({
+    id: "a1",
+    capabilities: [
+      capability({
+        name: "Hooks",
+        category: "loop",
+        package: "pydantic_ai",
+        hooks: [
+          hook({
+            point: "before_model_request",
+            function: "app.log_request",
+            location: { file: "app.py", line: 9 },
+          }),
+          hook({
+            point: "before_tool_execute",
+            function: "app.guard",
+            tools: ["delete_file"],
+            timeout: 5,
+            location: { file: "app.py", line: 14 },
+          }),
+        ],
+      }),
+    ],
+  });
+
+  test("a hook picked on the canvas opens its capability's panel at its hooks", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/agents/a1";
+    render(
+      <App
+        plan={{
+          kind: "embedded",
+          events: log(
+            [0, { ...sessionStarted(), mode: "blueprint" }],
+            [1, { type: "blueprint.agent", agent }],
+          ),
+        }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /^Capability Hooks, .*2 hooks$/ })).toBeVisible();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Hook before_tool_execute of Hooks: guard, for delete_file, times out after 5 s",
+      }),
+    );
+    expect(window.location.hash).toBe("#/agents/a1?part=hook%3A0%3A1");
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    expect(within(details).getByRole("heading", { level: 3 }).textContent).toBe("Hooks");
+    const hooks = within(details).getByRole("list", { name: "Hooks of Hooks" });
+    const items = within(hooks).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      expect.stringMatching(/^before_model_request→app\.log_requestapp\.py:9/),
+      expect.stringMatching(
+        /^before_tool_execute→app\.guardOnly for delete_file · Times out after 5 sapp\.py:14/,
+      ),
+    ]);
+  });
+});
+
+describe("the output validators of an agent", () => {
+  test("the output section names them in registration order", () => {
+    const base = agentBlueprint({ id: "a1" });
+    const agent = {
+      ...base,
+      output: { ...base.output, validators: ["app.not_empty", "app.short"] },
+    };
+    window.location.hash = "#/agents/a1";
+    render(
+      <App
+        plan={{
+          kind: "embedded",
+          events: log(
+            [0, { ...sessionStarted(), mode: "blueprint" }],
+            [1, { type: "blueprint.agent", agent }],
+          ),
+        }}
+      />,
+    );
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    expect(within(details).getByText("Validated by")).toBeInTheDocument();
+    expect(within(details).getByText("app.not_empty, app.short")).toBeInTheDocument();
+  });
+});
+
+describe("skills, and what Pydantic AI adds by default", () => {
+  const houseStyle = skill({
+    name: "house-style",
+    description: "How the newsroom formats a short briefing.\nIn three bullets.",
+    when_to_use: "Before writing the final briefing for a reader.",
+    path: "_skills/house-style/SKILL.md",
+    body: "\n# House style for briefings\n\nWrite every briefing in this shape.\n",
+  });
+  const secret = skill({ name: "secret", model_invocable: false, body: "" });
+  const agent = agentBlueprint({
+    id: "a1",
+    capabilities: [
+      capability({ name: "ToolSearch", builtin: true, category: "context" }),
+      capability({
+        name: "Skills",
+        category: "knowledge",
+        package: "pydantic_ai_harness",
+        skills: [houseStyle, secret],
+      }),
+    ],
+    settings: {
+      ...agentBlueprint({ id: "x" }).settings,
+      end_strategy: "early",
+      tool_retries: 3,
+      defaults: ["end_strategy"],
+    },
+  });
+  const open = (hash: string) => {
+    window.location.hash = hash;
+    return render(
+      <App
+        plan={{
+          kind: "embedded",
+          events: log(
+            [0, { ...sessionStarted(), mode: "blueprint" }],
+            [1, { type: "blueprint.agent", agent }],
+          ),
+        }}
+      />,
+    );
+  };
+  const details = (): HTMLElement =>
+    screen.getByRole("complementary", { name: "Blueprint details" });
+  const title = (): string | null =>
+    within(details()).getByRole("heading", { level: 3 }).textContent;
+
+  test("a skill picked on the canvas shows when to use it and the instructions the model gets", async () => {
+    const user = userEvent.setup();
+    open("#/agents/a1");
+    await user.click(
+      screen.getByRole("button", { name: "Skill house-style of Skills, loaded on demand" }),
+    );
+    expect(window.location.hash).toBe("#/agents/a1?part=skill%3A1%3Ahouse-style");
+    expect(title()).toBe("house-style");
+    const panel = within(details()).getByRole("region", { name: "Skill" });
+    expect(within(details()).getByText("Skill")).toBeInTheDocument();
+    expect(within(details()).getByText("on demand")).toBeInTheDocument();
+    expect(within(panel).getByText(houseStyle.when_to_use ?? "")).toBeInTheDocument();
+    // The body without the blank lines around it, and a way to copy it.
+    expect(within(panel).getByText(/^# House style for briefings/).textContent).toBe(
+      "# House style for briefings\n\nWrite every briefing in this shape.",
+    );
+    expect(within(panel).getByRole("button", { name: "Copy the instructions" })).toBeVisible();
+    expect(within(panel).getByText("_skills/house-style/")).toBeInTheDocument();
+    expect(within(panel).getByText("load_capability")).toBeInTheDocument();
+    // Up to the capability that offers it, which lists its skills.
+    await user.click(within(details()).getByRole("button", { name: "Skills" }));
+    expect(title()).toBe("Skills");
+    const skills = within(details()).getByRole("list", { name: "Skills of Skills" });
+    expect(
+      within(skills)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual([
+      "house-styleHow the newsroom formats a short briefing.",
+      `secrethidden${secret.description}`,
+    ]);
+    await user.click(within(skills).getByRole("button", { name: /^secret/ }));
+    expect(title()).toBe("secret");
+    expect(within(details()).getByText("hidden from the model")).toBeInTheDocument();
+    expect(within(details()).queryByText("When to use")).toBeNull();
+    expect(within(details()).getByText(/nothing after the frontmatter/)).toBeInTheDocument();
+    // The agent's list of capabilities names its skills too.
+    await user.click(within(details()).getByRole("button", { name: "a1" }));
+    await user.click(within(details()).getByRole("button", { name: "house-style" }));
+    expect(title()).toBe("house-style");
+  });
+
+  test("a skill a link names that the agent does not have shows the agent", () => {
+    open("#/agents/a1?part=skill%3A1%3Aghost");
+    expect(title()).toBe("a1");
+  });
+
+  test("the defaults toggle draws them, says so, and is remembered", async () => {
+    const user = userEvent.setup();
+    const first = open("#/agents/a1");
+    const toggle = screen.getByRole("button", { name: "Pydantic AI defaults +1" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(toggle).toHaveAttribute("title", "Show the 1 part Pydantic AI adds by default");
+    expect(toggle).not.toHaveClass("text-accent!");
+    expect(screen.queryByRole("button", { name: /^Capability ToolSearch/ })).toBeNull();
+    // Hidden, a default setting is folded away under its own heading.
+    const panel = within(details()).getByRole("region", { name: "Agent blueprint" });
+    expect(within(panel).getByText("Pydantic AI defaults")).toBeVisible();
+    expect(within(panel).getByText("End strategy")).not.toBeVisible();
+    expect(within(panel).getByText("Tool retries")).toBeVisible();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).toHaveAttribute("title", "Hide the 1 part Pydantic AI adds by default");
+    // Pressed looks it, apart from a hover: in the accent colour.
+    expect(toggle).toHaveClass("text-accent!");
+    expect(within(toggle).getByText("+1")).toHaveClass("tone-accent");
+    expect(screen.getByText("Showing 1 part from Pydantic AI")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Capability ToolSearch, .*a Pydantic AI default$/ }),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText("End strategy")).toBeVisible();
+    expect(within(panel).getByText("default")).toBeVisible();
+    first.unmount();
+
+    open("#/agents/a1");
+    expect(screen.getByRole("button", { name: "Pydantic AI defaults +1" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  test("the toggle still works when storage refuses to keep the choice", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    try {
+      open("#/agents/a1");
+      const toggle = screen.getByRole("button", { name: "Pydantic AI defaults +1" });
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute("aria-pressed", "true");
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("in a run, a load_capability call says which skill it loaded, and outlines it", async () => {
+    const user = userEvent.setup();
+    const named = { ...agent, name: "briefing", label: "briefing" };
+    const root = agentRun({ id: "root", start: 0, end: 50, agent: "briefing" });
+    const loadSpan = toolCall({
+      id: "load",
+      parent: "root",
+      start: 5,
+      end: 7,
+      tool: "load_capability",
+      agent: "briefing",
+    });
+    const load = { ...loadSpan, data: { ...loadSpan.data, arguments: { id: "house-style" } } };
+    window.location.hash = `#/runs/${TRACE}`;
+    render(
+      <App
+        plan={{
+          kind: "embedded",
+          events: log([1, { type: "blueprint.agent", agent: named }], ...lifecycle(root, load)),
+        }}
+      />,
+    );
+    await screen.findByRole("heading", { level: 2, name: "briefing" });
+    await user.click(await screen.findByRole("button", { name: "Skip to end" }));
+    const row = within(screen.getByRole("tree"))
+      .getAllByRole("treeitem")
+      .find((item) => item.getAttribute("data-span") === sid("load"));
+    if (!row) throw new Error("expected the load_capability row");
+    await user.click(row);
+    const span = screen.getByRole("complementary", { name: "Span details" });
+    expect(within(span).getByText(/^Loads skill/).textContent).toBe(
+      "Loads skill house-style of Skills",
+    );
+    expect(
+      screen.getByRole("button", { name: /^Skill house-style of Skills/ }).parentElement,
+    ).toHaveClass("pviz-selected");
+  });
+
+  test("is not offered for an agent Pydantic AI added nothing to", () => {
+    const plain = agentBlueprint({ id: "a1" });
+    window.location.hash = "#/agents/a1";
+    render(
+      <App
+        plan={{
+          kind: "embedded",
+          events: log(
+            [0, { ...sessionStarted(), mode: "blueprint" }],
+            [1, { type: "blueprint.agent", agent: plain }],
+          ),
+        }}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /^Pydantic AI defaults/ })).toBeNull();
+  });
+});
+
+describe("tool calls left for the caller", () => {
+  const APPROVALS = "approvals.pviz.jsonl";
+  const spanDetails = (): HTMLElement =>
+    screen.getByRole("complementary", { name: "Span details" });
+
+  test("a tool that needs approval, and one that runs outside, say so on the canvas and in their panel", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/agents/a1";
+    render(<App plan={embedded(APPROVALS)} />);
+    const details = screen.getByRole("complementary", { name: "Blueprint details" });
+    await user.click(
+      await screen.findByRole("button", { name: "Tool delete_file, needs approval" }),
+    );
+    expect(within(details).getByText("asked before every call")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Tool page_oncall, runs outside the agent" }),
+    );
+    expect(within(details).getByText("the caller supplies the result")).toBeInTheDocument();
+    // The tags are whole on a blueprint; a run, whose counts and state need the room, keeps their icons.
+    expect(screen.getByText("approval")).toBeInTheDocument();
+    expect(screen.getByText("runs outside")).toBeInTheDocument();
+    const [, first] = runs(useViewer.getState().data);
+    await openRun(first?.traceId, "ops");
+    await screen.findByRole("button", { name: /^Tool delete_file, needs approval/ });
+    expect(screen.queryByText("approval")).toBeNull();
+    expect(screen.queryByText("runs outside")).toBeNull();
+  });
+
+  test("a run that ended waiting lists its calls, and the run that resumes it says what became of them", async () => {
+    const user = userEvent.setup();
+    render(<App plan={embedded(APPROVALS)} />);
+    const [second, first] = runs(useViewer.getState().data);
+    await openRun(first?.traceId, "ops");
+    await user.click(await screen.findByRole("button", { name: "Skip to end" }));
+    expect(screen.getAllByText("waiting for approval and results: 3 calls").length).toBeGreaterThan(
+      0,
+    );
+    await user.click(within(spanDetails()).getByRole("tab", { name: "Output" }));
+    const panel = within(spanDetails());
+    expect(
+      panel.getByText("approved: it ran in the run that resumed this one"),
+    ).toBeInTheDocument();
+    expect(panel.getByText("denied: the model was told it may not run")).toBeInTheDocument();
+    expect(panel.getByText("result supplied by the caller")).toBeInTheDocument();
+
+    await openRun(second?.traceId, "ops");
+    const back = screen.getByRole("link", {
+      name: /^resumes ops \d\d:\d\d:\d\d: 1 approved, 1 denied, 1 result supplied$/,
+    });
+    expect(back.getAttribute("href")).toBe(`#/runs/${first?.traceId}`);
+  });
+
+  test("the events of a run are marked on its spans, listed in their panel and counted on the capability", async () => {
+    const user = userEvent.setup();
+    render(<App plan={embedded(APPROVALS)} />);
+    const [, first] = runs(useViewer.getState().data);
+    await openRun(first?.traceId, "ops");
+    await user.click(await screen.findByRole("button", { name: "Skip to end" }));
+    const tree = within(screen.getByRole("tree"));
+    expect(tree.getByRole("img", { name: "Event audit.tool_checked from audit" })).toHaveAttribute(
+      "title",
+      "audit.tool_checked from audit",
+    );
+    expect(tree.getByRole("img", { name: "Event restart_queued" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Capability AuditLog, .*, 2 events$/ }),
+    ).toBeInTheDocument();
+
+    const row = tree
+      .getAllByRole("treeitem")
+      .find((item) => item.getAttribute("data-span") === first?.rootSpanId);
+    if (!row) throw new Error("expected the run's row");
+    await user.click(row);
+    await user.click(within(spanDetails()).getByRole("tab", { name: "Events" }));
+    const panel = within(spanDetails());
+    expect(panel.getByText("audit.request_logged")).toBeInTheDocument();
+    expect(panel.getByText("restart_queued")).toBeInTheDocument();
+    expect(panel.getByText("Custom event")).toBeInTheDocument();
+    expect(panel.getAllByText("restart_service").length).toBeGreaterThan(0);
+  });
+});
+
+describe("an agent run as durable steps", () => {
+  const open = (wrapper: string | null): HTMLElement => {
+    const agent = agentBlueprint({ id: "a1", source: "object", wrapper });
+    const events = log(
+      [0, { ...sessionStarted(), mode: "blueprint" }],
+      [1, { type: "blueprint.agent", agent }],
+    );
+    window.location.hash = "#/agents/a1";
+    render(<App plan={{ kind: "embedded", events }} />);
+    return screen.getByRole("complementary", { name: "Blueprint details" });
+  };
+
+  test("the card carries the wrapper's name, and the panel the class", () => {
+    const details = open("TemporalAgent");
+    expect(
+      screen.getByTitle(/^TemporalAgent: model requests and tool calls run as durable steps/),
+    ).toHaveTextContent("Temporal");
+    expect(within(details).getByText("Durable execution")).toBeInTheDocument();
+    expect(within(details).getByText("TemporalAgent", { selector: "dd code" })).toBeVisible();
+  });
+
+  test("an agent without one shows neither", () => {
+    const details = open(null);
+    expect(screen.queryByTitle(/durable steps/)).toBeNull();
+    expect(within(details).queryByText("Durable execution")).toBeNull();
   });
 });

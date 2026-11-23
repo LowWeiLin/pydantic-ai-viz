@@ -5,9 +5,9 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-from static_support import agent, analyze_source, one_agent, properties, tool
+from static_support import agent, analyze_source, live_agents, one_agent, properties, tool
 
-from pydantic_ai_viz import analyze
+from pydantic_ai_viz import AgentBlueprint, analyze
 from pydantic_ai_viz._compat import pydantic_ai_version
 
 # ------------------------------------------------- the model, from a setting
@@ -759,10 +759,52 @@ def test_a_capability_of_the_project_gives_the_agent_the_toolset_its_get_toolset
         "NoTools",
         "WebSearch",
     ]
+    assert [c.toolsets for c in found.capabilities] == [["ts0"], ["ts1"], ["ts2"], [], []]
     assert found.warnings == ["a toolset is built by `self.build()`; its tools are only known when the code runs"]
     # A toolset that a capability gives is not one that no agent is given.
     analysed = analyze_source(tmp_path, source)
     assert analysed.notices == []
+
+
+def test_the_toolsets_pydantic_ai_capabilities_give_are_read_as_a_live_agent_shows_them(tmp_path: Path) -> None:
+    source = '''
+        from pydantic_ai import Agent
+        from pydantic_ai.capabilities import Capability, Toolset
+        from pydantic_ai.toolsets import FunctionToolset
+
+
+        def lookup(topic: str) -> str:
+            """Look a topic up."""
+            return topic
+
+
+        def define(word: str) -> str:
+            """Define a word."""
+            return word
+
+
+        agent = Agent(
+            "test",
+            capabilities=[
+                Toolset(FunctionToolset([lookup], id="kb")),
+                Capability(tools=[define], id="mine"),
+                Capability(tools=[define], toolsets=[FunctionToolset([lookup], id="more")]),
+                Capability(toolsets=[FunctionToolset([lookup])]),
+            ],
+        )
+        '''
+    found = one_agent(tmp_path, source)
+    (live,) = live_agents(tmp_path / "module.py").values()
+
+    def shape(blueprint: AgentBlueprint) -> list[tuple[str, str, str | None, list[str]]]:
+        return [(t.label, t.kind, t.toolset_id, t.wrappers) for t in blueprint.toolsets]
+
+    assert shape(found) == shape(live)
+    assert [(t.name, t.toolset) for t in found.tools] == [(t.name, t.toolset) for t in live.tools]
+    assert [c.toolsets for c in found.capabilities] == [c.toolsets for c in live.capabilities[2:]]
+    assert [c.toolsets for c in found.capabilities] == [["ts0"], ["ts1"], ["ts2", "ts3"], ["ts4"]]
+    assert [t.description for t in found.tools if t.name == "define"] == ["Define a word."] * 2
+    assert found.warnings == []
 
 
 def test_a_toolset_or_capability_held_in_a_variable_is_named_by_what_it_was_assigned(tmp_path: Path) -> None:

@@ -106,6 +106,7 @@ async def test_golden_spans_v5() -> None:
                 "logfire.msg": "main run",
                 "gen_ai.agent.description": "Main demo agent",
             },
+            "events": [],
             "kind": "agent_run",
             "data": {
                 "model_name": "scripted-fn",
@@ -189,6 +190,7 @@ User is ann.\
                         ],
                     },
                 ],
+                "deferred": [],
             },
         }
     )
@@ -205,6 +207,7 @@ User is ann.\
             "run_id": "<id 3>",
             "error": None,
             "attributes": {"gen_ai.operation.name": "chat", "gen_ai.conversation.id": "<id 4>"},
+            "events": [],
             "kind": "model_request",
             "data": {
                 "model_name": "scripted-fn",
@@ -257,6 +260,7 @@ User is ann.\
                 "gen_ai.conversation.id": "<id 4>",
                 "logfire.msg": "running tool: get_weather",
             },
+            "events": [],
             "kind": "tool_call",
             "data": {
                 "tool_name": "get_weather",
@@ -264,6 +268,7 @@ User is ann.\
                 "arguments": {"city": "Paris"},
                 "result": {"city": "Paris", "temp_c": 21.5},
                 "retry": None,
+                "deferral": None,
             },
         }
     )
@@ -281,13 +286,14 @@ User is ann.\
             "error": {
                 "type": "pydantic_ai.exceptions.ToolRetryError",
                 "message": "x must be 2",
-                "stacktrace": "<stacktrace>",
+                "stacktrace": None,
             },
             "attributes": {
                 "gen_ai.operation.name": "execute_tool",
                 "gen_ai.conversation.id": "<id 4>",
                 "logfire.msg": "running tool: flaky",
             },
+            "events": [],
             "kind": "tool_call",
             "data": {
                 "tool_name": "flaky",
@@ -295,6 +301,7 @@ User is ann.\
                 "arguments": {"x": 1},
                 "result": "x must be 2",
                 "retry": {"cause": "model_retry", "attempt": 1, "max_retries": 2},
+                "deferral": None,
             },
         }
     )
@@ -315,6 +322,7 @@ User is ann.\
                 "logfire.msg": "researcher run",
                 "gen_ai.agent.description": "Looks things up",
             },
+            "events": [],
             "kind": "agent_run",
             "data": {
                 "model_name": "test",
@@ -348,6 +356,7 @@ User is ann.\
                     },
                     {"role": "assistant", "parts": [{"type": "text", "content": "research notes"}]},
                 ],
+                "deferred": [],
             },
         }
     )
@@ -370,6 +379,7 @@ async def test_span_started_carries_only_what_is_known_at_start() -> None:
                 "run_id": "<id 3>",
                 "error": None,
                 "attributes": {},
+                "events": [],
                 "kind": "agent_run",
                 "data": {
                     "model_name": "scripted-fn",
@@ -378,6 +388,7 @@ async def test_span_started_carries_only_what_is_known_at_start() -> None:
                     "output": None,
                     "usage": None,
                     "messages": None,
+                    "deferred": [],
                 },
             },
             {
@@ -392,6 +403,7 @@ async def test_span_started_carries_only_what_is_known_at_start() -> None:
                 "run_id": "<id 3>",
                 "error": None,
                 "attributes": {},
+                "events": [],
                 "kind": "model_request",
                 "data": {
                     "model_name": "scripted-fn",
@@ -416,6 +428,7 @@ async def test_span_started_carries_only_what_is_known_at_start() -> None:
                 "run_id": "<id 3>",
                 "error": None,
                 "attributes": {},
+                "events": [],
                 "kind": "tool_call",
                 "data": {
                     "tool_name": "get_weather",
@@ -423,6 +436,7 @@ async def test_span_started_carries_only_what_is_known_at_start() -> None:
                     "arguments": {"city": "Paris"},
                     "result": None,
                     "retry": None,
+                    "deferral": None,
                 },
             },
         ]
@@ -498,7 +512,7 @@ async def test_retry_span_has_retry_and_error() -> None:
     assert first["data"]["result"] == "x must be 2"
     assert first["error"]["type"] == "pydantic_ai.exceptions.ToolRetryError"
     assert first["error"]["message"] == "x must be 2"
-    assert first["error"]["stacktrace"].startswith("Traceback")
+    assert first["error"]["stacktrace"] is None  # an expected retry: its message is what the model was told
     assert second["status"] == "ok"
     assert second["data"]["retry"] is None
     assert second["error"] is None
@@ -560,6 +574,7 @@ async def test_include_content_false_keeps_structure_and_nulls_content() -> None
                     "parts": [{"type": "tool_result", "id": "c6", "name": "final_result", "result": None}],
                 },
             ],
+            "deferred": [],
         }
     )
     assert spans["model_request scripted-fn"]["data"] == snapshot(
@@ -594,6 +609,7 @@ async def test_include_content_false_keeps_structure_and_nulls_content() -> None
             "arguments": None,
             "result": None,
             "retry": {"cause": "model_retry", "attempt": 1, "max_retries": 2},
+            "deferral": None,
         }
     )
     assert spans["tool_call flaky"]["error"] == snapshot(
@@ -621,6 +637,7 @@ async def test_failed_run_has_error_status_and_exception_details() -> None:
     run, _, tool = spans
     assert tool["data"]["retry"] is None  # a real error, not a retry
     assert tool["error"]["type"] == "ValueError"
+    assert tool["error"]["stacktrace"].startswith("Traceback")  # a real error keeps where it was raised
     assert run["error"]["type"] == "ValueError"
     assert run["error"]["message"] == "kaboom"
     assert run["data"]["output"] is None
@@ -648,6 +665,57 @@ def test_unknown_span_degrades_to_other_with_raw_attributes() -> None:
     assert wire["agent_name"] == "legacy"  # the pre-gen_ai key is the fallback
     assert wire["attributes"] == {"db.system": "sqlite", "rows": 3, "tags": ["a", "b"]}
     assert wire["end_ms"] >= wire["start_ms"] > 1_600_000_000_000  # epoch milliseconds
+
+
+def _failed(attributes: dict[str, Any], exception_type: str) -> dict[str, Any]:
+    """A tool span that ended with an exception event, as Pydantic AI records one."""
+    span = TracerProvider().get_tracer("test").start_span("running tool", attributes=attributes)
+    span.add_event(
+        "exception",
+        {
+            "exception.type": exception_type,
+            "exception.message": "x must be 2",
+            "exception.stacktrace": "Traceback (most recent call last): ...",
+        },
+    )
+    span.set_status(Status(StatusCode.ERROR))
+    span.end()
+    assert isinstance(span, ReadableSpan)
+    return to_wire(normalize(span, ended=True).span)
+
+
+@pytest.mark.parametrize(
+    ("exception_type", "attributes"),
+    [
+        ("pydantic_ai.exceptions.ToolRetryError", {}),
+        ("RuntimeError", {"pydantic_ai.tool.retry.cause": "model_retry"}),
+        ("RuntimeError", {"pydantic_ai.output.retry.cause": "model_retry"}),
+    ],
+)
+def test_an_expected_retry_has_no_stacktrace(exception_type: str, attributes: dict[str, Any]) -> None:
+    wire = _failed(attributes, exception_type)
+    assert wire["error"] == {"type": exception_type, "message": "x must be 2", "stacktrace": None}
+
+
+def test_a_text_output_function_retry_reads_the_output_retry_attributes() -> None:
+    span = _span(
+        "running output function: tf",
+        {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "tf",
+            "pydantic_ai.output.retry.cause": "model_retry",
+            "pydantic_ai.output.retry.attempt": 1,
+            "pydantic_ai.output.retry.max_retries": 2,
+        },
+    )
+    wire = to_wire(normalize(span, ended=True).span)
+    assert wire["data"]["retry"] == {"cause": "model_retry", "attempt": 1, "max_retries": 2}
+    assert "pydantic_ai.output.retry.cause" not in wire["attributes"]
+
+
+def test_a_real_error_keeps_its_stacktrace() -> None:
+    wire = _failed({}, "RuntimeError")
+    assert wire["error"]["stacktrace"].startswith("Traceback")
 
 
 def test_error_status_without_exception_event_uses_the_status_description() -> None:
@@ -691,7 +759,83 @@ def test_tool_span_without_gen_ai_tool_name_falls_back_to_the_span_name() -> Non
     span = _span("execute_tool lookup", {"gen_ai.operation.name": "execute_tool", "gen_ai.tool.call.result": "3"})
     wire = to_wire(normalize(span, ended=True).span)
     assert wire["name"] == "lookup"
-    assert wire["data"] == {"tool_name": "lookup", "call_id": None, "arguments": None, "result": 3, "retry": None}
+    assert wire["data"] == {
+        "tool_name": "lookup",
+        "call_id": None,
+        "arguments": None,
+        "result": 3,
+        "retry": None,
+        "deferral": None,
+    }
+
+
+def _part(call_id: str, tool_name: str) -> dict[str, Any]:
+    return {"tool_name": tool_name, "args": {"path": "a.txt"}, "tool_call_id": call_id, "part_kind": "tool-call"}
+
+
+def _run(attributes: dict[str, Any], *, status: Status | None = None) -> dict[str, Any]:
+    span = _span("invoke_agent ops", {"gen_ai.operation.name": "invoke_agent", **attributes}, status=status)
+    return to_wire(normalize(span, ended=True).span)["data"]
+
+
+def test_a_run_that_ends_waiting_lists_its_deferred_calls_without_their_arguments() -> None:
+    requests = {
+        "calls": [_part("c3", "restart")],
+        "approvals": [_part("c1", "delete_file"), _part("c2", "delete_file")],
+        "metadata": {"c1": {"why": "prod"}},
+        "validated_args": {},
+    }
+    data = _run({"final_result": json.dumps(requests)})
+    assert data["deferred"] == [
+        {"call_id": "c3", "tool_name": "restart", "kind": "external"},
+        {"call_id": "c1", "tool_name": "delete_file", "kind": "approval"},
+        {"call_id": "c2", "tool_name": "delete_file", "kind": "approval"},
+    ]
+    assert data["output"]["metadata"] == {"c1": {"why": "prod"}}  # content stays in the output
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "done",
+        json.dumps({"calls": [], "approvals": "no"}),
+        json.dumps({"calls": [{"tool_name": "x", "part_kind": "text"}], "approvals": []}),
+        json.dumps({"city": "Paris"}),
+    ],
+)
+def test_an_output_that_is_not_deferred_tool_requests_defers_nothing(output: str) -> None:
+    assert _run({"final_result": output})["deferred"] == []
+
+
+def test_without_content_the_deferred_calls_are_the_unanswered_calls_of_the_last_response() -> None:
+    history = [
+        {"role": "user", "parts": [{"type": "text"}]},
+        {
+            "role": "assistant",
+            "parts": [
+                {"type": "tool_call", "id": "c0", "name": "ls"},
+                {"type": "tool_call", "id": "c1", "name": "rm"},
+            ],
+        },
+        {"role": "user", "parts": [{"type": "tool_call_response", "id": "c0", "name": "ls"}]},
+    ]
+    data = _run({"pydantic_ai.all_messages": json.dumps(history)})
+    assert data["output"] is None
+    assert data["deferred"] == [{"call_id": "c1", "tool_name": "rm", "kind": "approval"}]
+    # A failed run waits on nothing, and neither does one whose last response is text.
+    assert _run({"pydantic_ai.all_messages": json.dumps(history)}, status=Status(StatusCode.ERROR))["deferred"] == []
+    answered = [*history[:1], {"role": "assistant", "parts": [{"type": "text"}]}]
+    assert _run({"pydantic_ai.all_messages": json.dumps(answered)})["deferred"] == []
+
+
+@pytest.mark.parametrize(
+    ("name", "deferral"), [("ApprovalRequired", "approval"), ("CallDeferred", "external"), ("Other", None)]
+)
+def test_a_tool_that_deferred_its_call_says_why(name: str, deferral: str | None) -> None:
+    attributes = {"gen_ai.operation.name": "execute_tool", "pydantic_ai.tool.deferral.name": name}
+    wire = to_wire(normalize(_span("execute_tool restart", attributes), ended=True).span)
+    assert wire["data"]["deferral"] == deferral
+    assert "pydantic_ai.tool.deferral.name" not in wire["attributes"]
 
 
 def test_graph_span_without_a_graph_id_is_other() -> None:

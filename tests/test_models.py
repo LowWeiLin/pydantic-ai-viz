@@ -89,6 +89,7 @@ def _paths(value: Any, prefix: tuple[str | int, ...] = ()) -> list[tuple[str | i
         "return_schema",
         "json_schema",
         "model_settings",
+        "details",
         "settings",
         "arguments",
         "result",
@@ -100,7 +101,8 @@ def _paths(value: Any, prefix: tuple[str | int, ...] = ()) -> list[tuple[str | i
     if isinstance(value, dict):
         for key, child in value.items():
             found.append((*prefix, key))
-            if key not in free_form or prefix == ("agent",):
+            event_data = key == "data" and prefix[-2:-1] == ("events",)  # a span's own ``data`` is not
+            if (key not in free_form and not event_data) or prefix == ("agent",):
                 found.extend(_paths(child, (*prefix, key)))
     elif isinstance(value, list):
         for index, child in enumerate(value):
@@ -169,6 +171,8 @@ def test_unknown_fields_are_rejected_at_every_level() -> None:
         (1, ("agent", "toolsets", 0, "kind"), "magic"),
         (1, ("agent", "tools", 0, "kind"), "builtin"),
         (1, ("agent", "delegates", 0, "evidence"), "rumour"),
+        (1, ("agent", "capabilities", 0, "category"), "magic"),
+        (1, ("agent", "capabilities", 0, "package"), "pydantic_ai_slim"),
         (3, ("span", "trace_id"), "0AF7651916CD43DD8448EB211C80319C"),
         (3, ("span", "span_id"), "b7ad6b71"),
         (3, ("span", "status"), "done"),
@@ -208,12 +212,79 @@ def test_a_blueprint_read_from_code_carries_locations_and_expressions() -> None:
     agent["output"]["location"] = location
     agent["settings"]["expressions"] = {"tool_retries": "RETRIES", "model_settings.temperature": "TEMP"}
     agent["delegates"][0]["evidence"] = "code"
+    agent["capabilities"].append(
+        {
+            "name": "MCP",
+            "builtin": False,
+            "category": "tools",
+            "package": "pydantic_ai",
+            "deferred": True,
+            "details": {"effort": "high"},
+            "expressions": {"url": "os.environ['MCP_URL']"},
+            "toolsets": ["ts1"],
+            "native_tools": ["mcp_server"],
+            "capability_id": "docs",
+            "stack": None,
+            "skills": [],
+            "hooks": [],
+        }
+    )
     assert to_wire(parse_envelope(json.dumps(line))) == line
 
     graph = _line(2)
     graph["graph"] |= {"source": "code", "location": location}
     graph["graph"]["nodes"][1]["location"] = location
     assert to_wire(parse_envelope(json.dumps(graph))) == graph
+
+
+def _with_skills() -> dict[str, Any]:
+    """The blueprint line, with a ``Skills`` capability that offers one skill and one a stack put there."""
+    line = _line(1)
+    skill = {
+        "name": "house-style",
+        "description": "How to write a briefing.",
+        "when_to_use": None,
+        "model_invocable": False,
+        "path": "_skills/house-style/SKILL.md",
+        "body": "# House style",
+    }
+    hook = {
+        "point": "before_tool_execute",
+        "function": "app.guard",
+        "tools": ["delete_file"],
+        "timeout": 5.0,
+        "location": {"file": "app.py", "line": 12},
+    }
+    base = {"builtin": False, "deferred": False, "details": {}, "expressions": {}, "toolsets": [], "native_tools": []}
+    line["agent"]["capabilities"] += [
+        {**base, "name": "Skills", "category": "knowledge", "package": "pydantic_ai_harness"}
+        | {"capability_id": "skills", "stack": None, "skills": [skill], "hooks": []},
+        {**base, "name": "Shell", "category": "environment", "package": "pydantic_ai_harness"}
+        | {"capability_id": None, "stack": "Coder", "skills": [], "hooks": []},
+        {**base, "name": "Hooks", "category": "custom", "package": "pydantic_ai"}
+        | {"capability_id": None, "stack": None, "skills": [], "hooks": [hook]},
+    ]
+    line["agent"]["settings"]["defaults"] = ["end_strategy", "tool_retries"]
+    return line
+
+
+def test_skills_hooks_stacks_and_default_settings_round_trip_and_every_field_of_a_skill_and_hook_is_required() -> None:
+    line = _with_skills()
+    assert to_wire(parse_envelope(json.dumps(line))) == line
+    skill = line["agent"]["capabilities"][-3]["skills"][0]
+    hook = line["agent"]["capabilities"][-1]["hooks"][0]
+    for field, item in (("skills", skill), ("hooks", hook)):
+        for key in list(item):
+            broken = copy.deepcopy(line)
+            index = -3 if field == "skills" else -1
+            del broken["agent"]["capabilities"][index][field][0][key]
+            with pytest.raises(ValidationError):
+                parse_envelope(json.dumps(broken))
+    schema = envelope_json_schema()["$defs"]
+    assert sorted(schema["SkillInfo"]["required"]) == sorted(skill)
+    assert sorted(schema["HookInfo"]["required"]) == sorted(hook)
+    assert {"capability_id", "stack", "skills", "hooks"} <= set(schema["CapabilityInfo"]["required"])
+    assert "defaults" in schema["AgentSettings"]["required"]
 
 
 @pytest.mark.parametrize("mode", ["capture", "blueprint"])

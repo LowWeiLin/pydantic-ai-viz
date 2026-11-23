@@ -22,6 +22,7 @@ from pydantic_graph import Graph
 
 from ._analyze import TargetError
 from ._analyze._locate import split_target
+from ._introspect import durable_wrapper
 from ._session import Target
 
 __all__ = [
@@ -40,7 +41,9 @@ FILE_RUN_NAME = "__pydantic_ai_viz__"
 def namespace_module(name: str, namespace: Mapping[str, Any]) -> ModuleType:
     """The agents and graphs of ``namespace`` as a module, the form ``Session.register`` labels by variable name."""
     module = ModuleType(name)
-    vars(module).update({key: value for key, value in namespace.items() if isinstance(value, Agent | Graph)})
+    vars(module).update(
+        {key: value for key, value in namespace.items() if isinstance(value, Agent | Graph) or durable_wrapper(value)}
+    )
     return module
 
 
@@ -106,13 +109,13 @@ def resolve_target(spec: str) -> Target:
             'run as a script, so keep exits under `if __name__ == "__main__":`'
         ) from None
     if attr is None:
-        if not any(isinstance(value, Agent | Graph) for value in namespace.values()):
+        if not any(isinstance(value, Agent | Graph) or durable_wrapper(value) for value in namespace.values()):
             raise TargetError(f"no agents or graphs found at the top level of {location}")
         return namespace_module(Path(location).stem if is_file else location, namespace)
     if attr not in namespace:
         raise TargetError(f"{location} has no attribute {attr!r}")
     value = namespace[attr]
-    if not isinstance(value, Agent | Graph):
+    if not (isinstance(value, Agent | Graph) or durable_wrapper(value)):
         raise TargetError(f"{spec} is a {type(value).__name__}, not a pydantic_ai.Agent or a pydantic_graph.Graph")
     if getattr(value, "name", None):  # pyright: ignore[reportUnknownArgumentType]
         return cast("Target", value)

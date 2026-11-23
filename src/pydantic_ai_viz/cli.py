@@ -75,6 +75,13 @@ def _load_demos() -> Mapping[str, _Demo]:
     return DEMOS
 
 
+def _load_unavailable() -> Mapping[str, str]:
+    """Why each demo that needs a missing package is not in the registry."""
+    from .demos import UNAVAILABLE
+
+    return UNAVAILABLE
+
+
 # ----------------------------------------------------------------- helpers
 
 
@@ -145,6 +152,8 @@ def _demo(args: argparse.Namespace) -> int:
         raise _UsageError("no demos are available")
     name = args.name or next(iter(demos))
     if name not in demos:
+        if name in (unavailable := _load_unavailable()):
+            raise _UsageError(f"demo {name!r} {unavailable[name]}")
         raise _UsageError(f"unknown demo {name!r} (available: {', '.join(demos)})")
     if args.speed < 0:
         raise _UsageError("--speed must be 0 or more")
@@ -335,7 +344,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "targets",
         nargs="+",
         metavar="TARGET",
-        help="a file (path/to/file.py, or path/to/file.py:name for one agent or graph), a directory "
+        help="a file (path/to/file.py, or path/to/file.py:name for one agent or graph), an agent spec "
+        "(agent.yaml, .yml or .json, as Agent.from_file reads it), a directory "
         "(every .py file below it), a module name (pkg.module or pkg.module:name, found on disk without "
         "importing it), or a GitHub repository (https://github.com/owner/repo[/tree/REF[/SUBDIR]] or "
         "gh:owner/repo[@REF][/SUBDIR], fetched with git and only read)",

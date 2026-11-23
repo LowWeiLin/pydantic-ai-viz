@@ -10,6 +10,7 @@
  */
 import type {
   AgentBlueprint,
+  DeferredCall,
   GraphBlueprint,
   GraphEdge,
   GraphNode,
@@ -23,16 +24,21 @@ import type {
   Toolset,
   Usage,
 } from "../wire";
+import { LOAD_CAPABILITY } from "./model";
 import type { DataState, DeltaRecord } from "./reduce";
 
 // ---------- status ----------
 
-/** What the UI shows. A failed tool call that the model may retry is amber, not red. */
-export type DisplayStatus = "running" | "ok" | "retry" | "error";
+/**
+ * What the UI shows. A failed tool call that the model may retry is amber, not red. A tool call
+ * that ended without running because it needs approval or runs outside the agent is `waiting`.
+ */
+export type DisplayStatus = "running" | "ok" | "waiting" | "retry" | "error";
 
 export function displayStatus(span: Span): DisplayStatus {
   if (span.status === "running") return "running";
-  if (span.status === "ok") return "ok";
+  if (span.status === "ok")
+    return span.kind === "tool_call" && span.data.deferral !== null ? "waiting" : "ok";
   return span.kind === "tool_call" && span.data.retry !== null ? "retry" : "error";
 }
 
@@ -42,13 +48,26 @@ export function displayStatus(span: Span): DisplayStatus {
 export function projectSpan(span: Span, t: number): Span | null {
   if (span.start_ms > t) return null;
   if (span.end_ms !== null && span.end_ms <= t) return span;
-  const running = { end_ms: null, status: "running" as const, error: null, attributes: {} };
+  const running = {
+    end_ms: null,
+    status: "running" as const,
+    error: null,
+    attributes: {},
+    events: span.events.filter((event) => event.ts_ms <= t),
+  };
   switch (span.kind) {
     case "agent_run":
       return {
         ...span,
         ...running,
-        data: { ...span.data, instructions: null, output: null, usage: null, messages: null },
+        data: {
+          ...span.data,
+          instructions: null,
+          output: null,
+          usage: null,
+          messages: null,
+          deferred: [],
+        },
       };
     case "model_request":
       return {
@@ -66,7 +85,11 @@ export function projectSpan(span: Span, t: number): Span | null {
         },
       };
     case "tool_call":
-      return { ...span, ...running, data: { ...span.data, result: null, retry: null } };
+      return {
+        ...span,
+        ...running,
+        data: { ...span.data, result: null, retry: null, deferral: null },
+      };
     case "graph_run":
       return { ...span, ...running, data: { ...span.data, output: null } };
     default:
@@ -154,6 +177,13 @@ export type RunSummary = {
   usage: Usage;
   /** Where the run entered the log: the seq of its first span event. */
   firstSeq: number;
+  /** Tool calls the run ended waiting on: approvals and results from outside the agent. */
+  waiting: readonly DeferredCall[];
+  /**
+   * The earlier run whose waiting calls this one answers: the previous run of the same agent in
+   * the same conversation, when that run ended waiting.
+   */
+  resumes: string | null;
 };
 
 const runsCache = new WeakMap<DataState, readonly RunSummary[]>();
@@ -163,6 +193,7 @@ export function runs(data: DataState): readonly RunSummary[] {
   const cached = runsCache.get(data);
   if (cached) return cached;
   const out: RunSummary[] = [];
+  const conversations = new Map<string, RunSummary[]>();
   for (const traceId of data.traceOrder) {
     const spans = traceSpans(data, traceId);
     const root = findRoot(spans);
@@ -176,7 +207,7 @@ export function runs(data: DataState): readonly RunSummary[] {
         usage.output_tokens += span.data.usage.output_tokens;
       }
     }
-    out.push({
+    const summary: RunSummary = {
       traceId,
       rootSpanId: root.span_id,
       name: root.name,
@@ -188,12 +219,67 @@ export function runs(data: DataState): readonly RunSummary[] {
       spanCount: spans.length,
       usage,
       firstSeq: data.traceSeq[traceId] ?? -1,
-    });
+      waiting: root.kind === "agent_run" ? root.data.deferred : [],
+      resumes: null,
+    };
+    out.push(summary);
+    if (root.kind === "agent_run" && root.data.conversation_id !== null) {
+      const key = `${root.agent_name}\u0000${root.data.conversation_id}`;
+      conversations.set(key, [...(conversations.get(key) ?? []), summary]);
+    }
+  }
+  // A run resumed with `deferred_tool_results` continues the conversation of the run it answers.
+  for (const conversation of conversations.values()) {
+    conversation.sort((a, b) => a.startMs - b.startMs);
+    for (const [index, summary] of conversation.entries()) {
+      const previous = conversation[index - 1];
+      if (previous && previous.waiting.length > 0) summary.resumes = previous.traceId;
+    }
   }
   // Newest first; runs that start at the same instant keep arrival order.
   out.sort((a, b) => b.startMs - a.startMs);
   runsCache.set(data, out);
   return out;
+}
+
+/**
+ * What became of a call a run ended waiting on. `approved`: it ran in the run that resumed this
+ * one. `denied` / `result supplied`: that run sent the model a result for it without running it
+ * (a refusal for an approval, the caller's result for an external call). `waiting`: no run has
+ * resumed this one yet. `not run`: the resuming run did neither.
+ */
+export type DeferredOutcome = "approved" | "denied" | "result supplied" | "waiting" | "not run";
+
+export type DeferredEntry = { call: DeferredCall; outcome: DeferredOutcome };
+
+/** The calls run `traceId` ended waiting on, each with what the run that resumed it did. */
+export function deferredOutcomes(data: DataState, traceId: string): DeferredEntry[] {
+  const all = runs(data);
+  const run = all.find((r) => r.traceId === traceId);
+  if (!run) return [];
+  const next = all.find((r) => r.resumes === traceId);
+  if (!next) return run.waiting.map((call) => ({ call, outcome: "waiting" }));
+  const spans = traceSpans(data, next.traceId);
+  // A span that deferred again did not run the call.
+  const ran = new Set(
+    spans.flatMap((s) =>
+      s.kind === "tool_call" && s.data.deferral === null ? [s.data.call_id] : [],
+    ),
+  );
+  // The results the caller supplied go to the model in the resuming run's first request.
+  const first = spans
+    .filter((s) => s.kind === "model_request" && s.parent_id === next.rootSpanId)
+    .sort((a, b) => a.start_ms - b.start_ms)[0];
+  const input = first?.kind === "model_request" ? (first.data.input_messages ?? []) : [];
+  const answered = new Set(
+    input.flatMap((m) => m.parts.flatMap((p) => (p.type === "tool_result" ? [p.id] : []))),
+  );
+  return run.waiting.map((call): DeferredEntry => {
+    if (ran.has(call.call_id)) return { call, outcome: "approved" };
+    if (answered.has(call.call_id))
+      return { call, outcome: call.kind === "approval" ? "denied" : "result supplied" };
+    return { call, outcome: "not run" };
+  });
 }
 
 /** `[start, end]` of a run in epoch ms; `end` falls back to the latest event while running. */
@@ -539,6 +625,16 @@ function touch(activity: Activity, span: Span): void {
   if (activity.state !== "running" || status === "running") activity.state = status;
 }
 
+/**
+ * A call the run ended waiting on that has no tool span of its own: a tool that needs approval
+ * is not called at all until it is approved. Selecting the node selects the run that waits.
+ */
+function wait(activity: Activity, runSpanId: string): void {
+  activity.calls += 1;
+  activity.spanIds.push(runSpanId);
+  if (activity.state !== "running") activity.state = "waiting";
+}
+
 export type CanvasTool = { tool: Tool; activity: Activity };
 export type CanvasToolset = { toolset: Toolset; tools: CanvasTool[] };
 
@@ -552,6 +648,16 @@ export type CanvasAgent = {
   toolsets: CanvasToolset[];
   /** Calls to tools the blueprint does not list (tools of opaque toolsets, mostly). */
   unlisted: { name: string; activity: Activity }[];
+  /**
+   * `load_capability` calls by the id they load: a skill's name, or a deferred capability's
+   * `capability_id`. Without content capture the arguments are not known, so there are none.
+   */
+  loads: Record<string, Activity>;
+  /**
+   * Capability events of its runs by the `capability_id` that emitted them: `calls` counts the
+   * events, `spanIds` the spans they are on.
+   */
+  events: Record<string, Activity>;
   /** Lit once a run of this agent has ended ok. */
   outputReady: boolean;
 };
@@ -600,6 +706,14 @@ function delegationFirstSeen(data: DataState): ReadonlyMap<string, number> {
   return first;
 }
 
+/** The id a `load_capability` call loads; null for any other span, or when arguments were not captured. */
+export function loadedId(span: Span): string | null {
+  if (span.kind !== "tool_call" || span.data.tool_name !== LOAD_CAPABILITY) return null;
+  const args = span.data.arguments;
+  if (args === null || typeof args !== "object" || Array.isArray(args)) return null;
+  return typeof args.id === "string" ? args.id : null;
+}
+
 /** How far the canvas follows delegation edges from its subject. */
 export const MAX_DELEGATION_DEPTH = 3;
 
@@ -635,13 +749,35 @@ export function canvasModel(
     const run = idle();
     const model = idle();
     const byTool = new Map<string, Activity>();
+    const loads: Record<string, Activity> = {};
+    const events: Record<string, Activity> = {};
     let outputReady = false;
     if (blueprint.name !== null) {
+      const called = new Set(
+        viewSpans.flatMap((span) => (span.kind === "tool_call" ? [span.data.call_id] : [])),
+      );
       for (const span of viewSpans) {
         if (span.agent_name !== blueprint.name) continue;
+        for (const event of span.events) {
+          if (event.capability_id === null) continue;
+          const emitted = events[event.capability_id] ?? idle();
+          events[event.capability_id] = emitted;
+          emitted.calls += 1;
+          emitted.spanIds.push(span.span_id);
+          emitted.state = "ok";
+        }
         if (span.kind === "agent_run") {
           touch(run, span);
           if (span.status === "ok") outputReady = true;
+          for (const call of span.data.deferred) {
+            if (called.has(call.call_id)) continue;
+            let activity = byTool.get(call.tool_name);
+            if (!activity) {
+              activity = idle();
+              byTool.set(call.tool_name, activity);
+            }
+            wait(activity, span.span_id);
+          }
         } else if (span.kind === "model_request") {
           touch(model, span);
         } else if (span.kind === "tool_call") {
@@ -651,6 +787,12 @@ export function canvasModel(
             byTool.set(span.data.tool_name, activity);
           }
           touch(activity, span);
+          const id = loadedId(span);
+          if (id !== null) {
+            const loaded = loads[id] ?? idle();
+            loads[id] = loaded;
+            touch(loaded, span);
+          }
         }
       }
     }
@@ -690,6 +832,8 @@ export function canvasModel(
       model,
       toolsets: [...groups.values()],
       unlisted,
+      loads,
+      events,
       outputReady,
     };
   });

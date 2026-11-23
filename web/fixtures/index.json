@@ -17,6 +17,12 @@
       "title": "Content capture off",
       "description": "The same structure with include_content=False: no prompts, arguments or results are stored.",
       "src": "redacted.pviz.jsonl"
+    },
+    {
+      "id": "approvals",
+      "title": "Approvals and deferred calls",
+      "description": "A run ends waiting for two approvals and an external result; the next run in the conversation approves one call, denies the other and supplies the result.",
+      "src": "approvals.pviz.jsonl"
     }
   ]
 }

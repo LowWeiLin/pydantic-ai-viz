@@ -24,7 +24,7 @@ import { Icon } from "../ui/Icon";
 import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { cx, kindMeta, statusMeta, toneClass } from "../ui/tone";
 import { useStickToBottom } from "../ui/useStickToBottom";
-import type { Span } from "../wire";
+import type { RunEvent, Span } from "../wire";
 import { PlaybackBar } from "./PlaybackBar";
 import { barExtent, fraction, rulerTicks, tickLabel } from "./ruler";
 
@@ -134,8 +134,13 @@ function barClass(span: Span): string {
   if (status === "running") return "tone-accent pviz-bar-running";
   if (status === "error") return "tone-error";
   if (status === "retry") return "tone-retry";
+  if (status === "waiting") return "tone-retry pviz-bar-waiting";
   return toneClass[kindMeta[span.kind].tone];
 }
+
+/** "probe.ping from emitter": an event's kind and the capability that emitted it. */
+export const eventLabel = (event: RunEvent): string =>
+  event.capability_id === null ? event.kind : `${event.kind} from ${event.capability_id}`;
 
 export function TimelineRow({
   span,
@@ -204,6 +209,16 @@ export function TimelineRow({
         >
           {formatDuration(spanDuration(span, now))}
         </span>
+        {span.events.map((event, index) => (
+          <span
+            key={index}
+            role="img"
+            aria-label={`Event ${eventLabel(event)}`}
+            title={eventLabel(event)}
+            className="-translate-x-1/2 -translate-y-1/2 absolute top-1/2 size-2 rotate-45 border border-surface bg-(--kind-capability)"
+            style={{ left: percent(fraction(event.ts_ms, bounds)) }}
+          />
+        ))}
       </div>
     </div>
   );

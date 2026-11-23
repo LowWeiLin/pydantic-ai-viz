@@ -1,10 +1,15 @@
 /** Layout pieces shared by the screens and the inspector. */
 import type { ReactNode } from "react";
+import { defaultsOf } from "../data/model";
+import { announce } from "../shell/announce";
+import { toggleShowDefaults, useShowDefaults } from "../shell/defaults";
 import { plural } from "../shell/format";
-import { Chip } from "../ui/Badge";
+import { Badge, Chip } from "../ui/Badge";
+import { Button } from "../ui/Button";
 import { Icon, type IconName } from "../ui/Icon";
 import { Tooltip } from "../ui/overlays";
 import { cx, type Tone, toneClass } from "../ui/tone";
+import type { AgentBlueprint } from "../wire";
 
 /**
  * The strip above a canvas: what this screen shows, with a few facts and actions. The right
@@ -74,6 +79,33 @@ export function WarningsChip({ count, onShow }: { count: number; onShow: () => v
         <Chip icon="warning">{label}</Chip>
       </button>
     </Tooltip>
+  );
+}
+
+/**
+ * Shows or hides what Pydantic AI added to the agents on the canvas by default, and says how
+ * much that is. Not there when it added nothing.
+ */
+export function DefaultsToggle({ agents }: { agents: readonly AgentBlueprint[] }) {
+  const shown = useShowDefaults();
+  const count = agents.reduce((sum, agent) => sum + defaultsOf(agent).count, 0);
+  if (count === 0) return null;
+  const parts = plural(count, "part");
+  return (
+    <Button
+      size="sm"
+      aria-pressed={shown}
+      title={`${shown ? "Hide" : "Show"} the ${parts} Pydantic AI adds by default`}
+      onClick={() => {
+        toggleShowDefaults();
+        announce(`${shown ? "Hiding" : "Showing"} ${parts} from Pydantic AI`);
+      }}
+      // Pressed reads apart from hover: an open eye in the accent colour, against a closed one.
+      icon={shown ? "eye" : "eyeOff"}
+      className={cx(shown && "border-accent! text-accent!")}
+    >
+      Pydantic AI defaults <Badge tone={shown ? "accent" : "neutral"}>+{count}</Badge>
+    </Button>
   );
 }
 

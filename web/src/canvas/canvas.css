@@ -1,3 +1,9 @@
+/*
+ * React Flow keeps its styles in `@layer xyflow`. This sheet is bundled before Tailwind's, so the
+ * layer would come first and lose to Tailwind's reset (the panels' margin, for one). Listed last,
+ * it ranks above Tailwind's layers and below the unlayered rules of this file, as it did unlayered.
+ */
+@layer properties, theme, base, components, utilities, xyflow;
 @import "@xyflow/react/dist/base.css";
 
 /*

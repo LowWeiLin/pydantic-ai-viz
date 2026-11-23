@@ -13,7 +13,7 @@ import {
   TRACE,
   toolCall,
 } from "../test/factory";
-import type { Event, Span } from "../wire";
+import type { Event, Json, RunEvent, Span } from "../wire";
 import {
   assembleStream,
   BLUEPRINT_FILTER_FROM,
@@ -21,9 +21,11 @@ import {
   blueprintIndex,
   canvasModel,
   conversationSoFar,
+  deferredOutcomes,
   displayStatus,
   fileName,
   graphCanvasModel,
+  loadedId,
   projectSpan,
   runBoundaries,
   runBounds,
@@ -124,6 +126,7 @@ describe("projectSpan", () => {
       arguments: { q: 1 },
       result: null,
       retry: null,
+      deferral: null,
     });
     const agent = projectSpan(root, 50);
     expect(agent?.kind === "agent_run" && agent.data).toMatchObject({
@@ -485,6 +488,88 @@ describe("blueprints and canvas models", () => {
     ]);
   });
 
+  test("load_capability calls are counted by the id they load, when their arguments are known", () => {
+    const root = agentRun({ id: "root", start: 0, end: 50 });
+    const load = (id: string, start: number, args: Json) => {
+      const span = toolCall({ id, parent: "root", start, end: start + 2, tool: "load_capability" });
+      return { ...span, data: { ...span.data, arguments: args } } as Span;
+    };
+    const state = stateOf(
+      [0, { type: "blueprint.agent", agent: agentBlueprint({ id: "a1", name: "triage" }) }],
+      ...lifecycle(
+        root,
+        load("l1", 5, { id: "house-style" }),
+        load("l2", 10, { id: "house-style" }),
+        load("l3", 15, { id: "memory" }),
+        // Captured without content, or with arguments that name no id: nothing is linked.
+        load("l4", 20, null),
+        load("l5", 25, { name: "x" }),
+      ),
+    );
+    const model = canvasModel(state, "a1", runView(state, TRACE, LIVE));
+    const loads = model?.agents[0]?.loads ?? {};
+    expect(Object.keys(loads)).toEqual(["house-style", "memory"]);
+    expect(loads["house-style"]).toEqual({
+      state: "ok",
+      calls: 2,
+      retries: 0,
+      errors: 0,
+      spanIds: [sid("l1"), sid("l2")],
+    });
+    expect(loadedId(state.spans[sid("l3")] as Span)).toBe("memory");
+    expect(loadedId(state.spans[sid("l4")] as Span)).toBeNull();
+    expect(loadedId(root)).toBeNull();
+    // Before the run they are not there; without a run, neither.
+    expect(canvasModel(state, "a1", runView(state, TRACE, 4))?.agents[0]?.loads).toEqual({});
+    expect(canvasModel(state, "a1", null)?.agents[0]?.loads).toEqual({});
+  });
+
+  test("events are counted by the capability that emitted them, up to the view's time", () => {
+    const event = (ts: number, capabilityId: string | null): RunEvent => ({
+      kind: "probe.ping",
+      event_kind: capabilityId === null ? "custom" : "capability",
+      capability_id: capabilityId,
+      tool_call_id: null,
+      tool_name: null,
+      ts_ms: ts,
+      data: null,
+    });
+    const root = agentRun({
+      id: "root",
+      start: 0,
+      end: 50,
+      events: [event(5, "emitter"), event(30, "emitter"), event(31, null)],
+    });
+    const tool = toolCall({
+      id: "t1",
+      parent: "root",
+      start: 10,
+      end: 20,
+      tool: "lookup",
+      events: [event(12, "audit")],
+    });
+    const state = stateOf(
+      [0, { type: "blueprint.agent", agent: agentBlueprint({ id: "a1", name: "triage" }) }],
+      ...lifecycle(root, tool),
+    );
+    const at = (t: number) => canvasModel(state, "a1", runView(state, TRACE, t))?.agents[0]?.events;
+    expect(at(LIVE)).toEqual({
+      emitter: {
+        state: "ok",
+        calls: 2,
+        retries: 0,
+        errors: 0,
+        spanIds: [sid("root"), sid("root")],
+      },
+      audit: { state: "ok", calls: 1, retries: 0, errors: 0, spanIds: [sid("t1")] },
+    });
+    // A span that has not ended at the replay position shows only the events before it.
+    expect(projectSpan(root, 10)?.events.map((e) => e.ts_ms)).toEqual([5]);
+    expect(Object.keys(at(25) ?? {})).toEqual(["emitter", "audit"]);
+    expect(at(25)?.emitter?.calls).toBe(1);
+    expect(canvasModel(state, "a1", null)?.agents[0]?.events).toEqual({});
+  });
+
   test("delegation cycles terminate and depth is capped", () => {
     const chain = ["a1", "a2", "a3", "a4", "a5"].map((id, i, ids) =>
       agentBlueprint({
@@ -590,6 +675,7 @@ describe("blueprints and canvas models", () => {
       run_id: null,
       error: null,
       attributes: {},
+      events: [],
       kind: "graph_node",
       data: { graph_id: "g1", node_id: "work", inputs: null },
     });
@@ -667,6 +753,160 @@ describe("fixtures through the selectors", () => {
     expect(parts?.map((p) => p.kind)).toEqual(["thinking", "text"]);
     expect(parts?.[1]?.text).toBe("Fetching the pydantic-ai feed");
     expect(blueprintForAgentName(failed, "digest")?.source).toBe("observed");
+  });
+});
+
+describe("deferred tool calls", () => {
+  const T1 = "1".repeat(32);
+  const T2 = "2".repeat(32);
+  const T3 = "3".repeat(32);
+  const waiting = [
+    { call_id: "c1", tool_name: "delete_file", kind: "approval" as const },
+    { call_id: "c2", tool_name: "delete_file", kind: "approval" as const },
+    { call_id: "c3", tool_name: "restart", kind: "external" as const },
+  ];
+  const first = agentRun({ id: "r1", trace: T1, start: 0, end: 10, deferred: waiting });
+  const answers = [
+    {
+      role: "tool" as const,
+      parts: [
+        { type: "tool_result" as const, id: "c1", name: "delete_file", result: "deleted" },
+        { type: "tool_result" as const, id: "c2", name: "delete_file", result: null },
+        { type: "tool_result" as const, id: "c3", name: "restart", result: null },
+      ],
+    },
+  ];
+  const resume = (input: Parameters<typeof modelRequest>[0]["input"]) => [
+    agentRun({ id: "r2", trace: T2, start: 20, end: 40 }),
+    toolCall({
+      id: "t1",
+      trace: T2,
+      parent: "r2",
+      start: 21,
+      end: 22,
+      tool: "delete_file",
+      callId: "c1",
+    }),
+    modelRequest({ id: "q2", trace: T2, parent: "r2", start: 23, end: 30, input }),
+  ];
+
+  test("a run that ended waiting lists the calls; none has an outcome until a run resumes it", () => {
+    const state = stateOf(...lifecycle(first));
+    expect(runs(state)[0]).toMatchObject({ waiting, resumes: null });
+    expect(deferredOutcomes(state, T1).map((e) => e.outcome)).toEqual([
+      "waiting",
+      "waiting",
+      "waiting",
+    ]);
+  });
+
+  test("the next run of the conversation resumes it: approved, denied, result supplied", () => {
+    const state = stateOf(...lifecycle(first, ...resume(answers)));
+    const [second] = runs(state);
+    expect(second).toMatchObject({ traceId: T2, resumes: T1, waiting: [] });
+    expect(deferredOutcomes(state, T1).map((e) => e.outcome)).toEqual([
+      "approved",
+      "denied",
+      "result supplied",
+    ]);
+  });
+
+  test("without the request's messages a call with no span is said not to have run", () => {
+    const state = stateOf(...lifecycle(first, ...resume(null)));
+    expect(deferredOutcomes(state, T1).map((e) => e.outcome)).toEqual([
+      "approved",
+      "not run",
+      "not run",
+    ]);
+  });
+
+  test("a call that defers again in the resuming run was not approved", () => {
+    const again = toolCall({
+      id: "t2",
+      trace: T2,
+      parent: "r2",
+      start: 22,
+      end: 23,
+      tool: "restart",
+      callId: "c3",
+      deferral: "external",
+    });
+    const state = stateOf(...lifecycle(first, ...resume(null), again));
+    expect(deferredOutcomes(state, T1).map((e) => e.outcome)).toEqual([
+      "approved",
+      "not run",
+      "not run",
+    ]);
+  });
+
+  test("only the run right after one that waited resumes it, and only in its conversation", () => {
+    const other = agentRun({ id: "r3", trace: T3, start: 30, end: 35, conversation: "elsewhere" });
+    const third = agentRun({ id: "r4", trace: "4".repeat(32), start: 50, end: 60 });
+    const state = stateOf(...lifecycle(first, ...resume(answers), other, third));
+    const byTrace = Object.fromEntries(runs(state).map((r) => [r.traceId, r.resumes]));
+    expect(byTrace).toEqual({ [T1]: null, [T2]: T1, [T3]: null, ["4".repeat(32)]: null });
+  });
+
+  test("a tool span that deferred is waiting, and so is the canvas tool of a call with no span", () => {
+    const deferredTool = toolCall({
+      id: "t9",
+      trace: T1,
+      parent: "r1",
+      start: 2,
+      end: 3,
+      tool: "restart",
+      callId: "c3",
+      deferral: "external",
+    });
+    expect(displayStatus(deferredTool)).toBe("waiting");
+    const blueprint = agentBlueprint({
+      id: "a1",
+      name: "triage",
+      tools: [
+        {
+          name: "delete_file",
+          toolset: "ts0",
+          description: null,
+          parameters_schema: null,
+          return_schema: null,
+          kind: "unapproved",
+          takes_ctx: null,
+          is_async: null,
+          max_retries: null,
+          function: null,
+          origin: "object",
+          location: null,
+          library_version: null,
+        },
+      ],
+    });
+    const state = stateOf(
+      [0, { type: "blueprint.agent", agent: blueprint }],
+      ...lifecycle(first, deferredTool),
+    );
+    const model = canvasModel(state, "a1", runView(state, T1, LIVE));
+    const tools = model?.agents[0]?.toolsets.flatMap((group) => group.tools);
+    expect(tools?.[0]?.activity).toMatchObject({ state: "waiting", calls: 2 });
+    expect(model?.agents[0]?.unlisted[0]).toMatchObject({
+      name: "restart",
+      activity: { state: "waiting", calls: 1 },
+    });
+  });
+
+  test("approvals fixture: run 1 waits on three calls, run 2 resumes it", () => {
+    const state = fixtureState("approvals.pviz.jsonl");
+    const [second, firstRun] = runs(state);
+    expect(firstRun?.waiting.map((call) => call.kind)).toEqual([
+      "external",
+      "approval",
+      "approval",
+    ]);
+    expect(second?.resumes).toBe(firstRun?.traceId);
+    expect(deferredOutcomes(state, firstRun?.traceId ?? "").map((e) => e.outcome)).toEqual([
+      "result supplied",
+      "approved",
+      "denied",
+    ]);
   });
 });
 

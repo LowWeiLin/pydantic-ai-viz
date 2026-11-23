@@ -14,6 +14,10 @@ writes
 The recordings are made here on every build and are never committed. The viewer
 must have been built first (``pnpm --dir web build``): a demo site made of the
 placeholder page would be useless, so that case is an error, not a fallback.
+
+A demo whose dependencies are not installed (``capabilities`` and ``operations`` need
+``pydantic-ai-harness``) is left out with a warning on stderr. The Docs workflow checks
+that every demo's recording is there, so the published site is never missing one.
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ import pydantic_ai_viz as pviz
 from pydantic_ai_viz import demos
 from pydantic_ai_viz._export import BOOT_TOKEN, VIEWER_PATH
 from pydantic_ai_viz._session import blueprint_session
-from pydantic_ai_viz.demos import DEMOS
+from pydantic_ai_viz.demos import DEMOS, UNAVAILABLE
 from pydantic_ai_viz.demos._base import Demo
 
 SOURCE_TITLE = "The demos, read from source"
@@ -56,6 +60,8 @@ async def play(demo: Demo, speed: float) -> object:
 def build(out: Path, speed: float) -> list[Path]:
     """Write the demo site into ``out`` and return the files written."""
     page = built_viewer()
+    for name, why in UNAVAILABLE.items():
+        print(f"build_demo_site: warning: left out the {name} demo, which {why}", file=sys.stderr)
     recordings = out / "recordings"
     recordings.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
@@ -77,7 +83,7 @@ def build(out: Path, speed: float) -> list[Path]:
         {
             "id": "source",
             "title": SOURCE_TITLE,
-            "description": "Seven agents and a graph, drawn from the demos' code by pydantic-ai-viz view "
+            "description": "Ten agents and a graph, drawn from the demos' code by pydantic-ai-viz view "
             "without running any of it.",
             "src": "source.pviz.jsonl",
             "kind": "blueprint",

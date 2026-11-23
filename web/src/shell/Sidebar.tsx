@@ -3,6 +3,7 @@ import {
   BLUEPRINT_FILTER_FROM,
   type BlueprintEntry,
   blueprintIndex,
+  deferredOutcomes,
   projectSpan,
   type RunSummary,
   runs,
@@ -15,7 +16,15 @@ import { Skeleton } from "../ui/EmptyState";
 import { Icon } from "../ui/Icon";
 import { PathText } from "../ui/PathText";
 import { cx, kindMeta, toneClass } from "../ui/tone";
-import { formatClock, formatCount, formatDuration, plural } from "./format";
+import {
+  formatClock,
+  formatCount,
+  formatDuration,
+  outcomeWords,
+  plural,
+  runLabel,
+  waitingWords,
+} from "./format";
 import { formatRoute, type Route } from "./router";
 import { type AboutBlueprints, type ShellStatus, useShellStatus } from "./status";
 
@@ -188,6 +197,32 @@ export function BlueprintList({ route, fill }: { route: Route; fill: boolean }) 
   );
 }
 
+/** What a run did about tool calls left for the caller: the calls it ended waiting on, or the run it answered. */
+function DeferredNote({ run }: { run: RunSummary }) {
+  const data = useViewer((state) => state.data);
+  const resumed = useMemo(() => {
+    if (run.resumes === null) return null;
+    const earlier = runs(data).find((r) => r.traceId === run.resumes);
+    return earlier ? { earlier, outcomes: deferredOutcomes(data, earlier.traceId) } : null;
+  }, [data, run.resumes]);
+  if (run.status === "running") return null;
+  return (
+    <>
+      {resumed && (
+        <span className="text-meta text-muted">
+          resumes {runLabel(resumed.earlier)}: {outcomeWords(resumed.outcomes)}
+        </span>
+      )}
+      {run.waiting.length > 0 && (
+        <span className="tone-retry tone-text inline-flex items-center gap-1 text-meta">
+          <Icon name="pause" size={12} />
+          {waitingWords(run.waiting)}
+        </span>
+      )}
+    </>
+  );
+}
+
 export function RunListItem({ run, active }: { run: RunSummary; active: boolean }) {
   const kind = kindMeta[run.kind];
   const tokens = run.usage.input_tokens + run.usage.output_tokens;
@@ -213,6 +248,7 @@ export function RunListItem({ run, active }: { run: RunSummary; active: boolean 
             <span>{formatDuration(run.durationMs)}</span>
             {tokens > 0 && <span>{formatCount(tokens)} tok</span>}
           </span>
+          <DeferredNote run={run} />
         </span>
       </a>
     </li>

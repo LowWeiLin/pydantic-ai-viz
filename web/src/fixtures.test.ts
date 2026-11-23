@@ -22,11 +22,15 @@ const blueprints = readdirSync(path.join(fixturesDir, "blueprint")).map(
 
 test("the expected fixtures exist", () => {
   expect(recordings.sort()).toEqual([
+    "approvals.pviz.jsonl",
     "failed.pviz.jsonl",
     "redacted.pviz.jsonl",
     "sample.pviz.jsonl",
   ]);
-  expect(blueprints).toEqual(["blueprint/newsroom.pviz.jsonl"]);
+  expect(blueprints.sort()).toEqual([
+    "blueprint/capabilities.pviz.jsonl",
+    "blueprint/newsroom.pviz.jsonl",
+  ]);
 });
 
 const hasSchema = existsSync(schemaPath);
@@ -279,6 +283,22 @@ describe("what each fixture is for", () => {
       true,
     );
     expect(agents.some((agent) => agent.name === null)).toBe(true);
+  });
+
+  test("capabilities: one agent whose capabilities cover the shapes the viewer draws", () => {
+    const envelopes = fixture("blueprint/capabilities.pviz.jsonl");
+    expect(envelopes[0]).toMatchObject({ type: "session.started", mode: "blueprint" });
+    const agents = envelopes.flatMap((e) => (e.type === "blueprint.agent" ? [e.agent] : []));
+    expect(agents).toHaveLength(1);
+    const items = agents[0]?.capabilities ?? [];
+    expect(new Set(items.map((c) => c.category)).size).toBeGreaterThanOrEqual(8);
+    expect(items.some((c) => c.builtin)).toBe(true);
+    expect(items.some((c) => c.skills.length > 1)).toBe(true);
+    expect(items.some((c) => c.toolsets.length > 0)).toBe(true);
+    expect(items.some((c) => c.toolsets.length === 0 && c.native_tools.length > 0)).toBe(true);
+    // Every toolset a capability names is one the blueprint lists.
+    const ids = new Set(agents[0]?.toolsets.map((t) => t.id));
+    for (const id of items.flatMap((c) => c.toolsets)) expect(ids.has(id)).toBe(true);
   });
 
   test("index.json lists every recording", () => {

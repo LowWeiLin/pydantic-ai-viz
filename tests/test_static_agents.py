@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import inspect
+import textwrap
 from pathlib import Path
 
+import pydantic_ai.capabilities
 import pytest
-from static_support import agent, analyze_source, fixture, one_agent, properties, tool
+from static_support import agent, analyze_source, fixture, live_agents, one_agent, properties, tool
 
-from pydantic_ai_viz import AgentBlueprint
+from pydantic_ai_viz import AgentBlueprint, analyze
+from pydantic_ai_viz._analyze._agents import _POSITIONAL
+from pydantic_ai_viz._capabilities import _GROUPS
 from pydantic_ai_viz._models import ENVELOPE_ADAPTER, Instruction, SourceLocation, to_wire
 
 # ------------------------------------------------------------ fully literal
@@ -32,6 +37,7 @@ def test_a_fully_spelled_out_agent_is_read_completely() -> None:
         "output_retries": 2,
         "tool_timeout": 12.5,
         "expressions": {},
+        "defaults": [],  # what Pydantic AI fills in is never read from source
     }
     # Every blueprint the analyser makes is valid wire data.
     ENVELOPE_ADAPTER.validate_python({"seq": 1, "ts": 0.0, "type": "blueprint.agent", "agent": to_wire(shop)})
@@ -196,6 +202,7 @@ def test_computed_values_are_reported_as_source_text_never_guessed() -> None:
             "tool_timeout": 'settings_for("timeout")',
             "model_settings.max_tokens": 'settings_for("max_tokens")',
         },
+        "defaults": [],
     }
     assert computed.warnings == [
         'the name is computed by `f"support-{TEAM}"`, so it is only known when the code runs',
@@ -488,7 +495,7 @@ def test_capabilities_are_listed_by_class_name(tmp_path: Path) -> None:
             "test",
             capabilities=[thinking, caps.Hooks(), ToolSearch(), Audit(), make_capability(), VendorGuard(), *MORE],
         )
-        MORE = [Thinking()]
+        MORE = [Thinking(id="more")]
         computed = Agent("test", capabilities=load_capabilities())
         none = Agent("test", capabilities=None)
         """,
@@ -513,6 +520,719 @@ def test_capabilities_are_listed_by_class_name(tmp_path: Path) -> None:
         "the capabilities are built by `load_capabilities()`; they are only known when the code runs"
     ]
     assert agent(found, "none").warnings == []
+    assert [(c.category, c.package) for c in listed.capabilities] == [
+        ("reasoning", "pydantic_ai"),
+        ("loop", "pydantic_ai"),
+        ("context", "pydantic_ai"),
+        ("custom", None),
+        ("custom", None),
+        ("custom", None),
+        ("reasoning", "pydantic_ai"),
+    ]
+    assert listed.capabilities[0].details == {"effort": "high"}  # through the name it is assigned to
+
+
+def test_capabilities_say_what_the_source_gives_them(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        import os
+        from typing import Any
+        from pydantic_ai import Agent, CodeExecutionTool
+        from pydantic_ai.capabilities import (
+            AbstractCapability, MCP, ModelFallback, NativeTool, Thinking, WebSearch,
+        )
+        from pydantic_ai_harness.code_mode import CodeMode
+
+        TOKEN = os.environ["TOKEN"]
+
+
+        class Memory(AbstractCapability[Any]):
+            pass
+
+
+        agent = Agent(
+            "test",
+            capabilities=[
+                Thinking(effort="high"),
+                MCP(os.environ["URL"], authorization_token=TOKEN),
+                MCP("https://u:p@h.example/mcp?key=1", native=True, headers={"X": "y"}),
+                ModelFallback("a", "b"),
+                ModelFallback(*MODELS),
+                WebSearch(),
+                WebSearch(native=False, id="local"),
+                NativeTool(CodeExecutionTool()),
+                Thinking(defer_loading=True, id="later"),
+                CodeMode(),
+                Memory(),
+                Thinking.from_spec(effort="high", id="spec"),
+            ],
+        )
+        """,
+    )
+    assert [
+        (c.name, c.category, c.package, c.deferred, c.details, c.expressions, c.native_tools)
+        for c in found.capabilities
+    ] == [
+        ("Thinking", "reasoning", "pydantic_ai", False, {"effort": "high"}, {}, []),
+        ("MCP", "tools", "pydantic_ai", False, {}, {"url": 'os.environ["URL"]'}, []),
+        ("MCP", "tools", "pydantic_ai", False, {"url": "https://h.example/mcp", "native": True}, {}, ["mcp_server"]),
+        ("ModelFallback", "loop", "pydantic_ai", False, {"models": ["a", "b"]}, {}, []),
+        ("ModelFallback", "loop", "pydantic_ai", False, {}, {"models": "*MODELS"}, []),
+        ("WebSearch", "web", "pydantic_ai", False, {}, {}, ["web_search"]),
+        ("WebSearch", "web", "pydantic_ai", False, {"native": False}, {}, []),
+        ("NativeTool", "tools", "pydantic_ai", False, {}, {"tool": "CodeExecutionTool()"}, ["code_execution"]),
+        ("Thinking", "reasoning", "pydantic_ai", True, {}, {}, []),
+        ("CodeMode", "context", "pydantic_ai_harness", False, {}, {}, []),
+        ("Memory", "custom", None, False, {}, {}, []),  # the project's own, whatever its name
+        ("Thinking", "reasoning", "pydantic_ai", False, {"effort": "high"}, {}, []),
+    ]
+    assert found.native_tools == ["mcp_server", "web_search", "code_execution"]
+    assert found.warnings == []
+
+
+def test_capability_arguments_of_unknown_name_are_not_shown(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.capabilities import Capability, ProcessHistory, Thinking
+        from pydantic_ai_harness.exa import ExaSearch
+
+        agent = Agent(
+            "test",
+            capabilities=[
+                ExaSearch("exa-SECRET"),
+                Thinking(*ARGS, "high"),
+                Thinking(**KW),
+                Capability(**KW),
+                ProcessHistory(keep_last),
+            ],
+        )
+        """,
+    )
+    assert [(c.name, c.details, c.expressions, c.toolsets) for c in found.capabilities] == [
+        ("ExaSearch", {}, {}, []),
+        ("Thinking", {}, {}, []),
+        ("Thinking", {}, {}, []),
+        ("Capability", {}, {}, []),  # ``**KW`` may hold ``toolsets``, so no toolset of its own is made up
+        ("ProcessHistory", {}, {"processor": "keep_last"}, []),
+    ]
+    assert "exa-SECRET" not in found.model_dump_json()
+    assert found.warnings == [
+        "capability `ExaSearch` is given arguments by position, which are not shown",
+        "capability `Thinking` is given `*` arguments, which are not shown",
+        "capability `Thinking` is given `**` arguments, which are not shown",
+        "capability `Capability` is given `**` arguments, which are not shown",
+    ]
+
+
+def test_positional_arguments_of_harness_capabilities_are_read_by_the_names_the_harness_gives(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai_harness import Advisor, CapabilityCreation, Memory, Skills
+        from pydantic_ai_harness.memory import InMemoryMemoryStore
+
+        agent = Agent(
+            "test",
+            capabilities=[
+                Skills(["skills"], read_files=True),
+                Advisor("anthropic:claude-opus-4-5"),
+                CapabilityCreation("generated", "Keep them small."),
+                Memory(InMemoryMemoryStore()),
+                Skills.from_spec("more"),
+            ],
+        )
+        """,
+    )
+    assert [(c.name, c.details, c.expressions) for c in found.capabilities] == [
+        ("Skills", {"directories": ["skills"], "read_files": True}, {}),
+        ("Advisor", {"model": "anthropic:claude-opus-4-5"}, {}),
+        ("CapabilityCreation", {"directory": "generated", "guidance": "Keep them small."}, {}),
+        ("Memory", {}, {"store": "InMemoryMemoryStore()"}),
+        ("Skills", {"directories": ["more"]}, {}),
+    ]
+    assert found.warnings == [
+        "skill library `skills` was not found in the analysed files, so its skills are not shown",
+        "skill library `more` was not found in the analysed files, so its skills are not shown",
+    ]
+
+
+def test_the_agents_sub_agents_holds_are_delegates_through_its_tool(tmp_path: Path) -> None:
+    found = analyze_source(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai_harness import SubAgent, SubAgents
+
+        helper = Agent("test", name="helper")
+        critic = Agent("test", name="critic")
+        boss = Agent(
+            "test",
+            name="boss",
+            capabilities=[SubAgents(agents=[SubAgent(helper, name="h", description="Helps."), SubAgent(agent=critic)])],
+        )
+        renamed = Agent("test", name="renamed", capabilities=[SubAgents([SubAgent(helper)], tool_name="hand_off")])
+        none = Agent("test", name="none", capabilities=[SubAgents()])
+        """,
+    )
+    ids = {b.id: b.label for b in found.agents}
+    assert [(d.tool_name, ids[d.agent_id], d.evidence) for d in agent(found, "boss").delegates] == [
+        ("delegate_task", "helper", "code"),
+        ("delegate_task", "critic", "code"),
+    ]
+    assert [(d.tool_name, ids[d.agent_id]) for d in agent(found, "renamed").delegates] == [("hand_off", "helper")]
+    assert [t.label for t in agent(found, "boss").toolsets] == ["SubAgentToolset 'sub_agents'"]
+    assert (agent(found, "none").delegates, agent(found, "none").toolsets) == ([], [])
+
+
+def test_what_sub_agents_holds_reads_as_the_live_capability(tmp_path: Path) -> None:
+    pytest.importorskip("pydantic_ai_harness")
+    path = tmp_path / "subs.py"
+    path.write_text(
+        textwrap.dedent(
+            """
+            from pydantic_ai import Agent
+            from pydantic_ai_harness import SubAgent, SubAgents
+
+            helper = Agent("test", name="helper")
+            unnamed = Agent("test")
+            boss = Agent(
+                "test",
+                name="boss",
+                capabilities=[
+                    SubAgents(
+                        agents=[
+                            SubAgent(helper, name="h", description="Helps.", models=["test"]),
+                            SubAgent(agent=unnamed, name="anon", description="Has no name."),
+                        ],
+                        models={"test": "test"},
+                    )
+                ],
+            )
+            computed = Agent("test", name="computed", capabilities=[SubAgents([SubAgent(helper, name=str(1))])])
+            """
+        ),
+        encoding="utf-8",
+    )
+    found = analyze(path)
+    live = live_agents(path)
+
+    def shown(blueprint: AgentBlueprint) -> list[tuple[object, ...]]:
+        return [(c.details, c.expressions) for c in blueprint.capabilities if c.name == "SubAgents"]
+
+    assert shown(agent(found, "boss")) == shown(live["boss"])
+    assert shown(agent(found, "boss")) == [
+        (
+            {
+                "agents": [
+                    {"agent": "helper", "name": "h", "description": "Helps.", "models": ["test"]},
+                    {"name": "anon", "description": "Has no name."},
+                ],
+                "models": {"test": "test"},
+            },
+            {},
+        )
+    ]
+    assert shown(agent(found, "computed")) == [({}, {"agents": "[SubAgent(helper, name=str(1))]"})]
+
+
+def test_the_functions_hooks_registers_read_as_the_live_capability(tmp_path: Path) -> None:
+    path = tmp_path / "hooked.py"
+    path.write_text(
+        textwrap.dedent(
+            """
+            from pydantic_ai import Agent
+            from pydantic_ai.capabilities import Hooks
+
+            LIMIT = 5
+
+
+            async def log_request(ctx, request_context):
+                return request_context
+
+
+            async def on_error(ctx, *, error):
+                raise error
+
+
+            hooks = Hooks(run_error=on_error, before_model_request=log_request, id="mine")
+
+
+            @hooks.on.before_tool_execute(tools=["delete_file", "move_file", "delete_file"], timeout=LIMIT)
+            async def guard(ctx, *, call, tool_def, args):
+                return args
+
+
+            @hooks.on.before_model_request
+            async def trace(ctx, request_context):
+                return request_context
+
+
+            other = Hooks()
+
+
+            @other.on.after_run
+            async def unrelated(ctx, *, result):
+                return result
+
+
+            agent = Agent("test", name="hooked", capabilities=[hooks])
+            """
+        ),
+        encoding="utf-8",
+    )
+    (static,) = (b for b in analyze(path).agents if b.label == "hooked")
+    live = live_agents(path)["hooked"]
+    (found,) = static.capabilities
+    expected = live.capabilities[-1]
+    assert (found.details, found.expressions) == (expected.details, expected.expressions) == ({}, {})
+    # The live file is imported under another module name.
+    assert [(h.point, h.function, h.tools, h.timeout) for h in found.hooks] == [
+        (h.point, (h.function or "").removeprefix("live_"), h.tools, h.timeout) for h in expected.hooks
+    ]
+    assert [(h.point, h.function, h.tools, h.timeout, h.location) for h in found.hooks] == [
+        ("on_run_error", "hooked.on_error", None, None, SourceLocation(file="hooked.py", line=12)),
+        ("before_model_request", "hooked.log_request", None, None, SourceLocation(file="hooked.py", line=8)),
+        ("before_model_request", "hooked.trace", None, None, SourceLocation(file="hooked.py", line=25)),
+        (
+            "before_tool_execute",
+            "hooked.guard",
+            ["delete_file", "move_file"],
+            5.0,
+            SourceLocation(file="hooked.py", line=20),
+        ),
+    ]
+    assert static.warnings == []
+
+
+def test_a_hook_the_source_does_not_spell_out_is_not_guessed(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        import os
+        from pydantic_ai import Agent
+        from pydantic_ai.capabilities import Hooks
+
+        hooks = Hooks(before_run=lambda ctx: None)
+
+        @hooks.on.before_tool_execute(tools=os.environ["TOOLS"].split(), timeout=float(os.environ["LIMIT"]))
+        async def guard(ctx, *, call, tool_def, args):
+            return args
+
+        agent = Agent("test", capabilities=[hooks])
+        """,
+    )
+    (hooks,) = found.capabilities
+    assert [(h.point, h.function, h.tools, h.timeout) for h in hooks.hooks] == [
+        ("before_run", None, None, None),
+        ("before_tool_execute", "module.guard", None, None),
+    ]
+    assert (hooks.details, hooks.expressions) == ({}, {})
+    assert found.warnings == [
+        "the `before_run` hook of `Hooks` is `lambda ctx: None`, which is not read",
+        'the `tools=` of hook `guard` is computed by `os.environ["TOOLS"].split()`; it is only known when the code '
+        "runs",
+        'the `timeout=` of hook `guard` is computed by `float(os.environ["LIMIT"])`; it is only known when the code '
+        "runs",
+    ]
+
+
+def test_a_constraint_only_the_provider_side_tool_honours_leaves_no_local_tool(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.capabilities import WebFetch, WebSearch
+
+        def lookup(query: str) -> str:
+            return query
+
+        agent = Agent(
+            "test",
+            capabilities=[
+                WebSearch(local=lookup, allowed_domains=["a.example"], id="allowed"),
+                WebSearch(local=lookup, max_uses=MAX, id="computed"),
+                WebFetch(local=lookup, max_uses=None),
+                WebSearch(local=lookup, user_location={"city": "Paris"}),
+            ],
+        )
+        """,
+    )
+    assert [len(c.toolsets) for c in found.capabilities] == [0, 0, 1, 1]
+
+
+def test_capabilities_pydantic_ai_merges_are_one(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.capabilities import Hooks, Thinking, WebSearch
+
+        agent = Agent(
+            "test",
+            capabilities=[
+                WebSearch(allowed_domains=["a.example"]),
+                Thinking(effort="low"),
+                WebSearch(max_uses=2, allowed_domains=["b.example"]),
+                WebSearch(id="other"),
+                Thinking(effort=EFFORT),
+                Hooks(),
+                Hooks(),
+            ],
+        )
+        """,
+    )
+    assert [(c.name, c.details, c.expressions) for c in found.capabilities] == [
+        ("WebSearch", {"allowed_domains": ["a.example", "b.example"], "max_uses": 2}, {}),
+        ("WebSearch", {}, {}),
+        ("Thinking", {}, {"effort": "EFFORT"}),
+        ("Hooks", {}, {}),  # a class that names no id of its own: never merged
+        ("Hooks", {}, {}),
+    ]
+    assert [c.capability_id for c in found.capabilities] == [None, "other", None, None, None]
+    assert found.native_tools == ["web_search"]
+
+
+def test_positional_parameters_are_those_pydantic_ai_names() -> None:
+    for name, expected in _POSITIONAL.items():
+        cls = getattr(pydantic_ai.capabilities, name, None)
+        if cls is None:  # not in the installed release
+            continue
+        parameters = inspect.signature(cls.__init__).parameters.values()
+        positional = [p.name for p in parameters if p.kind is p.POSITIONAL_OR_KEYWORD and p.name != "self"]
+        assert tuple(positional[: len(expected)]) == expected, name
+
+
+@pytest.mark.parametrize(("category", "name"), [(category, names[0]) for category, names in _GROUPS.items()])
+def test_a_capability_of_each_group_of_the_docs_is_put_in_it(tmp_path: Path, category: str, name: str) -> None:
+    found = one_agent(
+        tmp_path,
+        f"""
+        from pydantic_ai import Agent
+        from pydantic_ai_harness.stand_in import {name}
+
+        agent = Agent("test", capabilities=[{name}()])
+        """,
+    )
+    (capability,) = found.capabilities
+    assert (capability.name, capability.category, capability.package) == (name, category, "pydantic_ai_harness")
+
+
+def test_a_combined_capability_is_opened_as_the_agent_opens_it(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        import os
+
+        from pydantic_ai import Agent
+        from pydantic_ai.capabilities import CombinedCapability, Hooks, Thinking, WebFetch, WebSearch
+
+        WEB = CombinedCapability([WebSearch(), WebFetch()])
+
+        agent = Agent(
+            "test",
+            capabilities=[
+                CombinedCapability(capabilities=[Thinking(effort="high"), CombinedCapability([WEB, Hooks()])]),
+                CombinedCapability([Thinking()], defer_loading=True, id="later"),
+                CombinedCapability(load_capabilities()),
+                CombinedCapability([WebSearch()], defer_loading=bool(os.environ.get("LAZY"))),
+            ],
+        )
+        """,
+    )
+    assert [(c.name, c.category, c.deferred, c.details, c.expressions, c.native_tools) for c in found.capabilities] == [
+        ("Thinking", "reasoning", False, {"effort": "high"}, {}, []),
+        ("WebSearch", "web", False, {}, {}, ["web_search"]),
+        ("WebFetch", "web", False, {}, {}, ["web_fetch"]),
+        ("Hooks", "loop", False, {}, {}, []),
+        # Loaded on demand: one entry, in the agent too, which names what it holds by class.
+        ("CombinedCapability", "custom", True, {"capabilities": ["Thinking"]}, {}, []),
+        ("CombinedCapability", "custom", False, {}, {}, []),
+        # Maybe loaded on demand: kept whole, as the agent keeps it when that is true, with the expression shown.
+        (
+            "CombinedCapability",
+            "custom",
+            False,
+            {"capabilities": ["WebSearch"]},
+            {"defer_loading": 'bool(os.environ.get("LAZY"))'},
+            ["web_search"],
+        ),
+    ]
+    assert found.warnings == [
+        "the capabilities are built by `load_capabilities()`; they are only known when the code runs"
+    ]
+
+
+def test_a_combined_capability_loaded_on_demand_reads_as_the_live_agent(tmp_path: Path) -> None:
+    pytest.importorskip("pydantic_ai_harness")
+    path = tmp_path / "deferred.py"
+    path.write_text(
+        textwrap.dedent(
+            """
+            from pydantic_ai import Agent
+            from pydantic_ai.capabilities import MCP, CombinedCapability, Thinking, WebFetch, WebSearch
+            from pydantic_ai.models.test import TestModel
+            from pydantic_ai_harness import Shell
+
+
+            def search(query: str) -> str:
+                return query
+
+
+            agent = Agent(
+                TestModel(),
+                name="deferred",
+                capabilities=[
+                    CombinedCapability(
+                        [
+                            CombinedCapability([Thinking(), WebSearch(local=search)]),
+                            Shell(),
+                            WebFetch(),
+                            MCP(
+                                url="https://user:pw@host.example/mcp?api_key=SECRETURL",
+                                headers={"Authorization": "Bearer SECRETHDR"},
+                                native=True,
+                                local=False,
+                            ),
+                        ],
+                        defer_loading=True,
+                        id="later",
+                    )
+                ],
+            )
+            """
+        ),
+        encoding="utf-8",
+    )
+    (static,) = analyze(path).agents
+    live = live_agents(path)["deferred"]
+
+    def shown(found: AgentBlueprint) -> list[tuple[object, ...]]:
+        toolsets = {t.id: (t.label, t.toolset_id, t.wrappers) for t in found.toolsets}
+        return [
+            (c.name, c.deferred, c.details, c.native_tools, [toolsets[i] for i in c.toolsets])
+            for c in found.capabilities
+            if not c.builtin
+        ]
+
+    assert shown(static) == shown(live)
+    assert shown(static)[0][2] == {"capabilities": ["Thinking", "WebSearch", "Shell", "WebFetch", "MCP"]}
+    assert static.native_tools == ["web_search", "web_fetch", "mcp_server"]
+    assert static.capabilities[0].expressions == {}
+    dumped = static.model_dump_json()
+    assert all(secret not in dumped for secret in ("SECRETURL", "SECRETHDR", "user:pw"))
+
+
+def test_an_opened_combined_capability_reads_as_the_live_agent(tmp_path: Path) -> None:
+    path = tmp_path / "combined.py"
+    path.write_text(
+        textwrap.dedent(
+            """
+            from pydantic_ai import Agent
+            from pydantic_ai.capabilities import Capability, CombinedCapability, Hooks, Thinking, WebSearch
+            from pydantic_ai.models.test import TestModel
+
+
+            def double(x: int) -> int:
+                return x * 2
+
+
+            agent = Agent(
+                TestModel(),
+                name="combined",
+                capabilities=[
+                    Hooks(),
+                    CombinedCapability([Thinking(effort="high"), CombinedCapability([WebSearch()])]),
+                    Capability(tools=[double], id="mine"),
+                ],
+            )
+            """
+        ),
+        encoding="utf-8",
+    )
+    (static,) = analyze(path).agents
+    live = live_agents(path)["combined"]
+
+    def shown(found: AgentBlueprint) -> list[tuple[object, ...]]:
+        labels = {t.id: t.label for t in found.toolsets}
+        return [
+            (c.name, c.category, c.package, c.deferred, c.native_tools, [labels[i] for i in c.toolsets])
+            for c in found.capabilities
+            if not c.builtin
+        ]
+
+    assert shown(static) == shown(live)
+    assert [c.name for c in static.capabilities] == ["Hooks", "Thinking", "WebSearch", "Capability"]
+
+
+def test_a_local_tool_of_web_search_or_fetch_is_a_toolset_the_capability_gives(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        from pydantic_ai import Agent, Tool
+        from pydantic_ai.capabilities import WebFetch, WebSearch
+
+        def search_archive(query: str) -> str:
+            return query
+
+        agent = Agent(
+            "test",
+            capabilities=[
+                WebSearch(local=search_archive),
+                WebFetch(local=Tool(search_archive, name="fetch"), native=False, id="pages"),
+                WebSearch(local=True, id="ddg"),
+                WebSearch(local="duckduckgo", id=None),
+                WebFetch(local=True, id="fetcher"),
+                WebFetch(local=VENDOR_TOOLS, id="vendor"),
+                WebSearch(id="plain"),
+                WebFetch(local=False),
+            ],
+        )
+        """,
+    )
+    toolsets = {t.id: t for t in found.toolsets}
+    rows = [
+        [(toolsets[i].label, toolsets[i].toolset_id, toolsets[i].kind, toolsets[i].wrappers) for i in c.toolsets]
+        for c in found.capabilities
+    ]
+    owned, prepared = "CapabilityOwnedToolset", "PreparedToolset"
+    assert rows == [
+        [("FunctionToolset 'web_search'", "web_search", "function", [owned, prepared])],
+        [("FunctionToolset 'pages'", "pages", "function", [owned])],  # no provider-side tool to hide it behind
+        [("FunctionToolset 'ddg'", "ddg", "function", [owned, prepared])],
+        [("FunctionToolset", None, "function", [owned, prepared])],
+        [("FunctionToolset 'fetcher'", "fetcher", "function", [owned, prepared])],
+        [("VENDOR_TOOLS", None, "other", [owned, prepared])],
+        [],
+        [],
+    ]
+    assert [(t.name, t.toolset, t.function) for t in found.tools] == [
+        ("search_archive", "ts0", "module.search_archive"),
+        ("fetch", "ts1", "module.search_archive"),
+        ("duckduckgo_search", "ts2", "pydantic_ai.common_tools.duckduckgo.DuckDuckGoSearchTool.__call__"),
+        ("duckduckgo_search", "ts3", "pydantic_ai.common_tools.duckduckgo.DuckDuckGoSearchTool.__call__"),
+        ("web_fetch", "ts4", "pydantic_ai.common_tools.web_fetch.WebFetchLocalTool.__call__"),
+    ]
+    assert toolsets["ts5"].opaque
+    assert toolsets["ts5"].expression == "VENDOR_TOOLS"
+    assert found.warnings == []
+
+
+def test_the_toolsets_web_search_and_fetch_give_read_as_the_live_agent(tmp_path: Path) -> None:
+    path = tmp_path / "web.py"
+    path.write_text(
+        textwrap.dedent(
+            """
+            from pydantic_ai import Agent
+            from pydantic_ai.capabilities import WebFetch, WebSearch
+            from pydantic_ai.models.test import TestModel
+
+
+            def search_archive(query: str) -> str:
+                return query
+
+
+            def fetch_page(url: str) -> str:
+                return url
+
+
+            agent = Agent(
+                TestModel(),
+                name="web",
+                capabilities=[WebSearch(local=search_archive), WebFetch(local=fetch_page, native=False, id="pages")],
+            )
+            """
+        ),
+        encoding="utf-8",
+    )
+    if "local" not in inspect.signature(pydantic_ai.capabilities.WebSearch).parameters:
+        pytest.skip("WebSearch takes no local tool in this release")
+    (static,) = analyze(path).agents
+    live = live_agents(path)["web"]
+
+    def shown(found: AgentBlueprint) -> list[tuple[object, ...]]:
+        return [(t.label, t.toolset_id, t.kind, t.wrappers, t.opaque) for t in found.toolsets]
+
+    assert shown(static) == shown(live)
+    assert [(t.name, t.toolset) for t in static.tools] == [(t.name, t.toolset) for t in live.tools]
+
+
+def test_a_harness_capability_gives_a_toolset_whose_tools_are_not_listed(tmp_path: Path) -> None:
+    found = one_agent(
+        tmp_path,
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai_harness import Coder, FileSystem, Planning, PydanticAIDocs
+        from pydantic_ai_harness.memory import Memory
+
+        agent = Agent(
+            "test",
+            capabilities=[FileSystem(id="fs"), Memory(id=None), Planning(id="mine"), PydanticAIDocs(), Coder()],
+        )
+        """,
+    )
+    toolsets = {t.id: t for t in found.toolsets}
+    assert [
+        (c.name, c.category, [(toolsets[i].label, toolsets[i].toolset_id, toolsets[i].opaque) for i in c.toolsets])
+        for c in found.capabilities
+    ] == [
+        ("FileSystem", "environment", [("FileSystemToolset 'fs'", "fs", True)]),
+        ("Memory", "knowledge", [("MemoryToolset 'memory'", "memory", True)]),
+        ("Planning", "reasoning", [("PlanningToolset 'planning'", "planning", True)]),  # its id names no toolset
+        ("PydanticAIDocs", "knowledge", [("PydanticAIDocsToolset", None, True)]),
+        ("Coder", "harness", []),  # a stack: what it holds is not read
+    ]
+    assert all(t.kind == "function" and t.wrappers == ["CapabilityOwnedToolset"] for t in found.toolsets)
+    assert found.tools == []
+    assert found.warnings == []
+
+
+def test_from_spec_and_read_only_forms_give_the_toolsets_the_live_agent_has(tmp_path: Path) -> None:
+    pytest.importorskip("pydantic_ai_harness")
+    path = tmp_path / "forms.py"
+    path.write_text(
+        textwrap.dedent(
+            """
+            from pydantic_ai import Agent
+            from pydantic_ai.capabilities import WebSearch
+            from pydantic_ai.models.test import TestModel
+            from pydantic_ai_harness import FileSystem, Planning
+
+
+            def search(query: str) -> str:
+                return query
+
+
+            agent = Agent(
+                TestModel(),
+                name="forms",
+                capabilities=[
+                    WebSearch.from_spec(local=search, native=False),
+                    Planning.from_spec(),
+                    FileSystem(read_only=True),
+                    FileSystem(id="writer", read_only=False),
+                ],
+            )
+            """
+        ),
+        encoding="utf-8",
+    )
+    (static,) = analyze(path).agents
+    live = live_agents(path)["forms"]
+
+    def shown(found: AgentBlueprint) -> list[tuple[object, ...]]:
+        toolsets = {t.id: (t.label, t.toolset_id, t.kind, t.wrappers) for t in found.toolsets}
+        return [(c.name, [toolsets[i] for i in c.toolsets]) for c in found.capabilities if not c.builtin]
+
+    assert shown(static) == shown(live)
+    assert shown(static)[2] == (
+        "FileSystem",
+        [("FileSystemToolset 'file_system'", "file_system", "function", ["CapabilityOwnedToolset", "FilteredToolset"])],
+    )
+    assert [t.name for t in static.tools] == ["search"]  # the harness toolsets' tools are not listed
 
 
 def test_retries_forms(tmp_path: Path) -> None:
@@ -753,7 +1473,6 @@ def test_only_pydantic_ai_agents_are_agents() -> None:
         "from agents_lib import Agent\na = Agent('test')\n",
         "import pydantic_ai\nAgent = make_class()\na = Agent('test')\n",
         "from pydantic_ai import Agent\na = Agent\n",  # never called
-        "from pydantic_ai import Agent\na = Agent.from_spec(spec)\n",
         "from pydantic_ai import Agent\nclass Mine(Agent): pass\na = Mine('test')\n",
         "# from pydantic_ai import Agent\n# a = Agent('test')\n",
         "text = '''\nfrom pydantic_ai import Agent\na = Agent(\"test\")\n'''\n",

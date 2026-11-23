@@ -129,6 +129,17 @@
           },
           "title": "Warnings",
           "type": "array"
+        },
+        "wrapper": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Wrapper"
         }
       },
       "required": [
@@ -148,6 +159,7 @@
         "capabilities",
         "settings",
         "delegates",
+        "wrapper",
         "warnings"
       ],
       "title": "AgentBlueprint",
@@ -196,6 +208,13 @@
             }
           ],
           "title": "Conversation Id"
+        },
+        "deferred": {
+          "items": {
+            "$ref": "#/$defs/DeferredCall"
+          },
+          "title": "Deferred",
+          "type": "array"
         },
         "instructions": {
           "anyOf": [
@@ -253,7 +272,8 @@
         "instructions",
         "output",
         "usage",
-        "messages"
+        "messages",
+        "deferred"
       ],
       "title": "AgentRunData",
       "type": "object"
@@ -302,6 +322,13 @@
               "type": "null"
             }
           ]
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/RunEvent"
+          },
+          "title": "Events",
+          "type": "array"
         },
         "kind": {
           "const": "agent_run",
@@ -371,6 +398,7 @@
         "run_id",
         "error",
         "attributes",
+        "events",
         "kind",
         "data"
       ],
@@ -380,6 +408,13 @@
     "AgentSettings": {
       "additionalProperties": false,
       "properties": {
+        "defaults": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Defaults",
+          "type": "array"
+        },
         "end_strategy": {
           "anyOf": [
             {
@@ -452,7 +487,8 @@
         "tool_retries",
         "output_retries",
         "tool_timeout",
-        "expressions"
+        "expressions",
+        "defaults"
       ],
       "title": "AgentSettings",
       "type": "object"
@@ -464,16 +500,165 @@
           "title": "Builtin",
           "type": "boolean"
         },
+        "capability_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Capability Id"
+        },
+        "category": {
+          "enum": [
+            "harness",
+            "environment",
+            "tools",
+            "integration",
+            "web",
+            "reasoning",
+            "context",
+            "knowledge",
+            "safety",
+            "self_extension",
+            "runtime",
+            "loop",
+            "custom"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "deferred": {
+          "title": "Deferred",
+          "type": "boolean"
+        },
+        "details": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Details",
+          "type": "object"
+        },
+        "expressions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Expressions",
+          "type": "object"
+        },
+        "hooks": {
+          "items": {
+            "$ref": "#/$defs/HookInfo"
+          },
+          "title": "Hooks",
+          "type": "array"
+        },
         "name": {
           "title": "Name",
           "type": "string"
+        },
+        "native_tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Native Tools",
+          "type": "array"
+        },
+        "package": {
+          "anyOf": [
+            {
+              "enum": [
+                "pydantic_ai",
+                "pydantic_ai_harness"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Package"
+        },
+        "skills": {
+          "items": {
+            "$ref": "#/$defs/SkillInfo"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "stack": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Stack"
+        },
+        "toolsets": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Toolsets",
+          "type": "array"
         }
       },
       "required": [
         "name",
-        "builtin"
+        "builtin",
+        "category",
+        "package",
+        "deferred",
+        "details",
+        "expressions",
+        "toolsets",
+        "native_tools",
+        "capability_id",
+        "stack",
+        "skills",
+        "hooks"
       ],
       "title": "CapabilityInfo",
+      "type": "object"
+    },
+    "DeferredCall": {
+      "additionalProperties": false,
+      "description": "A tool call a run ended waiting on (its output was ``DeferredToolRequests``).",
+      "properties": {
+        "call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Call Id"
+        },
+        "kind": {
+          "enum": [
+            "approval",
+            "external"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "call_id",
+        "tool_name",
+        "kind"
+      ],
+      "title": "DeferredCall",
       "type": "object"
     },
     "Delegate": {
@@ -840,6 +1025,13 @@
             }
           ]
         },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/RunEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
         "kind": {
           "const": "graph_node",
           "title": "Kind",
@@ -908,6 +1100,7 @@
         "run_id",
         "error",
         "attributes",
+        "events",
         "kind",
         "data"
       ],
@@ -986,6 +1179,13 @@
             }
           ]
         },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/RunEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
         "kind": {
           "const": "graph_run",
           "title": "Kind",
@@ -1054,10 +1254,76 @@
         "run_id",
         "error",
         "attributes",
+        "events",
         "kind",
         "data"
       ],
       "title": "GraphRunSpan",
+      "type": "object"
+    },
+    "HookInfo": {
+      "additionalProperties": false,
+      "description": "One function a ``Hooks`` capability registers.",
+      "properties": {
+        "function": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Function"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceLocation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "point": {
+          "title": "Point",
+          "type": "string"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Timeout"
+        },
+        "tools": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tools"
+        }
+      },
+      "required": [
+        "point",
+        "function",
+        "tools",
+        "timeout",
+        "location"
+      ],
+      "title": "HookInfo",
       "type": "object"
     },
     "Instruction": {
@@ -1397,6 +1663,13 @@
             }
           ]
         },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/RunEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
         "kind": {
           "const": "model_request",
           "title": "Kind",
@@ -1465,6 +1738,7 @@
         "run_id",
         "error",
         "attributes",
+        "events",
         "kind",
         "data"
       ],
@@ -1536,6 +1810,13 @@
             }
           ]
         },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/RunEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
         "kind": {
           "const": "other",
           "title": "Kind",
@@ -1604,6 +1885,7 @@
         "run_id",
         "error",
         "attributes",
+        "events",
         "kind",
         "data"
       ],
@@ -1658,6 +1940,13 @@
             }
           ],
           "title": "Type Name"
+        },
+        "validators": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Validators",
+          "type": "array"
         }
       },
       "required": [
@@ -1666,6 +1955,7 @@
         "type_name",
         "json_schema",
         "tool_names",
+        "validators",
         "location"
       ],
       "title": "OutputInfo",
@@ -1693,6 +1983,75 @@
         "max_retries"
       ],
       "title": "RetryInfo",
+      "type": "object"
+    },
+    "RunEvent": {
+      "additionalProperties": false,
+      "description": "A ``CapabilityEvent`` or ``CustomEvent`` of a run, recorded by ``pydantic_ai_viz.CaptureEvents``.",
+      "properties": {
+        "capability_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Capability Id"
+        },
+        "data": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "event_kind": {
+          "enum": [
+            "capability",
+            "custom"
+          ],
+          "title": "Event Kind",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tool Call Id"
+        },
+        "tool_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tool Name"
+        },
+        "ts_ms": {
+          "title": "Ts Ms",
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "event_kind",
+        "capability_id",
+        "tool_call_id",
+        "tool_name",
+        "ts_ms",
+        "data"
+      ],
+      "title": "RunEvent",
       "type": "object"
     },
     "SessionStarted": {
@@ -1767,6 +2126,53 @@
         "versions"
       ],
       "title": "SessionStarted",
+      "type": "object"
+    },
+    "SkillInfo": {
+      "additionalProperties": false,
+      "description": "One skill a harness ``Skills`` capability offers, read from its ``SKILL.md``.",
+      "properties": {
+        "body": {
+          "title": "Body",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "model_invocable": {
+          "title": "Model Invocable",
+          "type": "boolean"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "when_to_use": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "When To Use"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "when_to_use",
+        "model_invocable",
+        "path",
+        "body"
+      ],
+      "title": "SkillInfo",
       "type": "object"
     },
     "SourceLocation": {
@@ -2201,6 +2607,21 @@
           ],
           "title": "Call Id"
         },
+        "deferral": {
+          "anyOf": [
+            {
+              "enum": [
+                "approval",
+                "external"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Deferral"
+        },
         "result": {
           "$ref": "#/$defs/JsonValue"
         },
@@ -2224,7 +2645,8 @@
         "call_id",
         "arguments",
         "result",
-        "retry"
+        "retry",
+        "deferral"
       ],
       "title": "ToolCallData",
       "type": "object"
@@ -2310,6 +2732,13 @@
             }
           ]
         },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/RunEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
         "kind": {
           "const": "tool_call",
           "title": "Kind",
@@ -2378,6 +2807,7 @@
         "run_id",
         "error",
         "attributes",
+        "events",
         "kind",
         "data"
       ],

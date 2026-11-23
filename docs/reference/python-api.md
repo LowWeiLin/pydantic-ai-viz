@@ -282,6 +282,23 @@ class Session:
 | `close()` | Stop the server and end the session. Safe to call more than once. If the session installed its instrumentation setting, the setting that was there before is put back (off, if there was none). |
 | `closed` | `True` once `close()` has run. |
 
+## CaptureEvents { #captureevents }
+
+```python
+@dataclass
+class CaptureEvents(AbstractCapability[Any]): ...
+```
+
+A capability that puts the agent's `CapabilityEvent`s and `CustomEvent`s on its runs. Pydantic AI does not record them in its telemetry, so they are only seen when the agent has this capability:
+
+```python
+agent = Agent("openai:gpt-5.2", capabilities=[Pager(), pviz.CaptureEvents()])
+```
+
+Each event is recorded on the span that is current when it is dispatched (the agent run, or a tool for an `immediate` event emitted while the tool runs) and reaches the viewer when that span ends. Its kind, capability id and tool are always kept; its own fields only when the run's instrumentation includes content. It never raises and is left out of the agent's blueprint, live and from source. It needs a Pydantic AI release with capability events; see [Compatibility](compatibility.md).
+
+Like `stream=True`, it switches the agent's model requests to streaming, because Pydantic AI drains a run as a stream whenever a capability listens to events. The model must support streaming: a `FunctionModel` without a `stream_function` fails. See [Token streaming](../guides/token-streaming.md#why-it-works-this-way).
+
 ## AgentBlueprint { #agentblueprint }
 
 A Pydantic model describing one agent. Returned by [`blueprint`](#blueprint) for an `Agent`, and carried by `blueprint.agent` events.
@@ -292,7 +309,7 @@ bp.model_dump()  # a plain dict
 bp.model_dump_json()  # JSON, the same shape as on the wire
 ```
 
-Main fields: `id`, `name`, `label`, `description`, `source`, `location`, `model`, `deps_type`, `instructions`, `toolsets`, `tools`, `native_tools`, `output`, `capabilities`, `settings`, `delegates` and `warnings`. Each is specified under [Blueprints](wire-format.md#blueprints) in the wire format reference.
+Main fields: `id`, `name`, `label`, `description`, `source`, `location`, `model`, `deps_type`, `instructions`, `toolsets`, `tools`, `native_tools`, `output`, `capabilities`, `settings`, `delegates`, `wrapper` and `warnings`. Each is specified under [Blueprints](wire-format.md#blueprints) in the wire format reference.
 
 ## GraphBlueprint { #graphblueprint }
 

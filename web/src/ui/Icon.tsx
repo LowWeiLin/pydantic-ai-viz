@@ -27,6 +27,8 @@ const paths = {
     </>
   ),
   span: <path d="M2.5 4.5h7M5.5 8h8M4 11.5h5" />,
+  // A puzzle piece: something added to the agent.
+  capability: <path d="M2.5 4.5h2.9a1.6 1.6 0 1 1 3.2 0h2.9v2.9a1.6 1.6 0 1 1 0 3.2v2.9h-9z" />,
   // status
   check: <path d="M3.5 8.5l3 3 6-7" />,
   retry: <path d="M12.6 8a4.6 4.6 0 1 1-1.5-3.4M12.8 2.6v2.6h-2.6" />,
@@ -149,6 +151,12 @@ const paths = {
     </>
   ),
   decision: <path d="M8 2l6 6-6 6-6-6z" />,
+  lock: (
+    <>
+      <rect x="3.5" y="7" width="9" height="6.5" rx="1.5" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+    </>
+  ),
   arrowRight: <path d="M2.5 8h10M9 4.5L12.5 8 9 11.5" />,
   user: (
     <>

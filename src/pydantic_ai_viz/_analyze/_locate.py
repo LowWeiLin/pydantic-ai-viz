@@ -5,6 +5,7 @@ A target is one of:
 * the path of a ``.py`` file, optionally followed by ``:name`` to pick one agent
   or graph in it;
 * the path of a directory, whose ``.py`` files are all read, however deep;
+* the path of an agent spec, a ``.json``, ``.yaml`` or ``.yml`` file that ``Agent.from_file`` reads;
 * a dotted module name such as ``app.agents``, optionally followed by ``:name``.
   It is found by looking for ``app/agents.py`` (or the package ``app/agents/``)
   below the working directory, its ``src`` directory and the entries of
@@ -28,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import _github
+from ._spec import FORMATS
 
 MARKERS = (
     "pyproject.toml",
@@ -176,8 +178,10 @@ def place(target: str | os.PathLike[str], *, fetch_seconds: float = 300.0) -> Pl
         if not path.is_file():
             raise TargetError(f"file not found: {location}")
         return _file(spec, path.resolve(), select)
+    if path.is_file() and path.suffix.lower() in FORMATS:
+        return _file(spec, path.resolve(), None)
     if path.is_file():
-        raise TargetError(f"{location} is not a .py file; only Python source can be read")
+        raise TargetError(f"{location} is not a .py file or an agent spec; only those can be read")
     return _module(spec)
 
 

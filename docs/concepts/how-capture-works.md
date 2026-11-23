@@ -127,6 +127,18 @@ That is what the sidebar and the Usage sections of the inspector show. The usage
 
 `pydantic-graph` does not emit plain OpenTelemetry spans; it reports through Logfire only. So for graphs, pydantic-ai-viz produces the spans itself. [`run_graph`](../guides/graphs.md) drives the graph with its public `graph.iter(...)` API, opens a `graph_run` span around the whole execution and a `graph_node` span around each task, on the session's own tracer provider. From there on they travel the same pipeline as agent spans, and agent runs started inside a step nest under it as ordinary child spans.
 
+## Skills are read, not run
+
+A harness `Skills` capability reads its libraries at the start of every run, so the skills never exist on the agent object. For a blueprint, pydantic-ai-viz calls the capability's public `Skills.load()` on a host workspace, which reads the `SKILL.md` files without starting a model and writes nothing. In a run, the call of `load_capability` that loads a skill is linked to it: the viewer matches the `id` argument to the skill (or to a capability loaded on demand) by name. With `include_content=false` the arguments are not recorded, so nothing is linked.
+
+## Events need CaptureEvents
+
+Pydantic AI hands `CapabilityEvent`s and `CustomEvent`s to listeners but puts none of them in a span, and pydantic-ai-viz does not add a listener to your agent behind your back. Give the agent the [`CaptureEvents`](../reference/python-api.md#captureevents) capability and its `on_event` adds each event to the OpenTelemetry span that is current when the event is dispatched: the agent run, or the tool span for an `immediate` event emitted inside a tool. Span events travel with their span, so an event appears in the viewer when its span ends, not the moment it is emitted. Having an `on_event`, it also makes the agent's model requests stream, as [token streaming](../guides/token-streaming.md#why-it-works-this-way) does.
+
+## Approvals span two runs
+
+A run that calls a tool needing approval (`requires_approval=True`), or one whose tool raises `ApprovalRequired` or `CallDeferred`, ends with `DeferredToolRequests` as its output. The tool that needs approval has no span: it was never called. The run's `deferred` lists each waiting call by tool name and call id, read from the run's final result, or, without content capture, from the tool calls of its last response that nothing answered, leaving out calls to plain tools that no tool span deferred. Your code then answers with `deferred_tool_results` in a new run on the same `message_history`. That run has the same `conversation_id`, which is how the viewer pairs the two: an approved call runs there as a tool span with the same call id, and a denied one is only a tool result in the new run's first request.
+
 ## Token streaming takes a side channel
 
 Spans never contain single tokens. With `stream=True`, an event listener registered through `agent.on_event(...)` receives Pydantic AI's part-start and part-delta events and appends `stream.delta` events to the log. Each delta is tied to the model request that is currently open for that agent run, so the text lands on the right span. The price of this side channel is described in [Token streaming](../guides/token-streaming.md).

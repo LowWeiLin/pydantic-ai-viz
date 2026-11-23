@@ -109,24 +109,65 @@ type AgentBlueprint = {
     type_name: string | null;  // for example "Resolution", "str", "A | B"
     json_schema: Json | null;
     tool_names: string[];      // for example ["final_result"]; may be filled from observed runs
+    validators: string[];      // the @agent.output_validator functions, module-qualified, in registration order
     location: SourceLocation | null;  // where the output type is defined
   };
-  capabilities: { name: string; builtin: boolean }[];
+  capabilities: Capability[];
   settings: {
     model_settings: { [k: string]: Json } | null;
     end_strategy: string | null;
     tool_retries: number | null;
     output_retries: number | null;
     tool_timeout: number | null;
+    defaults: string[];        // of end_strategy, tool_retries, output_retries and tool_timeout: those whose value is what an Agent() has by default (live only; [] from source)
     expressions: { [k: string]: string };  // settings computed at run time: name -> source text
   };
   delegates: { tool_name: string; agent_id: string; evidence: Provenance }[];
+  wrapper: string | null;      // the durable-execution wrapper around the agent, e.g. "TemporalAgent"
   warnings: string[];          // human-readable notes about anything that could not be read
 };
 
 type EnvironmentValue = {
   variable: string;            // the environment variable, for example "APP_MODEL"
   default: string | null;      // the default the source gives, used only when the variable is not set; never the value
+};
+
+type CapabilityCategory =
+  | "harness" | "environment" | "tools" | "integration" | "web" | "reasoning"
+  | "context" | "knowledge" | "safety" | "self_extension" | "runtime" | "loop"
+  | "custom";
+
+type Capability = {
+  name: string;                // class name; for one static analysis cannot name, the source text that builds it
+  builtin: boolean;            // added by Pydantic AI to every agent
+  category: CapabilityCategory;
+  package: "pydantic_ai" | "pydantic_ai_harness" | null;  // where the class is defined, when it is one of these
+  deferred: boolean;           // defer_loading=True: loaded when the model asks for it
+  details: { [k: string]: Json };       // what it was given, by parameter name; secrets and defaults left out
+  expressions: { [k: string]: string }; // parameters the source computes at run time: name -> source text (static analysis only)
+  toolsets: string[];          // Toolset.id of the toolsets it gives the agent
+  native_tools: string[];      // provider-side tool kinds it gives the agent, for example "web_search"
+  capability_id: string | null; // the id Pydantic AI knows it by (what load_capability takes); from source only a literal id=
+  stack: string | null;        // the harness stack ("Coder", "Researcher") that put it on the agent; live only, null from source
+  skills: SkillInfo[];         // the skills of a harness Skills capability, in catalog order; [] for every other capability
+  hooks: HookInfo[];           // the functions a Hooks capability registers; [] for every other capability
+};
+
+type HookInfo = {
+  point: string;               // the capability method it stands for, as Hooks keys it: "before_model_request", "wrap_run", "on_run_error", ...
+  function: string | null;     // module.qualname of the function; null when the source does not name one
+  tools: string[] | null;      // a tool hook's tools= filter, sorted; null when it runs for every tool
+  timeout: number | null;
+  location: SourceLocation | null;  // static analysis only
+};
+
+type SkillInfo = {
+  name: string;                // the name of its frontmatter, or its directory's name: the id load_capability takes
+  description: string;
+  when_to_use: string | null;
+  model_invocable: boolean;    // false with `disable-model-invocation: true`: left out of the model's catalog
+  path: string;                // its SKILL.md, forward slashes, relative to the workspace it was read from (live) or the analysed root (source); never absolute
+  body: string;                // the Markdown after the frontmatter, as written (rule 5 applies)
 };
 
 type Instruction = {
@@ -187,6 +228,56 @@ type GraphBlueprint = {
 };
 ```
 
+- **`kind: "unapproved"`** is a tool given `requires_approval=True`: a run stops before calling it and waits for the caller's answer. `"external"` is a tool whose result the caller supplies.
+- **`output.validators`** names each `@agent.output_validator` function, module-qualified like `Tool.function`, live and from source.
+- **`wrapper`** is the class name of the durable-execution wrapper (`TemporalAgent`, `DBOSAgent`, `PrefectAgent`) when the agent was given wrapped, live or from source; the blueprint is that of the agent it wraps. It is `null` otherwise.
+- **`CaptureEvents`** is the viewer's own capability and is never listed in `capabilities`, live or from source.
+
+### Capabilities { #capabilities }
+
+A capability's `category` is the group it is listed in by the [Pydantic AI capabilities docs](https://pydantic.dev/docs/ai/capabilities/overview/). The ids, in the docs' order:
+
+| `category` | Group in the docs |
+|---|---|
+| `"harness"` | Harnesses |
+| `"environment"` | Execution environments |
+| `"tools"` | Tools & native abilities |
+| `"integration"` | Integrations |
+| `"web"` | Web & research |
+| `"reasoning"` | Reasoning, planning & delegation |
+| `"context"` | Context management |
+| `"knowledge"` | Knowledge & memory |
+| `"safety"` | Control & safety |
+| `"self_extension"` | Self-extension |
+| `"runtime"` | Execution runtime |
+| `"loop"` | Loop customization |
+| `"custom"` | Anything else: the project's own, another package's, or one this release does not know |
+
+- **Matching** is by package (`pydantic_ai` or `pydantic_ai_harness`) together with the class name. The harness is never imported, so a project class that happens to be called `Memory` or `Shell` is not taken for the harness one. A subclass takes the category of its Pydantic AI or harness base. A class of either package that is not listed is `"custom"`.
+- **`package`** names the package of the class itself, so an unlisted harness class is `"custom"` with package `"pydantic_ai_harness"`, and a project subclass of `MCP` has the category of `MCP` and no package.
+- **`details`** holds values only: strings, numbers, booleans, lists of those, or objects of those. A live capability of Pydantic AI or the harness lists no value the class fills in itself, such as the `denied_commands` of a `Shell()`; a parameter the class requires is always listed. A plain `Capability(instructions=...)` shows them as a string, or a list when it has several, with a function by its qualified name. A workspace given to a capability is shown as its class name, never a path. strings, numbers, booleans, lists of those, or objects of those. A parameter left at its default, a `null` or empty value, `id` and `defer_loading` are left out. A parameter whose name contains `secret`, `passw`, `credential`, `cookie` or `bearer`, ends in `token`, `auth`, `authorization`, `header`, `headers` or `apikey`, ends in `key` as a word (`api_key`), or has `env`, `header`, `headers` or `authorization` as a word, is never written; `max_tokens`, `authority` and `environment` are. A positional argument of a class whose parameter names are not known is not written either, and is named in `warnings`. A URL is written without user info, query and fragment.
+- **`expressions`** is filled by static analysis only: an argument that is not a literal, as source text on one line cut at 200 characters.
+- **`toolsets`** holds ids of the blueprint's own `toolsets`. **`native_tools`** holds kinds.
+- **`deferred`** is `true` for `defer_loading=True`. From source, only a literal `True` counts; any other value is in `expressions`.
+- **The two ways of reading differ.**
+    - A live agent shows a harness stack such as `Coder` or `Researcher` as one capability of category `"harness"` (with no details or native tools; its toolsets are those of its helpers, such as the empty `researcher_instructions` one) next to the capabilities it is made of, because Pydantic AI merges a combined capability into the agent's own and the stack is found by a marker it leaves behind. The stack's helper capabilities are left out: its private classes, and the plain `Capability` that holds a `Researcher`'s instructions. A `Researcher` with an overflow store of its own leaves no marker, so it is not listed.
+    - Source code shows `CombinedCapability([...])` as the capabilities in it, to a depth of four, except one given a literal `defer_loading=True`, which stays one deferred capability, as on a live agent. One given a computed `defer_loading=` stays one capability too, not deferred, with the expression in `expressions`: the agent keeps it whole when the value is true. A capability kept whole lists what it holds by class name in `details.capabilities`, as a live agent does, never as source text, and has the toolsets and native tools of what it holds. A list the source computes stays one capability, with a warning.
+    - From source, `WebSearch` and `WebFetch` given `local=` give the toolset of that function or, for `local=True`, of the tool of the installed Pydantic AI. A harness capability that gives a toolset (`FileSystem`, `Shell`, `Memory`, `Planning`, `ToolOutputLimits`, `PydanticAIDocs`, `PruneToolResults`, `CapabilityCreation`) gives one `opaque` toolset with no tools, since the tools depend on its arguments; a live agent lists them. So do `SubAgents` given `agents=` or `agent_folders=` (toolset id `sub_agents`, or its `id=`), `AskUser` (`ask_user`, or its `id=`), `Advisor` (`advisor`, with a `PreparedToolset` wrapper) and `Skills` given a literal `read_files=True` (`skills`). A `FileSystem` given a literal `read_only=True` has the `FilteredToolset` wrapper a live one has. `X.from_spec(...)` reads as `X(...)`.
+    - A `Hooks` shows no details: its functions are in `hooks`.
+    - The arguments of a harness capability given by position are named from the harness's own signatures when the class is known to come from `pydantic_ai_harness`: `Skills(directories)`, `SubAgents(agents, models, agent_folders)`, `Advisor(model)`, `CapabilityCreation(directory, guidance)`, `RepoContext(workspace_dir, home_dir, filenames)`, `Peers(network)` and `Memory(store, store_resolver, agent_name, namespace)`. A value that cannot be shown, such as a store object, is still left out.
+    - From source, two capabilities of one class that Pydantic AI would merge into one are shown as one: those with the same literal `id=`, or, with no `id=`, a Pydantic AI class whose installed source declares a literal default `id` (`WebSearch()` twice). They are merged by Pydantic AI's rules: a value only one states survives, lists and dicts are joined with the later winning, any other value is the later one, and the capability keeps the position of its last occurrence. A harness class with no literal `id=` is not merged, because its default id is only in harness source, which is never opened.
+    - `WebSearch` given `allowed_domains`, `blocked_domains` or `max_uses`, or `WebFetch` given `max_uses`, with a value other than a literal `None`, can only run as the provider's own tool, so it gives no local toolset, as on a live agent.
+- **`capability_id`** is the id Pydantic AI knows the capability by: the `id` of a live capability when it is a string, a literal `id=` from source. A call of `load_capability` names a capability or a skill by it.
+- **`stack`** is `"Coder"` or `"Researcher"` for a live capability that stack put on the agent, and `null` otherwise and always from source (a stack is not opened there). After the stack's marker, each public capability whose class is one the stack is known to add (`Coder`: `FileSystem`, `Shell`, `RepoContext`, `SubAgents`, `ClearToolResults`, `RepairToolArguments`; `Researcher`: `WebSearch`, `WebFetch`, `SubAgents`, `ToolOutputLimits`) is a member, each class at most once and in that order; the first one that is not ends the stack, so a `Thinking()` listed after `Researcher()` is the author's, and so is a second `Shell` after `Coder()` or a `SubAgents` that Pydantic AI merged with the stack's own and moved to the author's place, or a `ToolOutputLimits` after a `Researcher()` that states more than the stack's own (`ToolOutputLimits(strip_ansi=True)`), which Pydantic AI merged into it. A capability given before the stack with the id of one the stack puts there is merged into the stack's own and stays in its place; a `ToolOutputLimits` is still the author's when what it states survives the merge (extra `bands`, or a `store` other than the workspace's), though a value the stack's own overrides (`strip_ansi=True`) reads as the stack's, and a `WebSearch`, `WebFetch` or `SubAgents` (including the `SubAgents` that `Coder` and `Researcher` share) reads as the stack's, while a blueprint from source shows the author's on its own.
+- **`skills`** is the catalog of a harness `Skills` capability: its name, `when_to_use`, whether the model may load it, its `SKILL.md` and its body. The body is authored text, like a static instruction, and is not redacted when `include_content` is `false`. It does not include the skill directory the harness adds when it renders a skill. Every path is relative; a warning never holds an absolute path.
+    - **Live:** the catalog is read with `Skills.load()`, which reads the files and runs a scanner configured on `Skills`, but starts no model and writes nothing. Only host workspaces are read (`LocalWorkspaceBackend`, `WindowsWorkspaceBackend`): the one given to `Skills` as `workspace=`, or else that of the agent's own `LocalWorkspace` or `WindowsWorkspace`. A sandbox or other backend is not read, and a `Skills` with no workspace known before the run is not read either; each is named in `warnings`.
+    - **From source:** `SKILL.md` files are read under the `directories` of a literal `Skills(...)` (a string or a list of strings; the first argument or `directories=`), with a literal `include=` and `exclude=` applied. A relative directory is resolved against the root of a literal `workspace=LocalWorkspaceBackend('dir')` or `WindowsWorkspaceBackend('dir')`, or of the agent's `LocalWorkspace` or `WindowsWorkspace` given a literal `working_dir`, itself relative to the folder analysed. When the workspace is decided when the code runs, the folder of the source file is tried first and then the analysed folder, with one warning: "`Skills` reads `_skills` from a workspace decided when the code runs; the skills shown are those in `_skills`". Only files inside the analysed folder are read, at most 64 skills per capability, and the size limit of one file applies. Computed `directories` stay in `expressions`, with a warning.
+    - **Skipped skills** are warnings: "skill `<path>` was left out: <reason>" (its `SKILL.md` could not be read, another skill has its name, the library path is not a library, or an artifact scan flagged it); a library that is not found gives "skill library `<dir>` was not found in the analysed files, so its skills are not shown", and a `SKILL.md` over the analysis's file size limit gives "skill `<path>` is not shown: its SKILL.md is larger than the <n> byte limit of the analysis; a run still offers it". A frontmatter that YAML would not read (an unquoted `: ` in a value, a value that opens a flow collection) is one that could not be read, as for the harness; a ` #` comment after a value is not part of it. A literal `scanner=` gives "skills are shown unscanned; a run scans them first".
+- **`hooks`** lists the functions a `Hooks` capability registers, grouped by hook point in the order `Hooks` registered the first of each, and in registration order within a point, which is the order it runs them in. A live one is read from its registry. From source, the keyword arguments of `Hooks(...)` come first, in the order `Hooks` registers them, then each `@hooks.on.<point>` or `@hooks.on.<point>(tools=[...], timeout=...)` decorator in the module that builds it, in source order. The keyword or decorator name is mapped to the point (`run` is `wrap_run`, `run_error` is `on_run_error`, `deferred_tool_calls` is `handle_deferred_tool_calls`). A function the source does not name (a lambda) has `function: null`, and a computed `tools=` or `timeout=` is `null`, each with a warning.
+- **Delegates of `SubAgents`.** A harness `SubAgents` capability gives a delegate for each `SubAgent` it lists whose agent can be found: its `tool_name` (`delegate_task` by default) as the edge's `tool_name`, with evidence `"object"` for a live agent and `"code"` from source. Since its toolset is opaque and lists no tool, the edge starts at the agent's card. `include_self` draws nothing. Its `details` show each entry as `{agent, name, description, models}`, live and from source; from source only when every entry is a `SubAgent(...)` whose agent is found and whose arguments are literals, otherwise `agents` stays in `expressions`. An `Advisor` consults its model through an inner agent, so a run shows a delegation from the `advisor` tool to an observed `advisor` agent. Before a run, `Advisor` and `Peers` have no edge: one holds a model, the other resolves its network when it runs.
+- **What is not read.** The per-run content of other capabilities: the `AGENTS.md` and `CLAUDE.md` that `RepoContext` reads (it also reads the home directory), the provider-side tools of `MCP(native=True)`, which only the provider knows, and a store `Memory` takes from `store_resolver`, which needs a run.
+- **Native tools.** An agent's `native_tools` holds kinds only, as a capability's does; a native tool of a capability loaded on demand is listed by its kind too.
+
 ### Provenance, locations and expressions { #provenance }
 
 - **Provenance** says how a fact was obtained. A blueprint's `source`, a tool's `origin` and a delegation's `evidence` all use the same three values. A blueprint made by `pydantic-ai-viz view` is `"code"`; one made from an agent passed to `serve`, `record` or `blueprint` is `"object"`; one synthesised from runs is `"observed"`. A graph is never `"observed"`.
@@ -201,7 +292,7 @@ type GraphBlueprint = {
     - A toolset with an `expression` is `opaque`; its `label` is the class name when that can be read, else the same text.
     - An instruction's `expression` is the source exactly as written, line breaks and indentation included, cut at 20,000 characters. Every other expression is put on one line and cut at 200 characters.
     - Whatever produced the value (an environment variable, a configuration file, a function of the project, of the standard library or of another package), the expression is reported the same way. No default that such a call is given is taken for the value; an environment variable's default is reported as `env.default` only.
-- **What static analysis does not know is left out, not guessed.** A `"code"` blueprint has `null` for a setting the source does not set (the library default applies), an empty `output.tool_names`, and no built-in capabilities. A model, an instruction, a toolset, a tool, an output type or a capability that could not be resolved is also named in `warnings`; a computed setting is reported in `settings.expressions` only.
+- **What static analysis does not know is left out, not guessed.** A `"code"` blueprint has `null` for a setting the source does not set (the library default applies), an empty `output.tool_names`, and no built-in capabilities. A model, an instruction, a toolset, a tool, an output type or a capability that could not be resolved is also named in `warnings`; a computed setting is reported in `settings.expressions` only. A capability's native tools are filled in from source only for `WebSearch`, `WebFetch`, `XSearch`, `ImageGeneration`, `ToolSearch`, `MCP(native=True)` and `NativeTool(...)`.
 
 - Known graph node kinds are `"start"`, `"end"`, `"step"`, `"decision"`, `"join"`, `"broadcast"` and `"map"`. A reader draws an unknown kind as a step.
 - `model.offline` is `true` when the provider is `test` or `function`.
@@ -222,6 +313,18 @@ type SpanBase = {
   run_id: string | null;       // Pydantic AI's run id of the owning agent run
   error: { type: string; message: string | null; stacktrace: string | null } | null;
   attributes: { [k: string]: Json };  // leftover raw OpenTelemetry attributes; {} on span.started
+  events: RunEvent[];          // events recorded by CaptureEvents in this span; [] on span.started
+};
+
+// A CapabilityEvent or CustomEvent of the run, recorded by pydantic_ai_viz.CaptureEvents.
+type RunEvent = {
+  kind: string;                // "planning.plan_updated"; a custom event's name
+  event_kind: "capability" | "custom";
+  capability_id: string | null; // the id of the capability that emitted it
+  tool_call_id: string | null;
+  tool_name: string | null;
+  ts_ms: number;
+  data: Json | null;           // the event's own fields; null without content capture
 };
 
 type Span = SpanBase & (
@@ -242,7 +345,11 @@ type AgentRunData = {
   output: Json | null;               // final result; end only
   usage: Usage | null;               // this agent's own requests only; end only
   messages: Message[] | null;        // the full conversation; end only
+  deferred: DeferredCall[];          // tool calls the run ended waiting on; [] otherwise, and at start
 };
+
+// A tool call left for the caller: it needs approval, or it runs outside the agent.
+type DeferredCall = { call_id: string | null; tool_name: string; kind: "approval" | "external" };
 
 type ModelRequestData = {
   model_name: string;
@@ -261,6 +368,7 @@ type ToolCallData = {
   arguments: Json | null;            // available at start
   result: Json | null;               // end only
   retry: { cause: string; attempt: number; max_retries: number } | null;
+  deferral: "approval" | "external" | null; // the tool raised ApprovalRequired / CallDeferred; end only
 };
 
 type GraphRunData  = { graph_id: string; graph_name: string; inputs: Json | null; output: Json | null };
@@ -279,9 +387,11 @@ type Part =
 
 ### Reading spans correctly { #reading-spans }
 
-- **Retry or error.** A `tool_call` with `status: "error"` and a non-null `retry` is a retry: the tool asked the model to try again. Only an error with `retry: null` is a failure.
+- **Retry or error.** A `tool_call` with `status: "error"` and a non-null `retry` is a retry: the tool asked the model to try again. Only an error with `retry: null` is a failure. A retry keeps its error's `type` and `message` but has `stacktrace: null`, since it is expected; a failure keeps its stack trace. A retry asked for by an output validator leaves no span.
 - **Token totals.** A run's total is the sum of `usage` over the `model_request` spans of the trace. Do not add `agent_run` usages together; see [why](../concepts/how-capture-works.md#why-token-totals-come-from-model-requests).
+- **Waiting for the caller.** An `agent_run` with a non-empty `deferred` ended without running those tool calls: its output was `DeferredToolRequests`. A call to a tool that needs approval (`requires_approval=True`) has no span. A tool that raised `ApprovalRequired` or `CallDeferred` has an `ok` span with `deferral` set and no result. The run that resumes it (with `message_history` and `deferred_tool_results`) has the same `conversation_id`: an approved call runs there as a `tool_call` with the same `call_id`, and a denied call or a result the caller supplied is only a `tool_result` part in its first model request's input.
 - **Output tools.** A call to an output tool such as `final_result` has no span. It appears in `messages` only. An `agent_run` that ends with `status: "ok"` produced its output.
+- **Events.** `events` is only filled when the agent has the `CaptureEvents` capability: Pydantic AI does not record capability or custom events in its telemetry. An event is on the span that was current when it was dispatched: the agent run, or the tool span for an `immediate` event emitted in a tool. An event emitted in a tool at its stream position is dispatched after the tool returns, so it is on the agent run, with the tool's `tool_call_id`. Events reach a reader with `span.ended` of their span.
 - **Delegation.** An `agent_run` whose parent is a `tool_call` is a delegated run, started by that tool.
 - **Graph nesting.** An `agent_run` started inside a graph step has that `graph_node` as its parent, except in a parallel batch, where its parent is the `graph_run`.
 
@@ -310,6 +420,7 @@ Spans are produced by Pydantic AI as OpenTelemetry spans and converted to the sh
 | `AgentRunData.output` | `final_result` |
 | `AgentRunData.usage` | `gen_ai.aggregated_usage.input_tokens`, `.output_tokens` |
 | `AgentRunData.messages` | `pydantic_ai.all_messages` |
+| `AgentRunData.deferred` | the `calls` (`external`) and `approvals` (`approval`) of a `DeferredToolRequests` in `final_result`, names and ids only. Without content capture there is no `final_result`: the tool calls of the last model response that no tool result answers, `external` when their span raised `CallDeferred` or their tool is external, else `approval`; a call to a plain function or output tool that no span deferred is left out (a streamed run that ended on text) |
 | `instructions` (agent run and model request) | `gen_ai.system_instructions`, a JSON list whose `content` values are joined with a blank line |
 | `ModelRequestData.model_name` | `gen_ai.request.model`, else the span name |
 | `ModelRequestData.provider` | `gen_ai.provider.name`, else `gen_ai.system` |
@@ -318,7 +429,9 @@ Spans are produced by Pydantic AI as OpenTelemetry spans and converted to the sh
 | `ModelRequestData.input_messages`, `output_messages` | `gen_ai.input.messages`, `gen_ai.output.messages` |
 | `ModelRequestData.usage` | `gen_ai.usage.input_tokens`, `.output_tokens` |
 | `ToolCallData.call_id`, `arguments`, `result` | `gen_ai.tool.call.id`, `.arguments`, `.result` |
-| `ToolCallData.retry` | `pydantic_ai.tool.retry.cause`, `.attempt`, `.max_retries` |
+| `ToolCallData.retry` | `pydantic_ai.tool.retry.cause`, `.attempt`, `.max_retries` (or `pydantic_ai.output.retry.*`, on the span of a text output function) |
+| `ToolCallData.deferral` | `pydantic_ai.tool.deferral.name`: `ApprovalRequired` gives `approval`, `CallDeferred` gives `external` |
+| `events` | the span's `pydantic_ai_viz.event` events, added by `CaptureEvents`: their `kind`, `event_kind`, `capability_id`, `tool_call_id`, `tool_name` and `data` (a JSON string) attributes, and their timestamp |
 | `error` | the span's `exception` event (`exception.type`, `.message`, `.stacktrace`) |
 | `GraphRunData`, `GraphNodeData` | `pydantic_ai_viz.graph.id`, `.name`, `.node_id`, `.inputs`, `.output` |
 
@@ -363,10 +476,10 @@ A tool call that asks for a retry. At start, the arguments are known:
     "kind": "tool_call", "name": "get_order",
     "start_ms": 1795046401805.0, "end_ms": null, "status": "running",
     "agent_name": "triage", "run_id": "01a1ec72-21e1-753d-baa9-89ecf9dfa6b4",
-    "error": null, "attributes": {},
+    "error": null, "attributes": {}, "events": [],
     "data": {
       "tool_name": "get_order", "call_id": "call_1",
-      "arguments": {"order_id": "1042"}, "result": null, "retry": null
+      "arguments": {"order_id": "1042"}, "result": null, "retry": null, "deferral": null
     }
   }
 }
@@ -387,14 +500,21 @@ At end, the same span carries its result, the error and the retry information:
     "error": {
       "type": "pydantic_ai.exceptions.ToolRetryError",
       "message": "Order ids look like 'A-1042'.",
-      "stacktrace": "Traceback ..."
+      "stacktrace": null
     },
     "attributes": {"gen_ai.operation.name": "execute_tool", "logfire.msg": "running tool: get_order"},
+    "events": [
+      {
+        "kind": "orders.lookup", "event_kind": "capability", "capability_id": "orders",
+        "tool_call_id": "call_1", "tool_name": "get_order", "ts_ms": 1795046401950.0, "data": {"found": true}
+      }
+    ],
     "data": {
       "tool_name": "get_order", "call_id": "call_1",
       "arguments": {"order_id": "1042"},
       "result": "Order ids look like 'A-1042'.",
-      "retry": {"cause": "model_retry", "attempt": 1, "max_retries": 2}
+      "retry": {"cause": "model_retry", "attempt": 1, "max_retries": 2},
+      "deferral": null
     }
   }
 }
@@ -503,3 +623,7 @@ The wire format is versioned separately from the package. Within `pviz: 1`:
 - nothing is removed or renamed, and no field changes its meaning.
 
 A change that breaks those rules gets a new `pviz` number and is called out in the [changelog](../changelog.md).
+
+The capability fields `capability_id`, `stack` and `skills` (with the `SkillInfo` type) and `settings.defaults` were added within `pviz` 1. The viewer opens a recording without them and fills `null`, `null`, `[]` and `[]`. The Python models and the JSON Schema require them.
+
+Recordings made by 0.1.0 have capabilities with only `name` and `builtin`. The viewer opens them, treating the missing fields as category `"custom"` and empty. The Python models and the JSON Schema describe what this release writes, so they require the new fields and do not accept those capabilities.

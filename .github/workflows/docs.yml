@@ -75,6 +75,10 @@ jobs:
           test -f site/demo/index.html
           test -f site/demo/recordings/index.json
           test -f site/demo/recordings/source.pviz.jsonl
+          # Every bundled demo, including the ones that need pydantic-ai-harness.
+          for demo in support research pipeline capabilities operations; do
+            test -f "site/demo/recordings/$demo.pviz.jsonl"
+          done
           test -f site/schema/pviz.schema.json
 
       - uses: actions/upload-pages-artifact@v5

@@ -15,6 +15,7 @@ The fetched code is only ever read. No hook, build step or line of it runs.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import re
 import shutil
@@ -34,8 +35,11 @@ GITHUB = "https://github.com"
 CACHE_VARIABLE = "PYDANTIC_AI_VIZ_CACHE_DIR"
 """Environment variable that names the cache directory, instead of the user's own cache."""
 
-KEPT_FILES = ("*.py", "pyproject.toml", "setup.cfg", "requirements.txt")
-"""What is written to disk of a fetched commit, as sparse-checkout patterns."""
+KEPT_FILES = ("*.py", "pyproject.toml", "setup.cfg", "requirements.txt", "SKILL.md")
+"""What is written to disk of a fetched commit, as sparse-checkout patterns: the source, the project files, and the
+skills a `Skills` capability reads."""
+_KEPT = hashlib.sha256("\n".join(KEPT_FILES).encode()).hexdigest()[:8]
+"""Names the patterns a cached checkout was made with."""
 
 _EXTENDED = "\\\\?\\"
 """The prefix of an extended-length Windows path: two backslashes, a question mark, a backslash."""
@@ -165,7 +169,7 @@ def fetch(reference: Reference, *, timeout: float = 300.0) -> Checkout:
     sha, subpath, ref = _resolve(reference, url, git)
     try:
         home = cache_dir() / "github" / reference.owner.lower() / reference.repo.lower()
-        final = home / sha
+        final = home / f"{sha}-{_KEPT}"  # a checkout made with other patterns holds other files, so is not reused
         if not final.is_dir():
             home.mkdir(parents=True, exist_ok=True)
             _download(url, sha, final, git)

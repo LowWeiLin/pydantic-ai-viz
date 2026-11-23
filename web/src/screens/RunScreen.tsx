@@ -14,11 +14,13 @@ import { subjectMermaid } from "../data/mermaid";
 import { changeSpeed, goLive, playFromStart, seek, step, togglePlay } from "../data/playback";
 import {
   canvasModel,
+  deferredOutcomes,
   graphCanvasModel,
   type RunSubject,
   type RunView,
   runBoundaries,
   runSubjects,
+  runs,
   runTotals,
   runView,
 } from "../data/selectors";
@@ -32,8 +34,15 @@ import {
 import { BlueprintInspector, SpanInspector } from "../inspector/Inspector";
 import { rememberTab } from "../inspector/parts";
 import { InspectorPick } from "../inspector/pick";
-import { formatCount, formatDuration, plural } from "../shell/format";
-import { navigate } from "../shell/router";
+import {
+  formatCount,
+  formatDuration,
+  outcomeWords,
+  plural,
+  runLabel,
+  waitingWords,
+} from "../shell/format";
+import { formatRoute, navigate } from "../shell/router";
 import { useShortcuts } from "../shell/shortcuts";
 import { NotFound } from "../shell/states";
 import { Workspace } from "../shell/Workspace";
@@ -43,7 +52,7 @@ import { Button } from "../ui/Button";
 import { CopyButton } from "../ui/CopyButton";
 import { EmptyState } from "../ui/EmptyState";
 import { kindMeta } from "../ui/tone";
-import { ScreenBar, Segmented } from "./parts";
+import { DefaultsToggle, ScreenBar, Segmented } from "./parts";
 
 const LIVE = Number.POSITIVE_INFINITY;
 const subjectKey = (subject: RunSubject): string => `${subject.kind}:${subject.id}`;
@@ -145,6 +154,24 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
   const [chosenSubject, setChosenSubject] = useState<string | null>(null);
   const subject = subjects.find((s) => subjectKey(s) === chosenSubject) ?? subjects[0] ?? null;
   const [picked, setPicked] = useState<CanvasTarget | null>(null);
+  // The blueprints on an agent canvas, for the count of what Pydantic AI added to them.
+  const drawn = useMemo(
+    () =>
+      subject?.kind === "agent"
+        ? (canvasModel(data, subject.id, null)?.agents.map((entry) => entry.blueprint) ?? [])
+        : [],
+    [data, subject?.kind, subject?.id],
+  );
+  // Tool calls left for the caller: those this run ended waiting on, and the run it answers.
+  const deferral = useMemo(() => {
+    const all = runs(data);
+    const summary = all.find((r) => r.traceId === traceId);
+    const earlier = all.find((r) => r.traceId === summary?.resumes);
+    return {
+      waiting: summary?.waiting ?? [],
+      resumed: earlier ? { earlier, outcomes: deferredOutcomes(data, earlier.traceId) } : null,
+    };
+  }, [data, traceId]);
 
   const select = (id: string | null): void =>
     navigate({ name: "run", traceId, spanId: id }, { replace: true });
@@ -268,11 +295,39 @@ export function RunScreen({ traceId, spanId }: { traceId: string; spanId: string
                     {plural(totals.errors, "error")}
                   </Chip>
                 )}
+                {view.endMs !== null && deferral.waiting.length > 0 && (
+                  <Chip tone="retry" icon="pause">
+                    {waitingWords(deferral.waiting)}
+                  </Chip>
+                )}
+                {deferral.resumed && (
+                  <a
+                    href={formatRoute({
+                      name: "run",
+                      traceId: deferral.resumed.earlier.traceId,
+                      spanId: null,
+                    })}
+                    className="inline-flex max-w-full rounded-control no-underline"
+                  >
+                    <Chip icon="arrowRight">
+                      resumes {runLabel(deferral.resumed.earlier)}:{" "}
+                      {outcomeWords(deferral.resumed.outcomes)}
+                    </Chip>
+                  </a>
+                )}
               </>
             }
             aside={
-              hasMermaid ? (
-                <CopyButton text={() => subjectMermaid(data, subject) ?? ""} label="Copy Mermaid" />
+              drawn.length > 0 || hasMermaid ? (
+                <>
+                  <DefaultsToggle agents={drawn} />
+                  {hasMermaid && (
+                    <CopyButton
+                      text={() => subjectMermaid(data, subject) ?? ""}
+                      label="Copy Mermaid"
+                    />
+                  )}
+                </>
               ) : undefined
             }
           />

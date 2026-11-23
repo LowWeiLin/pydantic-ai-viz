@@ -22,6 +22,8 @@ export function statusLabel(span: Span): string {
     const { attempt, max_retries } = span.data.retry;
     return `Retry ${attempt} of ${max_retries}`;
   }
+  if (status === "waiting" && span.kind === "tool_call")
+    return span.data.deferral === "external" ? "Waiting for a result" : "Waiting for approval";
   return statusMeta[status].label;
 }
 

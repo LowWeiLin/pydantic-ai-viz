@@ -8,8 +8,10 @@ import { useViewer } from "../data/store";
 import type { GraphBlueprint } from "../wire";
 import {
   AgentInspector,
+  CapabilityInspector,
   GraphInspector,
   GraphNodeInspector,
+  SkillInspector,
   ToolInspector,
   ToolsetInspector,
   UnlistedToolInspector,
@@ -38,10 +40,16 @@ export function BlueprintInspector({
   reveal?: Reveal | null;
 }) {
   const agents = useViewer((state) => state.data.agents);
-  // The output node and the model chip are parts of the agent's panel: picking one brings its
-  // section into view. A new target object asks again, so a second click scrolls back to it.
+  // The output node and the model chip are parts of the agent's panel, and a hook is part of its
+  // capability's: picking one brings its section into view. A new target object asks again, so
+  // a second click scrolls back to it.
   const picked = useMemo<Reveal | null>(
-    () => (target.kind === "output" || target.kind === "model" ? { section: target.kind } : null),
+    () =>
+      target.kind === "output" || target.kind === "model"
+        ? { section: target.kind }
+        : target.kind === "hook"
+          ? { section: "hooks" }
+          : null,
     [target],
   );
   const reveal = asked ?? picked;
@@ -62,6 +70,33 @@ export function BlueprintInspector({
     if (agent && target.kind === "toolset") {
       const toolset = agent.toolsets.find((t) => t.id === target.toolsetId);
       if (toolset) return <ToolsetInspector agent={agent} toolset={toolset} />;
+    }
+    if (agent && (target.kind === "capability" || target.kind === "hook")) {
+      const capability = agent.capabilities[target.index];
+      if (capability) {
+        return (
+          <CapabilityInspector
+            agent={agent}
+            index={target.index}
+            capability={capability}
+            reveal={reveal}
+          />
+        );
+      }
+    }
+    if (agent && target.kind === "skill") {
+      const capability = agent.capabilities[target.index];
+      const skill = capability?.skills.find((s) => s.name === target.name);
+      if (capability && skill) {
+        return (
+          <SkillInspector
+            agent={agent}
+            index={target.index}
+            capability={capability}
+            skill={skill}
+          />
+        );
+      }
     }
     if (agent) return <AgentInspector agent={agent} reveal={reveal} />;
   }

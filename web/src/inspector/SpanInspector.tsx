@@ -3,16 +3,28 @@
  * different in kind (the raw attributes); what is short and read together is stacked as
  * sections inside one tab:
  *
- *   agent run      Conversation | Output (Output · Usage) | Raw
+ *   agent run      Conversation | Output (Output · Waiting for · Usage) | Raw
  *   model request  Response (Request · Response) | Input (Instructions · Messages) | Raw
- *   tool call      Details (Error or Retry · Arguments · Result) | Raw
+ *   tool call      Details (Error, Retry or Waiting · Arguments · Result) | Raw
  *   graph run/node Details (Inputs · Output) | Raw
  *   anything else  the raw attributes, with no tab strip
+ *
+ * A span with events recorded by `CaptureEvents` has an Events tab before Raw.
  *
  * The span is the projection at the replay position: fields that only exist once a span has
  * ended are null before that, and each part says so instead of showing a blank.
  */
-import { conversationSoFar, displayStatus, type RunView, type StreamPart } from "../data/selectors";
+import {
+  blueprintForAgentName,
+  conversationSoFar,
+  type DeferredOutcome,
+  deferredOutcomes,
+  displayStatus,
+  loadedId,
+  type RunView,
+  type StreamPart,
+} from "../data/selectors";
+import { useViewer } from "../data/store";
 import { Facts, orDash } from "../screens/parts";
 import { formatCount, formatDuration } from "../shell/format";
 import { StatusDot } from "../ui/Badge";
@@ -166,6 +178,37 @@ export function UsageTable({ rows, caption }: { rows: UsageRow[]; caption: strin
 
 // ---------- per kind ----------
 
+const OUTCOME_NOTES: Record<DeferredOutcome, string> = {
+  approved: "approved: it ran in the run that resumed this one",
+  denied: "denied: the model was told it may not run",
+  "result supplied": "result supplied by the caller",
+  waiting: "still waiting: no run has resumed this one",
+  "not run": "not run by the run that resumed this one",
+};
+
+/** The calls an agent run ended waiting on, each with what the run that resumed it did. */
+function WaitingFor({ span }: { span: AgentRunSpan }) {
+  const data = useViewer((state) => state.data);
+  const outcomes = deferredOutcomes(data, span.trace_id);
+  return (
+    <ul className="m-0 flex list-none flex-col gap-1.5 p-0 text-ui">
+      {span.data.deferred.map((call, i) => {
+        const outcome =
+          outcomes.find((entry) => entry.call.call_id === call.call_id)?.outcome ?? "waiting";
+        return (
+          <li key={call.call_id ?? i} className="flex flex-wrap items-baseline gap-x-2">
+            <code className="text-fg">{call.tool_name}</code>
+            <span className="text-faint text-meta">
+              {call.kind === "approval" ? "needs approval" : "runs outside the agent"}
+            </span>
+            <span className="text-muted">{OUTCOME_NOTES[outcome]}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /** How much has been streamed so far; it changes with every delta. */
 const streamLength = (parts: readonly StreamPart[] | null | undefined): number =>
   (parts ?? []).reduce((length, part) => length + part.text.length, 0);
@@ -236,6 +279,23 @@ function agentRunTabs(span: AgentRunSpan, { view, now }: Ctx): TabItem[] {
             <Value value={data.output} label="output" />
           ),
       },
+      ...(data.deferred.length > 0
+        ? [
+            {
+              id: "waiting",
+              title: "Waiting for",
+              content: (
+                <>
+                  <Note>
+                    The run ended without running these tool calls. The caller approves or denies
+                    them, or supplies their results, and resumes the run with them.
+                  </Note>
+                  <WaitingFor span={span} />
+                </>
+              ),
+            },
+          ]
+        : []),
       {
         id: "usage",
         title: "Usage",
@@ -372,6 +432,20 @@ function toolCallTabs(span: ToolCallSpan): TabItem[] {
   const running = span.status === "running";
   const { data } = span;
   const failed = span.status === "error";
+  const waiting: SectionItem | null =
+    data.deferral === null
+      ? null
+      : {
+          id: "waiting",
+          title: "Waiting",
+          content: (
+            <Note>
+              {data.deferral === "approval"
+                ? "The tool asked for approval (ApprovalRequired) instead of running. The run ended waiting, and a later run resumes it with the caller's decision."
+                : "The tool said it runs outside the agent (CallDeferred). The run ended waiting, and a later run resumes it with the result the caller supplies."}
+            </Note>
+          ),
+        };
   const problem: SectionItem | null =
     span.error || data.retry
       ? {
@@ -385,8 +459,7 @@ function toolCallTabs(span: ToolCallSpan): TabItem[] {
               {span.error && <ErrorBox error={span.error} retry={data.retry !== null} />}
               {data.retry && (
                 <Note>
-                  A retry is not a failure: the tool asked the model to call it again, and the run
-                  went on.
+                  A retry is not a failure: the model was asked to try again, and the run went on.
                 </Note>
               )}
             </>
@@ -396,6 +469,7 @@ function toolCallTabs(span: ToolCallSpan): TabItem[] {
   return [
     sectionsTab("details", "Details", [
       ...(problem ? [problem] : []),
+      ...(waiting ? [waiting] : []),
       {
         id: "arguments",
         title: "Arguments",
@@ -414,7 +488,13 @@ function toolCallTabs(span: ToolCallSpan): TabItem[] {
             <Missing
               what="The result"
               running={running}
-              none={failed ? "The call failed without a result." : "The tool returned nothing."}
+              none={
+                failed
+                  ? "The call failed without a result."
+                  : data.deferral !== null
+                    ? "The call did not run, so it has no result."
+                    : "The tool returned nothing."
+              }
             />
           ) : (
             <>
@@ -468,6 +548,38 @@ function graphTabs(span: GraphRunSpan | GraphNodeSpan): TabItem[] {
   ];
 }
 
+/** The capability and custom events recorded in the span, each with who emitted it and its data. */
+function eventsTab(span: Span, view: RunView): TabItem[] {
+  if (span.events.length === 0) return [];
+  return [
+    sectionsTab(
+      "events",
+      "Events",
+      span.events.map((event, i) => ({
+        id: `event-${i}`,
+        title: event.kind,
+        aside: `+${formatDuration(Math.max(0, event.ts_ms - view.startMs))}`,
+        content: (
+          <>
+            <Facts
+              items={[
+                ["Type", event.event_kind === "custom" ? "Custom event" : "Capability event"],
+                ["Capability", orDash(event.capability_id)],
+                ["Tool", orDash(event.tool_name)],
+              ]}
+            />
+            {event.data === null ? (
+              <Note>The event's fields are content, which this session does not capture.</Note>
+            ) : (
+              <Value value={event.data} label={`data of ${event.kind}`} />
+            )}
+          </>
+        ),
+      })),
+    ),
+  ];
+}
+
 function kindTabs(span: Span, ctx: Ctx, stream: readonly StreamPart[] | undefined): TabItem[] {
   switch (span.kind) {
     case "agent_run":
@@ -484,6 +596,32 @@ function kindTabs(span: Span, ctx: Ctx, stream: readonly StreamPart[] | undefine
   }
 }
 
+/**
+ * What a `load_capability` call loads, from the blueprint of its agent: "Loads skill house-style
+ * of Skills". Without content capture its arguments, and so its id, are not known.
+ */
+function Loads({ span }: { span: Span }) {
+  const id = loadedId(span);
+  const agent = useViewer((state) => blueprintForAgentName(state.data, span.agent_name));
+  if (id === null) return null;
+  const owner = agent?.capabilities.find((item) => item.skills.some((s) => s.name === id));
+  const deferred = agent?.capabilities.find((item) => item.deferred && item.capability_id === id);
+  const name = (text: string) => <code className="font-medium text-fg">{text}</code>;
+  return (
+    <p className="m-0 break-words text-muted text-ui">
+      {owner ? (
+        <>
+          Loads skill {name(id)} of {name(owner.name)}
+        </>
+      ) : deferred ? (
+        <>Loads capability {name(deferred.name)}</>
+      ) : (
+        <>Loads {name(id)}</>
+      )}
+    </p>
+  );
+}
+
 export function SpanInspector({
   span,
   view,
@@ -498,6 +636,7 @@ export function SpanInspector({
   const status = displayStatus(span);
   const tabs = [
     ...kindTabs(span, { view, now }, view.streams[span.span_id]),
+    ...eventsTab(span, view),
     { id: "raw", label: "Raw", content: <RawAttributes span={span} view={view} /> },
   ];
   // A tool call's error is the first section of its details; every other kind shows it here.
@@ -519,6 +658,7 @@ export function SpanInspector({
             in agent <span className="font-medium text-fg">{owner}</span>
           </p>
         )}
+        <Loads span={span} />
         {/* The header does not scroll, so an error in it is capped: a message of thousands of
             characters would otherwise push the tabs out of the panel. */}
         {showError && span.error && (

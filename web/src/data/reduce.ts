@@ -7,12 +7,43 @@
  */
 import type {
   AgentBlueprint,
+  Capability,
   Envelope,
   GraphBlueprint,
   SessionStarted,
   Span,
   StreamDelta,
 } from "../wire";
+
+/**
+ * Recordings made before capabilities were grouped (pydantic-ai-viz 0.1.0) give only a name and
+ * the builtin flag; those made before skills and harness stacks were read lack the last three, and those made
+ * before hooks were read lack `hooks`.
+ */
+const CAPABILITY_DEFAULTS = {
+  category: "custom",
+  package: null,
+  deferred: false,
+  details: {},
+  expressions: {},
+  toolsets: [],
+  native_tools: [],
+  capability_id: null,
+  stack: null,
+  skills: [],
+  hooks: [],
+} satisfies Omit<Capability, "name" | "builtin">;
+
+const withCapabilityDefaults = (list: Capability[] | undefined): Capability[] =>
+  (list ?? []).map((c) => ({ ...CAPABILITY_DEFAULTS, ...c }));
+
+/** Recordings made before default settings were told apart name none. */
+const withSettingsDefaults = (settings: AgentBlueprint["settings"]): AgentBlueprint["settings"] =>
+  isObject(settings) ? { ...settings, defaults: settings.defaults ?? [] } : settings;
+
+/** Recordings made before output validators were read name none. */
+const withOutputDefaults = (output: AgentBlueprint["output"]): AgentBlueprint["output"] =>
+  isObject(output) ? { ...output, validators: output.validators ?? [] } : output;
 
 /** One stream.delta, kept with its envelope time so time travel can filter it. */
 export type DeltaRecord = {
@@ -133,7 +164,19 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function upsertSpan(draft: Draft, owned: Owned, span: Span, seq: number): void {
+/** Recordings made before deferred tool calls were read lack `deferred` and `deferral`; before
+ * events were recorded, `events`. */
+function withSpanDefaults(raw: Span): Span {
+  const span = Array.isArray(raw.events) ? raw : { ...raw, events: [] };
+  if (span.kind === "agent_run" && isObject(span.data) && !Array.isArray(span.data.deferred))
+    return { ...span, data: { ...span.data, deferred: [] } };
+  if (span.kind === "tool_call" && isObject(span.data) && span.data.deferral === undefined)
+    return { ...span, data: { ...span.data, deferral: null } };
+  return span;
+}
+
+function upsertSpan(draft: Draft, owned: Owned, raw: Span, seq: number): void {
+  const span = withSpanDefaults(raw);
   const known = span.span_id in draft.spans;
   own(draft, owned, "spans")[span.span_id] = span;
   if (known) return;
@@ -208,7 +251,14 @@ function apply(draft: Draft, owned: Owned, env: Envelope): { draft: Draft; owned
     case "blueprint.agent": {
       if (!isObject(env.agent) || typeof env.agent.id !== "string") break;
       if (!(env.agent.id in draft.agents)) own(draft, owned, "agentOrder").push(env.agent.id);
-      own(draft, owned, "agents")[env.agent.id] = env.agent;
+      own(draft, owned, "agents")[env.agent.id] = {
+        ...env.agent,
+        capabilities: withCapabilityDefaults(env.agent.capabilities),
+        settings: withSettingsDefaults(env.agent.settings),
+        output: withOutputDefaults(env.agent.output),
+        // Recordings made before durable-execution wrappers were read name none.
+        wrapper: env.agent.wrapper ?? null,
+      };
       break;
     }
     case "blueprint.graph": {

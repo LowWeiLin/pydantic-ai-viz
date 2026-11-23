@@ -30,12 +30,20 @@ from ._analyze import Analysis
 from ._capture import CaptureProcessor
 from ._derive import add_delegate, carry_observed, merge_request, observed_blueprint
 from ._export import write_html, write_jsonl
-from ._introspect import AnyAgent, AnyGraph, agent_closure, introspect_agent, introspect_graph
-from ._models import WIRE_VERSION, AgentBlueprint, GraphBlueprint, SessionMode, to_wire
+from ._introspect import (
+    AnyAgent,
+    AnyGraph,
+    AnyWrapper,
+    agent_closure,
+    durable_wrapper,
+    introspect_agent,
+    introspect_graph,
+)
+from ._models import WIRE_VERSION, AgentBlueprint, Deferral, DeferredCall, GraphBlueprint, SessionMode, to_wire
 from ._normalize import Normalized, WireSpan, clip
 from ._version import __version__
 
-Target: TypeAlias = "AnyAgent | AnyGraph | ModuleType | Analysis"
+Target: TypeAlias = "AnyAgent | AnyWrapper | AnyGraph | ModuleType | Analysis"
 Envelope: TypeAlias = dict[str, Any]
 
 DEFAULT_MAX_EVENTS = 50_000
@@ -245,6 +253,8 @@ class _RegisteredAgent:
     agent: AnyAgent
     id: str
     label: str | None
+    wrapper: str | None = None
+    """Class name of the durable-execution wrapper around the agent."""
 
 
 @dataclass(slots=True)
@@ -342,6 +352,8 @@ class Session:
         """Span id of a running tool call -> (owning agent name, tool name)."""
         self._open_requests: dict[str, _OpenRequest] = {}
         """Run id -> its model request in flight. A run makes one request at a time."""
+        self._deferrals: dict[tuple[str, str], Deferral] = {}
+        """(trace id, call id) -> deferral of an ended tool call, until its run ends. Only kept without content."""
 
         with _sessions_lock:
             if instrument:
@@ -418,7 +430,10 @@ class Session:
         """
         with self._lock:
             for target in targets:
-                if isinstance(target, Agent):
+                wrapped = durable_wrapper(target)
+                if wrapped is not None:
+                    self._register_wrapped(*wrapped, {})
+                elif isinstance(target, Agent):
                     self._register_agent(target, {})
                 elif isinstance(target, Graph):
                     self._register_graph(target, None)
@@ -432,10 +447,30 @@ class Session:
                         f"got {type(target).__name__}"
                     )
 
+    def _register_wrapped(self, agent: AnyAgent, wrapper: str, labels: Mapping[int, str]) -> None:
+        """Register ``agent`` as the one a durable-execution wrapper runs; shown once, with the wrapper's name."""
+        entry = self._agents.get(id(agent))
+        if entry is None:
+            self._register_agent(agent, labels, wrapper)
+        elif entry.wrapper is None:
+            entry.wrapper = wrapper
+            self._emit_agent(carry_observed(self._agent_blueprints[entry.id], self._introspect(entry)))
+
     def _register_module(self, module: ModuleType) -> None:
         members = list(vars(module).items())
+        # A module-level wrapper stands for the agent it wraps, shown once with the wrapper's name.
+        agents: list[tuple[str, AnyAgent, str | None]] = []
+        for name, value in members:
+            wrapped = durable_wrapper(value)
+            if wrapped is not None:
+                agents.append((name, *wrapped))
+            elif isinstance(value, Agent):
+                agents.append((name, cast("AnyAgent", value), None))
         # Variable names are the fallback labels, also for agents first reached as a delegate.
-        labels = {id(cast("object", value)): name for name, value in reversed(members) if isinstance(value, Agent)}
+        labels = {id(agent): name for name, agent, _ in reversed(agents)}
+        for _, agent, wrapper in agents:
+            if wrapper is not None:  # first, so that an agent the module also holds is not drawn twice
+                self._register_wrapped(agent, wrapper, labels)
         for name, value in members:
             if isinstance(value, Agent):
                 self._register_agent(cast("AnyAgent", value), labels)
@@ -471,7 +506,7 @@ class Session:
             label = f"graph-{self._graph_count}" if graph.label == f"graph-{graph.id[1:]}" else graph.label
             self._emit_graph(graph.model_copy(update={"id": new_id, "label": label}))
 
-    def _register_agent(self, root: AnyAgent, labels: Mapping[int, str]) -> None:
+    def _register_agent(self, root: AnyAgent, labels: Mapping[int, str], wrapper: str | None = None) -> None:
         if id(root) in self._agents:
             return
         added: list[_RegisteredAgent] = []
@@ -481,7 +516,10 @@ class Session:
                 # so the static blueprint replaces that one in the viewer.
                 observed = self._blueprint_named(agent.name, source="observed")
                 entry = _RegisteredAgent(
-                    agent, self._new_agent_id() if observed is None else observed.id, labels.get(id(agent))
+                    agent,
+                    self._new_agent_id() if observed is None else observed.id,
+                    labels.get(id(agent)),
+                    wrapper if agent is root else None,
                 )
                 self._agents[id(agent)] = entry
                 added.append(entry)
@@ -510,7 +548,9 @@ class Session:
             known = self._agents.get(id(agent))
             return None if known is None else known.id
 
-        blueprint = introspect_agent(entry.agent, id=entry.id, label=entry.label, delegate_id=delegate_id)
+        blueprint = introspect_agent(
+            entry.agent, id=entry.id, label=entry.label, delegate_id=delegate_id, wrapper=entry.wrapper
+        )
         return self._with_unique_name(blueprint)
 
     def _with_unique_name(self, blueprint: AgentBlueprint) -> AgentBlueprint:
@@ -575,6 +615,8 @@ class Session:
                 del self._open_requests[run_id]
             parameters = normalized.request_parameters
             name = span.agent_name
+            if not self.include_content:
+                span = self._with_deferral_kinds(span)
             if span.kind == "model_request" and name is not None and parameters is not None:
                 # Rule 2: the request says which tools and output mode the model was given. Every request
                 # is looked at, because a dynamic or filtered toolset can offer tools it did not offer
@@ -586,6 +628,31 @@ class Session:
                 if merged is not blueprint:
                     self._emit_agent(merged)
             self._log.append({"type": "span.ended", "span": to_wire(span)})
+
+    def _with_deferral_kinds(self, span: WireSpan) -> WireSpan:
+        """``span``, with the kind of each call its run waits on corrected from what the session saw.
+
+        Without content a run's deferred calls are read from its messages, which do not say why a
+        call waits. A call whose tool span raised ``CallDeferred``, or whose tool is external, runs outside.
+        A call to a plain function or output tool that no tool span deferred does not wait at all: it
+        was left unanswered because the run ended first, as ``run_stream`` does on its first text.
+        """
+        if span.kind == "tool_call" and span.data.deferral is not None and span.data.call_id is not None:
+            self._deferrals[span.trace_id, span.data.call_id] = span.data.deferral
+        if span.kind != "agent_run" or not span.data.deferred:
+            return span
+        blueprint = self._blueprint_named(span.agent_name)
+        kinds = {tool.name: tool.kind for tool in blueprint.tools} if blueprint else {}
+
+        def kind(call: DeferredCall) -> Deferral | None:
+            seen = self._deferrals.pop((span.trace_id, call.call_id or ""), None)
+            tool_kind = kinds.get(call.tool_name)
+            if seen or tool_kind == "external":
+                return seen or "external"
+            return None if tool_kind in ("function", "output") else call.kind
+
+        calls = [call.model_copy(update={"kind": found}) for call in span.data.deferred if (found := kind(call))]
+        return span.model_copy(update={"data": span.data.model_copy(update={"deferred": calls})})
 
     def _blueprint_for_run(self, name: str, description: str | None, model_name: str | None) -> AgentBlueprint:
         """The blueprint that runs of the agent called ``name`` belong to (rule 1)."""

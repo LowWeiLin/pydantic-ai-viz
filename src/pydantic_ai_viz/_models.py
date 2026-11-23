@@ -147,13 +147,96 @@ class OutputInfo(WireModel):
     type_name: str | None
     json_schema: JsonValue
     tool_names: list[str]
+    validators: list[str]
+    """The functions registered with ``@agent.output_validator``, in registration order."""
     location: SourceLocation | None
     """Where the output type is defined."""
 
 
+CapabilityCategory: TypeAlias = Literal[
+    "harness",
+    "environment",
+    "tools",
+    "integration",
+    "web",
+    "reasoning",
+    "context",
+    "knowledge",
+    "safety",
+    "self_extension",
+    "runtime",
+    "loop",
+    "custom",
+]
+"""The group of the Pydantic AI capabilities docs a capability is listed in, in the docs' order.
+
+``"custom"`` for every other capability: the project's own, another package's, or one this release does not know.
+"""
+
+
+class SkillInfo(WireModel):
+    """One skill a harness ``Skills`` capability offers, read from its ``SKILL.md``."""
+
+    name: str
+    """The ``name`` of its frontmatter, or else its directory's name: the id ``load_capability`` takes."""
+    description: str
+    when_to_use: str | None
+    model_invocable: bool
+    """``False`` when its frontmatter has ``disable-model-invocation: true``: it is left out of the model's catalog."""
+    path: str
+    """Its ``SKILL.md``, with forward slashes, relative to the workspace it was read from (from a live object) or
+    to the analysed root (from source). Never absolute."""
+    body: str
+    """The Markdown after the frontmatter, as written: what the model gets when it loads the skill."""
+
+
+class HookInfo(WireModel):
+    """One function a ``Hooks`` capability registers."""
+
+    point: str
+    """Where it hooks in: the capability method it stands for, as ``Hooks`` keys it (``"before_model_request"``,
+    ``"wrap_run"``, ``"on_run_error"``)."""
+    function: str | None
+    """``module.qualname`` of the function; ``None`` when the source does not name one."""
+    tools: list[str] | None
+    """For a tool hook, the tools it is limited to (``tools=``), sorted; ``None`` when it runs for every tool."""
+    timeout: float | None
+    location: SourceLocation | None
+    """Where the function is defined. Static analysis only."""
+
+
 class CapabilityInfo(WireModel):
     name: str
+    """The class name; for a capability static analysis cannot name, the source text that builds it."""
     builtin: bool
+    """One that Pydantic AI adds to every agent (``_compat.BUILTIN_CAPABILITIES``)."""
+    category: CapabilityCategory
+    package: Literal["pydantic_ai", "pydantic_ai_harness"] | None
+    """Where the class itself is defined, when that is Pydantic AI or the Pydantic AI harness; ``None`` otherwise."""
+    deferred: bool
+    """Given ``defer_loading=True``: the model loads it on demand."""
+    details: dict[str, JsonValue]
+    """What the capability was given, by parameter name: values only, secrets and defaults left out."""
+    expressions: dict[str, str]
+    """Parameters the source computes at run time: name -> source text. Static analysis only; ``{}`` otherwise."""
+    toolsets: list[str]
+    """``Toolset.id`` of each toolset of this blueprint that the capability gives the agent."""
+    native_tools: list[str]
+    """Kinds of the provider-side tools the capability gives the agent, for example ``"web_search"``."""
+    capability_id: str | None
+    """The id Pydantic AI knows the capability by, which ``load_capability`` takes for one loaded on demand.
+
+    From source, only an ``id=`` the source spells out.
+    """
+    stack: str | None
+    """The harness stack (``"Coder"``, ``"Researcher"``) that put the capability on the agent; ``None`` when the
+    agent was given it otherwise. Read from a live object only: from source it is ``None``."""
+    skills: list[SkillInfo]
+    """For a harness ``Skills`` capability, the skills it offers, in the order of the model's catalog; ``[]`` for
+    every other capability."""
+    hooks: list[HookInfo]
+    """For a ``Hooks`` capability, the functions it registers, in the order it runs them for each point; ``[]`` for
+    every other capability."""
 
 
 class AgentSettings(WireModel):
@@ -168,6 +251,9 @@ class AgentSettings(WireModel):
     The key is a field of this model, or ``model_settings.<key>`` for one model setting.
     The field itself is ``None`` (or the key is absent from ``model_settings``).
     """
+    defaults: list[str]
+    """Settings (``end_strategy``, ``tool_retries``, ``output_retries``, ``tool_timeout``) whose value is the one
+    Pydantic AI gives an agent that is not given it. Read from a live object only: from source it is ``[]``."""
 
 
 class Delegate(WireModel):
@@ -195,6 +281,8 @@ class AgentBlueprint(WireModel):
     capabilities: list[CapabilityInfo]
     settings: AgentSettings
     delegates: list[Delegate]
+    wrapper: str | None
+    """Class name of the durable-execution wrapper around the agent (``TemporalAgent``...)."""
     warnings: list[str]
 
 
@@ -289,6 +377,18 @@ class RetryInfo(WireModel):
     max_retries: int
 
 
+Deferral: TypeAlias = Literal["approval", "external"]
+"""Why a tool call was left for the caller: it needs approval, or it runs outside the agent."""
+
+
+class DeferredCall(WireModel):
+    """A tool call a run ended waiting on (its output was ``DeferredToolRequests``)."""
+
+    call_id: str | None
+    tool_name: str
+    kind: Deferral
+
+
 class AgentRunData(WireModel):
     model_name: str | None
     conversation_id: str | None
@@ -296,6 +396,8 @@ class AgentRunData(WireModel):
     output: JsonValue
     usage: Usage | None
     messages: list[Message] | None
+    deferred: list[DeferredCall]
+    """Empty unless the run ended waiting for approvals or external results."""
 
 
 class ModelRequestData(WireModel):
@@ -315,6 +417,8 @@ class ToolCallData(WireModel):
     arguments: JsonValue
     result: JsonValue
     retry: RetryInfo | None
+    deferral: Deferral | None
+    """Set when the tool raised ``ApprovalRequired`` or ``CallDeferred`` instead of returning."""
 
 
 class GraphRunData(WireModel):
@@ -330,6 +434,21 @@ class GraphNodeData(WireModel):
     inputs: JsonValue
 
 
+class RunEvent(WireModel):
+    """A ``CapabilityEvent`` or ``CustomEvent`` of a run, recorded by ``pydantic_ai_viz.CaptureEvents``."""
+
+    kind: str
+    """The event's kind (``"planning.plan_updated"``); for a custom event, its name."""
+    event_kind: Literal["capability", "custom"]
+    capability_id: str | None
+    """The id of the capability that emitted it, when one did."""
+    tool_call_id: str | None
+    tool_name: str | None
+    ts_ms: float
+    data: JsonValue
+    """The event's own fields; ``None`` when content is not captured."""
+
+
 class SpanBase(WireModel):
     trace_id: TraceId
     span_id: SpanId
@@ -342,6 +461,8 @@ class SpanBase(WireModel):
     run_id: str | None
     error: SpanError | None
     attributes: dict[str, JsonValue]
+    events: list[RunEvent]
+    """The events recorded in this span, in order; ``[]`` until it ends."""
 
 
 class AgentRunSpan(SpanBase):

@@ -19,6 +19,9 @@ uv run python examples/quickstart.py
 
 ## Notes
 
+- Each script starts its own session with `serve`, `record` or `run_graph`, so run it with
+  `python`, not under `pydantic-ai-viz run`, which already has a session open and makes the
+  script's own call fail with "a pydantic-ai-viz session is already active".
 - The scripts that call `serve` keep running until you press Ctrl+C; the viewer URL is printed
   on start (default `http://127.0.0.1:8765`).
 - `export_html.py` writes `run.pviz.jsonl` and `run.html` into the current directory. Both files

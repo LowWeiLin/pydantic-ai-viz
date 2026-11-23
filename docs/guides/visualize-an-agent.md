@@ -107,7 +107,43 @@ Delegation edges
 
     See [Blueprint vs run](../concepts/blueprint-vs-run.md#evidence-on-delegation-edges) for how each is found.
 
-The inspector on the right shows the details for whatever is selected, in sections one under the other. For an agent: warnings, model, instructions, toolsets, output, delegates, settings and capabilities. Capabilities that Pydantic AI adds to every agent are folded under a "built-in" disclosure. A blueprint read from source also says where each part is defined, as `file.py:line`, with a button that copies it.
+Capabilities
+
+:   An agent's capabilities are drawn in a box under its card, one row per capability, in the order of the [Pydantic AI capabilities docs](https://pydantic.dev/docs/ai/capabilities/overview/), with a short category label, an "on demand" mark for one the model loads when needed and a marker for one that gives the model a provider-side tool. A dashed line runs from a capability to each toolset it gives that is drawn. Select a row to open the capability in the inspector. Under a `Skills` capability, one indented row per skill (up to eight; the capability's row says "N skills") shows its name and a faint "hidden" tag for a skill the model may not load. In a run, a skill row shows whether it has been loaded.
+
+    What Pydantic AI adds on its own is collapsed; see [Pydantic AI defaults](#pydantic-ai-defaults) below.
+
+    ![The briefing agent of the capabilities demo: its capabilities in a box under the agent card, dashed lines to the toolsets they give, and the inspector on the house-style skill](../assets/screenshots/capabilities-dark.png#only-dark)
+    ![The briefing agent of the capabilities demo: its capabilities in a box under the agent card, dashed lines to the toolsets they give, and the inspector on the house-style skill](../assets/screenshots/capabilities-light.png#only-light)
+
+The inspector on the right shows the details for whatever is selected, in sections one under the other. For an agent: warnings, model, instructions, toolsets, output, delegates, settings and capabilities. Capabilities are grouped as in the [Pydantic AI capabilities docs](https://pydantic.dev/docs/ai/capabilities/overview/): harnesses, execution environments, tools, integrations, web and research, reasoning and delegation, context management, knowledge and memory, control and safety, self-extension, execution runtime and loop customization, with anything else under "Custom". Each capability is marked Core or Harness by the package it comes from (a harness `Coder` or `Researcher` on a live agent is listed as itself), and "on demand" when the model loads it when needed. It shows what it was given, the toolsets it gives the agent (each can be picked, and a capability can be picked from the agent's panel and from a toolset's) and its provider-side tools. A toolset's panel says which capability gave it. Capabilities that Pydantic AI adds to every agent stay folded under a "From Pydantic AI" disclosure, unless the agent configures one (`ToolSearch(max_results=3)`), which is then listed in its group. `CombinedCapability([...])` is shown as the capabilities in it. A blueprint read from source also says where each part is defined, as `file.py:line`, with a button that copies it.
+
+Skills
+
+:   Pick a skill row, or a skill in the panel of its `Skills` capability or of the agent, for its panel: when to use it, its instructions (the Markdown of its `SKILL.md`, which the model gets when it loads the skill, with a copy button), its path and the id `load_capability` takes. The skill is read from the live `Skills` capability or, from source, from the `SKILL.md` files in the folder read. A skill's text is part of the blueprint, so it is shown even when content capture is off. In a run, a `load_capability` call outlines the skill it loaded, its panel names it, and the `load_capability` tool's own panel lists what it can load.
+
+Hooks
+
+:   The functions a `Hooks` capability registers are rows under its row: the hook point, such as `before_tool_execute`, and the function. A hook limited to some tools says which. Pick one for the capability's panel, which lists them all in the order they run.
+
+Approvals and sub-agents
+
+:   A tool given `requires_approval=True` carries an "approval" tag with a lock, and one whose result the caller supplies says "runs outside"; in a run only their icons stay, to leave the name room next to the call count. A harness `SubAgents` capability draws a delegation edge from the agent's card to each sub-agent it lists, labelled with its tool, `delegate_task` by default. An agent wrapped in `TemporalAgent`, `DBOSAgent` or `PrefectAgent` has a chip that names the runtime.
+
+    ![The oncall agent of the operations demo: its restart_service tool tagged approval, the Hooks capability with its two hook rows, and a delegation edge to the log_reader agent](../assets/screenshots/operations-dark.png#only-dark)
+    ![The oncall agent of the operations demo: its restart_service tool tagged approval, the Hooks capability with its two hook rows, and a delegation edge to the log_reader agent](../assets/screenshots/operations-light.png#only-light)
+
+### Pydantic AI defaults { #pydantic-ai-defaults }
+
+The agent view and the run view show what you wrote. What Pydantic AI or the harness adds on its own is collapsed into counts. The "Pydantic AI defaults" button in the bar above the canvas, with a count such as "+12", shows it again; it appears only when the agent has any. It is a toggle (`aria-pressed`), hidden by default, and the choice is remembered in this browser, not in the page's address.
+
+A default is:
+
+- a capability Pydantic AI adds to every agent and you did not configure (`ToolSearch(max_results=3)` is yours), or one a `Coder` or `Researcher` added;
+- a tool or toolset the library defines, such as the tools of `Memory` and `Planning` or `load_capability`, when the capability that gives it is yours and the toolset holds no function of yours (`WebSearch(local=search_archive)` is shown);
+- a setting whose value is what a plain `Agent()` has (`end_strategy`, `tool_retries`, `output_retries`, `tool_timeout`), a blueprint from a live agent only.
+
+When hidden, a capability row that gives hidden tools says "4 tools" (a stack such as `Coder` says "6 inside"), and in a run it shows the calls and state of those tools, so a call to a hidden `Memory` tool lights the `Memory` row. When shown, default parts have a dashed border and the word "default", and a stack's members say "via Coder". In the inspector, library toolsets sit under "From Pydantic AI" and default settings under "Pydantic AI defaults". The Mermaid export always lists every tool.
 
 On a blueprint, what you pick is kept in the page's address, so a link or a reload opens on the same agent, tool, toolset or graph node.
 

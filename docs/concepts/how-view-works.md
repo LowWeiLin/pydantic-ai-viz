@@ -4,6 +4,8 @@
 
 You do not need this page to use `view`. It is here for when you want to know what was read, why a value shows up as code instead of a value, or whether it is safe to point `view` at a repository you have not reviewed.
 
+Besides `.py` files, `view` reads the `SKILL.md` files of the skill libraries a harness `Skills` capability names. They are read as text too, never imported or run, and only inside the folder being analysed; a GitHub target keeps its `SKILL.md` files for the same reason.
+
 Three consequences are worth knowing first:
 
 - **Nothing in the code runs.** Not the top-level code, not a decorator, not a default argument, not an `import`. Pointing `view` at a local directory is as safe as opening it in an editor. (Fetching a GitHub target runs `git`, with your git configuration.)
@@ -113,7 +115,16 @@ Other things that stay open:
 - **A tool wrapped by another decorator first.** Under `@agent.tool_plain`, a decorator such as `@cached` hands Pydantic AI whatever it returns. The parameters are read from the `def`, with a warning that names the decorator.
 - **A model configuration that is computed.** A pydantic model's `model_config` (or class keywords such as `extra="forbid"`) is applied to its schema when it is written out: `title`, `extra`, `use_attribute_docstrings` and `json_schema_extra`. A configuration built by a call, or one that sets something like `alias_generator`, is named in a warning, since the schema it gives is only known when the code runs.
 - **Graph edges added in a loop or by a helper function.** The steps are listed, the edges that are written out are drawn, and a warning names the call that could not be followed.
-- **Agents that the source does not construct**: an agent returned by a library function, an `Agent` subclass, `Agent.from_spec(...)`. They are not found. Use [`--import`](#when-to-use-import) for these.
+- **Agents that the source does not construct**: an agent returned by a library function, or an `Agent` subclass. They are not found. Use [`--import`](#when-to-use-import) for these. Agents made from a spec are read; see the next section.
+
+## Spec files, hooks, sub-agents and durable wrappers
+
+A few ways of putting an agent together are read on purpose, so that `view` shows what `--import` would:
+
+- **Spec files.** `Agent.from_file("agent.yaml")` with a literal path, and `Agent.from_spec({...})` with a written-out dict, are agents. The spec is read as data (`json.loads`, or `yaml.safe_load` when PyYAML is installed; without it, the agent of a YAML spec has a warning that says to install PyYAML) and turned into the `Agent(...)` call `from_spec` makes. Keyword arguments next to the spec follow `from_spec`: a plain value replaces the spec's, instructions and capabilities are added to it, and model settings and retries are merged key by key. A spec file is only read inside the analysed folders and under the file size limit. A `.json`, `.yaml` or `.yml` spec can also be named as a `view` target on its own.
+- **Hooks.** The functions a `Hooks` capability registers are listed by hook point: the keyword arguments of `Hooks(...)` first, then each `@hooks.on.<point>` or `@hooks.on.<point>(tools=[...], timeout=...)` decorator in the module that builds it, in source order, as a live agent's registry has them.
+- **Sub-agents.** A harness `SubAgents(agents=[SubAgent(agent, name=..., description=...)])` shows each entry in its details and draws a delegation edge to each agent it can find, labelled with its tool, `delegate_task` by default. When an entry is not a written-out `SubAgent(...)`, the list stays an expression and no edge is drawn.
+- **Durable wrappers.** An agent handed to `TemporalAgent(...)`, `DBOSAgent(...)` or `PrefectAgent(...)` of `pydantic_ai.durable_exec` is marked with the wrapper's name. The blueprint is the wrapped agent's; what the durable runtime does at run time is not shown.
 
 ## Standard-library calls the analyser evaluates
 
@@ -171,7 +182,7 @@ A file that is read only because another one imports it contributes its definiti
 
 An import is looked up the way Python would look it up from the importing file: relative imports from its package, absolute ones from the directories above it up to the **project root**. The project root is the nearest directory above the target that holds a project file (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, a lock file, or `.git`), or the directory above the outermost package when there is none. Your home directory, the directory for temporary files and the root of a drive are never taken for one, since many projects live below them: for a file directly in one of them, no import is followed. A `src` layout works. Imports never leave the project: installed packages, virtual environments and `site-packages` are never opened, even when a copy of a package lies inside the project. The one exception is the source of the installed Pydantic AI, for the [tools it defines](#tools-that-pydantic-ai-defines).
 
-Run this to see it on the demos that ship with pydantic-ai-viz: seven agents and a graph, defined in three files. The summary line counts more files than that, because the demos import the rest of the package and those imports are followed:
+Run this to see it on the demos that ship with pydantic-ai-viz: ten agents and a graph, defined in five files. The summary line counts more files than that, because the demos import the rest of the package and those imports are followed:
 
 ```bash
 pydantic-ai-viz view src/pydantic_ai_viz/demos
@@ -191,6 +202,8 @@ The analyser is written to be pointed at code nobody has reviewed, so all of its
 | Time for fetching a GitHub repository | 300 seconds | `view` stops with an error |
 
 All four can be changed through [`Limits`](../reference/python-api.md#limits) when you call `analyze`. Every other walk is bounded too: following names, opening nested types, expanding lists. Cyclic imports, aliases that refer to themselves and models that contain themselves end in a warning, and a file nested too deeply for Python's parser is skipped. None of these is ever a crash.
+
+A `Skills` capability shows at most 64 skills, with a warning for the rest, and a `SKILL.md` over the file-size limit is left out. What a capability reads only when it runs is not shown from source or from an object: the `AGENTS.md` and `CLAUDE.md` of `RepoContext`, the provider-side tools of `MCP(native=True)` and the store of a `Memory(store_resolver=...)`. `Advisor` and `Peers` draw no delegation edge, since one holds a model and the other resolves its network when it runs. Keyword arguments are not checked against the class: a keyword the class does not take, such as `SpendLimits(max_cost_usd=...)`, is shown as written, though the code would fail when it is imported.
 
 ## When to use `--import`
 

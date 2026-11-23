@@ -28,6 +28,7 @@
   --kind-tool: #0f6b64;
   --kind-output: #b5175a;
   --kind-graph: #475569;
+  --kind-capability: #3f6212;
 
   --ok: #15703a;
   --retry: #a04a08;
@@ -62,6 +63,7 @@
   --kind-tool: #2dd4bf;
   --kind-output: #f472b6;
   --kind-graph: #94a3b8;
+  --kind-capability: #a3e635;
 
   --ok: #4ade80;
   --retry: #fbbf24;
@@ -95,6 +97,7 @@
     --kind-tool: #2dd4bf;
     --kind-output: #f472b6;
     --kind-graph: #94a3b8;
+    --kind-capability: #a3e635;
 
     --ok: #4ade80;
     --retry: #fbbf24;

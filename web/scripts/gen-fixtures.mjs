@@ -107,10 +107,14 @@ class Recording {
         ...owner,
         error: null,
         attributes: {},
+        events: [],
         data: startData,
       },
     });
-    const end = (ms, { data = {}, status = "ok", error = null, attributes = {} } = {}) => {
+    const end = (
+      ms,
+      { data = {}, status = "ok", error = null, attributes = {}, events = [] } = {},
+    ) => {
       this.emit(ms, {
         type: "span.ended",
         span: {
@@ -120,6 +124,11 @@ class Recording {
           ...owner,
           error,
           attributes,
+          events: events.map((event) => ({
+            ...event,
+            ts_ms: round(this.t0 + event.ts_ms),
+            data: this.c(event.data),
+          })),
           data: startData === null ? null : { ...startData, ...data },
         },
       });
@@ -134,11 +143,13 @@ class AgentRun {
     this.rec = rec;
     this.o = o;
     this.runId = rec.uuid();
-    this.conversationId = rec.uuid();
-    this.history = [];
+    // A run resumed with `message_history` continues that conversation and adds no prompt.
+    this.conversationId = o.conversationId ?? rec.uuid();
+    this.history = structuredClone(o.history ?? []);
     if (o.system)
       this.history.push({ role: "system", parts: [{ type: "text", content: rec.c(o.system) }] });
-    this.history.push({ role: "user", parts: [{ type: "text", content: rec.c(o.prompt) }] });
+    if (o.prompt !== undefined)
+      this.history.push({ role: "user", parts: [{ type: "text", content: rec.c(o.prompt) }] });
     this.results = [];
     this.usage = { input_tokens: 0, output_tokens: 0 };
     this.root = rec.span(
@@ -158,6 +169,7 @@ class AgentRun {
         output: null,
         usage: null,
         messages: null,
+        deferred: [],
       },
     );
     this.id = this.root.id;
@@ -266,19 +278,25 @@ class AgentRun {
       arguments: rec.c(call.args),
       result: null,
       retry: null,
+      deferral: null,
     });
-    const done = (end, { result, retry = null, error = null } = {}) => {
+    const done = (
+      end,
+      { result, retry = null, error = null, deferral = null, events = [] } = {},
+    ) => {
       span.end(end, {
         status: error ? "error" : "ok",
         error,
+        events,
         attributes: {
           "gen_ai.operation.name": "execute_tool",
           "logfire.msg": `running tool: ${call.name}`,
         },
-        data: { result: rec.c(result ?? null), retry },
+        data: { result: rec.c(result ?? null), retry, deferral },
       });
-      // An unhandled tool exception ends the run; nothing is sent back to the model.
-      if (!error || retry) {
+      // An unhandled tool exception ends the run; nothing is sent back to the model, and
+      // a deferred call is answered by the caller in the next run.
+      if ((!error || retry) && !deferral) {
         this.results.push({
           type: "tool_result",
           id: call.id,
@@ -290,7 +308,27 @@ class AgentRun {
     return { id: span.id, done };
   }
 
-  finish(end, { output = null, error = null, usage = this.usage, finalResultId } = {}) {
+  /** A tool result the caller supplies when it resumes the run (an approval's outcome or an external result). */
+  answer(call, result) {
+    this.results.push({
+      type: "tool_result",
+      id: call.id,
+      name: call.name,
+      result: this.rec.c(result),
+    });
+  }
+
+  finish(
+    end,
+    {
+      output = null,
+      error = null,
+      usage = this.usage,
+      finalResultId,
+      deferred = [],
+      events = [],
+    } = {},
+  ) {
     const { rec, o } = this;
     if (finalResultId) {
       this.results.push({
@@ -305,11 +343,13 @@ class AgentRun {
       status: error ? "error" : "ok",
       error,
       attributes: { "gen_ai.operation.name": "invoke_agent", "logfire.msg": `${o.agent} run` },
+      events,
       data: {
         instructions: rec.c(o.instructions),
         output: rec.c(output),
         usage,
         messages: structuredClone(this.history),
+        deferred,
       },
     });
   }
@@ -337,6 +377,7 @@ const tool = (name, toolset, description, parameters, extra = {}) => ({
   function: null,
   origin: "object",
   location: null,
+  library_version: null,
   ...extra,
 });
 
@@ -350,20 +391,62 @@ const agentTools = {
 };
 
 const BUILTIN_CAPABILITIES = [
-  { name: "ToolSearch", builtin: true },
-  { name: "PendingMessageDrainCapability", builtin: true },
+  {
+    name: "ToolSearch",
+    builtin: true,
+    category: "context",
+    package: "pydantic_ai",
+    deferred: false,
+    details: {},
+    expressions: {},
+    toolsets: [],
+    native_tools: ["tool_search"],
+    capability_id: null,
+    stack: null,
+    skills: [],
+    hooks: [],
+  },
+  {
+    name: "PendingMessageDrainCapability",
+    builtin: true,
+    category: "runtime",
+    package: "pydantic_ai",
+    deferred: false,
+    details: {},
+    expressions: {},
+    toolsets: [],
+    native_tools: [],
+    capability_id: null,
+    stack: null,
+    skills: [],
+    hooks: [],
+  },
 ];
 
 /** Adds the fields that only static analysis fills in, so the blueprints below list what matters. */
 const unlocated = (item) => ({ ...item, expression: null, location: null });
 
-const complete = (blueprint) => ({
+/** A model with every field, keys in the order the backend writes them. */
+const fullModel = (model) => {
+  const full = { expression: null, ...model };
+  return { ...full, model_class: full.model_class ?? null, env: full.env ?? null };
+};
+
+const complete = ({ settings: { defaults = [], ...settings }, ...blueprint }) => ({
   ...blueprint,
-  model: blueprint.model && { ...blueprint.model, expression: null },
+  model: blueprint.model && {
+    id: blueprint.model.id,
+    name: blueprint.model.name,
+    provider: blueprint.model.provider,
+    offline: blueprint.model.offline,
+    expression: null,
+    model_class: blueprint.model.model_class ?? null,
+    env: blueprint.model.env ?? null,
+  },
   instructions: blueprint.instructions.map(unlocated),
   toolsets: blueprint.toolsets.map(unlocated),
   output: { ...blueprint.output, location: null },
-  settings: { ...blueprint.settings, expressions: {} },
+  settings: { ...settings, expressions: {}, defaults },
 });
 
 const agent = (fields) =>
@@ -382,25 +465,60 @@ const agent = (fields) =>
       type_name: "str",
       json_schema: { type: "string" },
       tool_names: [],
+      validators: [],
     },
     capabilities: BUILTIN_CAPABILITIES,
+    // The defaults of the Pydantic AI in VERSIONS, which a live agent names as such.
     settings: {
       model_settings: null,
       end_strategy: "early",
       tool_retries: 1,
       output_retries: 1,
       tool_timeout: null,
+      defaults: ["end_strategy", "tool_retries", "output_retries"],
     },
     delegates: [],
+    wrapper: null,
     warnings: [],
     ...fields,
   });
+
+/** An agent read from source: what `agent` blanks, and only what static analysis can say. */
+const codeAgent = (fields) => {
+  const built = agent({ capabilities: [], ...fields });
+  return {
+    ...built,
+    source: "code",
+    // `agent` blanks what only static analysis fills in; here that is the point.
+    model: fullModel(fields.model),
+    instructions: fields.instructions ?? [],
+    toolsets: (fields.toolsets ?? []).map((toolset) => ({
+      expression: null,
+      location: null,
+      ...toolset,
+    })),
+    output: fields.output ?? built.output,
+    // Static analysis reads what the code sets and never fills in a default.
+    settings: {
+      model_settings: null,
+      end_strategy: null,
+      tool_retries: null,
+      output_retries: null,
+      tool_timeout: null,
+      expressions: {},
+      defaults: [],
+      ...fields.settings,
+    },
+  };
+};
 
 const offlineModel = (name) => ({
   id: `function:${name}`,
   name,
   provider: "function",
   offline: true,
+  model_class: "FunctionModel",
+  env: null,
 });
 
 const retryError = (message) => ({
@@ -567,6 +685,7 @@ function sample() {
           required: ["status", "refund_eur", "reply"],
         },
         tool_names: ["final_result"],
+        validators: [],
       },
       settings: {
         model_settings: { temperature: 0.2 },
@@ -619,6 +738,7 @@ function sample() {
         required: ["approved", "notes"],
       },
       tool_names: ["final_result"],
+      validators: [],
     },
   });
   const pipeline = {
@@ -903,6 +1023,7 @@ function failed() {
         type_name: null,
         json_schema: null,
         tool_names: [],
+        validators: [],
       },
       capabilities: [],
       settings: {
@@ -953,7 +1074,14 @@ function failed() {
         },
       ),
     ],
-    output: { mode: "text", allows_text: true, type_name: null, json_schema: null, tool_names: [] },
+    output: {
+      mode: "text",
+      allows_text: true,
+      type_name: null,
+      json_schema: null,
+      tool_names: [],
+      validators: [],
+    },
     warnings: [
       "Built from observed runs. Register the agent with serve() or record() for full detail.",
     ],
@@ -980,6 +1108,7 @@ function failed() {
         run_id: base.runId,
         error: null,
         attributes,
+        events: [],
         data,
       },
     });
@@ -1021,6 +1150,7 @@ function failed() {
       output: earlyOut,
       usage: { input_tokens: 64, output_tokens: 9 },
       messages: [...earlyMessages, ...earlyReply],
+      deferred: [],
     },
     { "gen_ai.operation.name": "invoke_agent", "logfire.msg": "digest run" },
   );
@@ -1187,6 +1317,193 @@ function redacted() {
   return rec;
 }
 
+// ---------- approvals.pviz.jsonl ----------
+
+/**
+ * Tool calls left for the caller, and the run that answers them. Run 1 asks to delete two files
+ * (`delete_file` needs approval, so neither call runs) and to restart a service (the tool raises
+ * `CallDeferred`: it runs outside the agent). The run ends waiting on all three. Run 2 continues
+ * the same conversation: one deletion is approved and runs, the other is denied, and the caller
+ * supplies the restart's result.
+ *
+ * The agent also has an `AuditLog` capability (`capability_id` "audit") and `CaptureEvents`, so
+ * its events are on the spans: an `immediate` one from its `before_tool_execute` hook is on the
+ * tool span, and those dispatched at their stream position are on the run, as is the custom
+ * event `restart_queued` the restart tool emits (with that tool's call id).
+ */
+function approvals() {
+  const rec = new Recording({ title: "Ops with approvals", seed: 0x5eed0006, t0: 1795305600000 });
+  const pathSchema = objectSchema({ path: { type: "string" } });
+  const instructions = "Clean up the workspace. Deleting files needs a human's approval.";
+  rec.emit(1.2, {
+    type: "blueprint.agent",
+    agent: agent({
+      id: "a1",
+      name: "ops",
+      label: "ops",
+      description: "Housekeeping for the build machines",
+      model: offlineModel("ops_model"),
+      capabilities: [
+        ...BUILTIN_CAPABILITIES,
+        {
+          name: "AuditLog",
+          builtin: false,
+          category: "custom",
+          package: null,
+          deferred: false,
+          details: {},
+          expressions: {},
+          toolsets: [],
+          native_tools: [],
+          capability_id: "audit",
+          stack: null,
+          skills: [],
+          hooks: [],
+        },
+      ],
+      instructions: [{ kind: "instructions", dynamic: false, text: instructions, function: null }],
+      toolsets: [agentTools],
+      tools: [
+        tool("delete_file", "ts0", "Delete one file.", pathSchema, {
+          kind: "unapproved",
+          takes_ctx: true,
+          function: "ops.delete_file",
+        }),
+        tool(
+          "restart_service",
+          "ts0",
+          "Restart a service; the on-call engineer does it.",
+          objectSchema({ name: { type: "string" } }),
+          { function: "ops.restart_service" },
+        ),
+        tool("page_oncall", "ts0", "Page the on-call engineer.", objectSchema({}), {
+          kind: "external",
+        }),
+      ],
+      output: {
+        mode: "text",
+        allows_text: true,
+        type_name: "str | DeferredToolRequests",
+        json_schema: { type: "string" },
+        tool_names: [],
+        validators: [],
+      },
+    }),
+  });
+
+  const a = { id: "call_del_a", name: "delete_file", args: { path: "build/a.log" } };
+  const b = { id: "call_del_b", name: "delete_file", args: { path: "build/b.log" } };
+  const restart = { id: "call_restart", name: "restart_service", args: { name: "cache" } };
+  const first = new AgentRun(rec, {
+    trace: rec.hex(32),
+    agent: "ops",
+    model: "ops_model",
+    start: 400,
+    instructions,
+    prompt: "Delete the old build logs and restart the cache.",
+  });
+  first.request(402.5, 1210.8, {
+    text: "Deleting both logs and restarting the cache.",
+    calls: [a, b, restart],
+    usage: { input_tokens: 188, output_tokens: 52 },
+  });
+  // `delete_file` needs approval, so its calls get no span; `restart_service` raises CallDeferred.
+  const audited = (ms, call, decision) => ({
+    kind: "audit.tool_checked",
+    event_kind: "capability",
+    capability_id: "audit",
+    tool_call_id: call.id,
+    tool_name: call.name,
+    ts_ms: ms,
+    data: { tool: call.name, decision },
+  });
+  first.tool(1216.4, restart).done(1219.9, {
+    deferral: "external",
+    events: [audited(1217.1, restart, "allowed")],
+  });
+  first.finish(1224.6, {
+    events: [
+      {
+        kind: "audit.request_logged",
+        event_kind: "capability",
+        capability_id: "audit",
+        tool_call_id: null,
+        tool_name: null,
+        ts_ms: 402.9,
+        data: { request: 1 },
+      },
+      {
+        kind: "restart_queued",
+        event_kind: "custom",
+        capability_id: null,
+        tool_call_id: restart.id,
+        tool_name: restart.name,
+        ts_ms: 1220.3,
+        data: { service: "cache" },
+      },
+    ],
+    output: {
+      calls: [
+        {
+          tool_name: restart.name,
+          args: restart.args,
+          tool_call_id: restart.id,
+          part_kind: "tool-call",
+        },
+      ],
+      approvals: [a, b].map((call) => ({
+        tool_name: call.name,
+        args: call.args,
+        tool_call_id: call.id,
+        part_kind: "tool-call",
+      })),
+      metadata: {},
+      validated_args: { [a.id]: a.args, [b.id]: b.args, [restart.id]: restart.args },
+    },
+    deferred: [
+      { call_id: restart.id, tool_name: restart.name, kind: "external" },
+      { call_id: a.id, tool_name: a.name, kind: "approval" },
+      { call_id: b.id, tool_name: b.name, kind: "approval" },
+    ],
+  });
+
+  // Later, the caller resumes with message_history and deferred_tool_results.
+  const second = new AgentRun(rec, {
+    trace: rec.hex(32),
+    agent: "ops",
+    model: "ops_model",
+    start: 9400,
+    instructions,
+    conversationId: first.conversationId,
+    history: first.history,
+  });
+  second.tool(9403.1, a).done(9411.7, {
+    result: "deleted build/a.log",
+    events: [audited(9403.6, a, "approved")],
+  });
+  second.answer(b, "The tool call was denied.");
+  second.answer(restart, "cache restarted");
+  second.request(9413, 10021.4, {
+    text: "Deleted build/a.log. build/b.log was kept, as asked. The cache is restarted.",
+    usage: { input_tokens: 291, output_tokens: 24 },
+  });
+  second.finish(10025.2, {
+    events: [
+      {
+        kind: "audit.request_logged",
+        event_kind: "capability",
+        capability_id: "audit",
+        tool_call_id: null,
+        tool_name: null,
+        ts_ms: 9413.4,
+        data: { request: 2 },
+      },
+    ],
+    output: "Deleted build/a.log. build/b.log was kept, as asked. The cache is restarted.",
+  });
+  return rec;
+}
+
 // ---------- blueprint/newsroom.pviz.jsonl ----------
 
 /**
@@ -1226,32 +1543,6 @@ function newsroom() {
     expression: null,
     location: at(file, line),
   });
-  const codeAgent = (fields) => {
-    const built = agent({ capabilities: [], ...fields });
-    return {
-      ...built,
-      source: "code",
-      // `agent` blanks what only static analysis fills in; here that is the point.
-      model: { expression: null, ...fields.model },
-      instructions: fields.instructions ?? [],
-      toolsets: (fields.toolsets ?? []).map((toolset) => ({
-        expression: null,
-        location: null,
-        ...toolset,
-      })),
-      output: fields.output ?? built.output,
-      // Static analysis reads what the code sets and never fills in a default.
-      settings: {
-        model_settings: null,
-        end_strategy: null,
-        tool_retries: null,
-        output_retries: null,
-        tool_timeout: null,
-        expressions: {},
-        ...fields.settings,
-      },
-    };
-  };
   const computedBy = (what, code) =>
     `${what} is set by \`${code}\`, so it is only known when the code runs`;
 
@@ -1337,6 +1628,7 @@ function newsroom() {
       type_name: "Story",
       json_schema: story,
       tool_names: ["final_result"],
+      validators: [],
       location: at("desk.py", 12),
     },
     settings: {
@@ -1370,6 +1662,8 @@ function newsroom() {
       provider: null,
       offline: false,
       expression: "get_model()",
+      model_class: "OpenAIChatModel",
+      env: { variable: "NEWSROOM_MODEL", default: "gpt-5.2-mini" },
     },
     instructions: [
       {
@@ -1440,7 +1734,8 @@ function newsroom() {
     ],
     delegates: [{ tool_name: "ask_stringer", agent_id: "a3", evidence: "code" }],
     warnings: [
-      computedBy("the model", "get_model()"),
+      "the model name of `OpenAIChatModel` comes from the environment variable `NEWSROOM_MODEL` " +
+        "when the code runs; the source's default is `gpt-5.2-mini`",
       computedBy("an instruction", 'PROMPTS["reporter"]'),
       `the tools of \`${archive}\` are listed by the server, so they are only known when the code runs`,
     ],
@@ -1458,8 +1753,46 @@ function newsroom() {
       provider: null,
       offline: false,
       expression: 'AnthropicModel("claude-sonnet-4-5", provider=provider)',
+      model_class: "AnthropicModel",
     },
     instructions: [literal("Answer in one short quote, in the first person.", "reporters.py", 60)],
+    toolsets: [agentTools],
+    tools: [
+      fromCode(
+        "duckduckgo_search",
+        "ts0",
+        "Searches DuckDuckGo for the given query and returns the results.",
+        {
+          additionalProperties: false,
+          properties: { query: { description: "The query to search for.", type: "string" } },
+          required: ["query"],
+          type: "object",
+        },
+        "reporters.py",
+        58,
+        {
+          return_schema: {
+            $defs: {
+              DuckDuckGoResult: {
+                description: "A DuckDuckGo search result.",
+                properties: {
+                  title: { type: "string" },
+                  href: { type: "string" },
+                  body: { type: "string" },
+                },
+                required: ["title", "href", "body"],
+                title: "DuckDuckGoResult",
+                type: "object",
+              },
+            },
+            items: { $ref: "#/$defs/DuckDuckGoResult" },
+            type: "array",
+          },
+          function: "pydantic_ai.common_tools.duckduckgo.DuckDuckGoSearchTool.__call__",
+          library_version: "2.70.0",
+        },
+      ),
+    ],
   });
 
   const checker = codeAgent({
@@ -1501,6 +1834,7 @@ function newsroom() {
       type_name: "Verdict[Claim]",
       json_schema: { "x-python-type": "Verdict[Claim]" },
       tool_names: [],
+      validators: [],
       location: at("checks.py", 8),
     },
     warnings: [
@@ -1555,12 +1889,199 @@ function newsroom() {
   return rec;
 }
 
+// ---------- blueprint/capabilities.pviz.jsonl ----------
+
+/**
+ * One agent read from source whose capabilities span eight docs categories: a configured one,
+ * one that offers skills, ones that give the agent toolsets (a drawn one with a tool, and
+ * harness ones whose tools are only known at run time), one that gives provider-side tools only,
+ * a `Hooks` with two hooks, and the built-in one that stays folded away. The skills are the
+ * capabilities demo's.
+ */
+function capabilities() {
+  const rec = new Recording({
+    title: "briefing",
+    seed: 0x5eed0005,
+    t0: 1795046400000,
+    stream: false,
+  });
+  rec.header.mode = "blueprint";
+
+  const at = (line) => ({ file: "briefing.py", line });
+  const capability = (name, category, fields = {}) => ({
+    name,
+    builtin: false,
+    category,
+    package: "pydantic_ai",
+    deferred: false,
+    details: {},
+    expressions: {},
+    toolsets: [],
+    native_tools: [],
+    capability_id: null,
+    stack: null,
+    skills: [],
+    hooks: [],
+    ...fields,
+  });
+  const harness = { package: "pydantic_ai_harness" };
+  const skill = (name, description, whenToUse, body) => ({
+    name,
+    description,
+    when_to_use: whenToUse,
+    model_invocable: true,
+    path: `_skills/${name}/SKILL.md`,
+    body,
+  });
+  const toolset = (id, toolsetId, label, line, fields = {}) => ({
+    id,
+    toolset_id: toolsetId,
+    label,
+    kind: "function",
+    wrappers: ["CapabilityOwnedToolset"],
+    opaque: false,
+    expression: null,
+    location: at(line),
+    ...fields,
+  });
+  const fromCode = (name, toolsetId, description, parameters, line, returns) =>
+    tool(name, toolsetId, description, parameters, {
+      origin: "code",
+      function: `briefing.${name}`,
+      location: at(line),
+      return_schema: returns,
+    });
+  const unknownTools = (what) =>
+    `the tools of \`${what}\` depend on how it is set up, so they are only known when the code runs`;
+
+  const briefing = codeAgent({
+    id: "a1",
+    name: "briefing",
+    label: "briefing",
+    description: "Writes a short brief on a question, from the archive and the web",
+    location: at(31),
+    model: { id: "openai:gpt-5.2", name: "gpt-5.2", provider: "openai", offline: false },
+    instructions: [
+      {
+        kind: "instructions",
+        dynamic: false,
+        text: "Answer the question in a brief of five lines. Cite the pages you read.",
+        function: null,
+        expression: null,
+        location: at(34),
+      },
+    ],
+    toolsets: [
+      agentTools,
+      toolset("ts1", "web_search", "FunctionToolset 'web_search'", 12, {
+        wrappers: ["CapabilityOwnedToolset", "PreparedToolset"],
+      }),
+      toolset("ts2", "web_fetch", "FunctionToolset 'web_fetch'", 20, {
+        wrappers: ["CapabilityOwnedToolset", "PreparedToolset"],
+      }),
+      toolset("ts3", "memory", "MemoryToolset 'memory'", 38, { opaque: true }),
+      toolset("ts4", "planning", "PlanningToolset 'planning'", 39, { opaque: true }),
+    ],
+    tools: [
+      fromCode(
+        "search_archive",
+        "ts1",
+        "Search the archive of past briefs.",
+        objectSchema({ query: { type: "string" } }),
+        12,
+        { type: "array", items: { type: "string" } },
+      ),
+      fromCode(
+        "fetch_page",
+        "ts2",
+        "Fetch the text of a page.",
+        objectSchema({ url: { type: "string", format: "uri" } }),
+        20,
+        { type: "string" },
+      ),
+    ],
+    native_tools: ["web_search", "mcp_server"],
+    capabilities: [
+      ...BUILTIN_CAPABILITIES,
+      capability("Thinking", "reasoning", { details: { effort: "high" } }),
+      capability("WebSearch", "web", {
+        toolsets: ["ts1"],
+        native_tools: ["web_search"],
+        expressions: { local: "search_archive" },
+      }),
+      capability("WebFetch", "web", {
+        toolsets: ["ts2"],
+        expressions: { local: "fetch_page" },
+        details: { native: false },
+      }),
+      capability("MCP", "tools", {
+        native_tools: ["mcp_server"],
+        details: { url: "https://docs.example.com/mcp", native: true, local: false },
+      }),
+      capability("Skills", "knowledge", {
+        ...harness,
+        details: { directories: ["_skills"] },
+        skills: [
+          skill(
+            "fact-check",
+            "How to check a briefing's claims against the pages it cites.",
+            "After drafting, when a claim might not be in a source.",
+            "# Fact check for briefings\n\n" +
+              "Before you answer, go through the draft one claim at a time:\n\n" +
+              "1. Find the sentence of a page you read that says it. A claim no page says is cut.\n" +
+              "2. Keep dates, numbers and names exactly as the page gives them.\n" +
+              "3. Name in the `Sources:` line only the pages a claim came from.",
+          ),
+          skill(
+            "house-style",
+            "How the newsroom formats a short briefing.",
+            "Before writing the final briefing for a reader.",
+            "# House style for briefings\n\n" +
+              "Write every briefing in this shape and no other:\n\n" +
+              "1. A one-line verdict that answers the question.\n" +
+              "2. Exactly three short bullets: what happened, why it happened, how it ended.\n" +
+              "3. A `Sources:` line naming each page you used.\n\n" +
+              "Keep it plain: no adjectives of drama, no filler, under 120 words.",
+          ),
+        ],
+      }),
+      capability("Memory", "knowledge", { ...harness, toolsets: ["ts3"] }),
+      capability("Planning", "reasoning", { ...harness, toolsets: ["ts4"] }),
+      capability("InputGuardrail", "safety", { ...harness, expressions: { guard: "check_topic" } }),
+      capability("ModelFallback", "loop", { expressions: { models: "[backup_model]" } }),
+      capability("Hooks", "loop", {
+        hooks: [
+          {
+            point: "before_model_request",
+            function: "briefing.log_request",
+            tools: null,
+            timeout: null,
+            location: at(44),
+          },
+          {
+            point: "before_tool_execute",
+            function: "briefing.guard",
+            tools: ["fetch_page"],
+            timeout: 5,
+            location: at(49),
+          },
+        ],
+      }),
+    ],
+    warnings: [unknownTools("Memory(store=InMemoryMemoryStore())"), unknownTools("Planning()")],
+  });
+
+  rec.emit(0, { type: "blueprint.agent", agent: briefing });
+  return rec;
+}
+
 // ---------- write ----------
 
 const files = {
   "sample.pviz.jsonl": sample().jsonl(),
   "failed.pviz.jsonl": failed().jsonl(),
   "redacted.pviz.jsonl": redacted().jsonl(),
+  "approvals.pviz.jsonl": approvals().jsonl(),
   "index.json": `${JSON.stringify(
     {
       recordings: [
@@ -1585,6 +2106,13 @@ const files = {
             "The same structure with include_content=False: no prompts, arguments or results are stored.",
           src: "redacted.pviz.jsonl",
         },
+        {
+          id: "approvals",
+          title: "Approvals and deferred calls",
+          description:
+            "A run ends waiting for two approvals and an external result; the next run in the conversation approves one call, denies the other and supplies the result.",
+          src: "approvals.pviz.jsonl",
+        },
       ],
     },
     null,
@@ -1593,6 +2121,7 @@ const files = {
 };
 
 // Blueprint-only sessions are kept apart from the recordings: see `newsroom`.
+files["blueprint/capabilities.pviz.jsonl"] = capabilities().jsonl();
 files["blueprint/newsroom.pviz.jsonl"] = newsroom().jsonl();
 
 for (const [name, text] of Object.entries(files)) {

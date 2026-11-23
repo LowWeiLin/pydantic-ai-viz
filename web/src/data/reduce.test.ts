@@ -3,6 +3,7 @@ import {
   agentBlueprint,
   agentRun,
   asStarted,
+  capability,
   delta,
   ended,
   graphBlueprint,
@@ -13,8 +14,9 @@ import {
   started,
   stateOf,
   TRACE,
+  toolCall,
 } from "../test/factory";
-import type { Envelope } from "../wire";
+import type { AgentBlueprint, Capability, Envelope, Span } from "../wire";
 import { initialData, reduce, reduceAll } from "./reduce";
 
 describe("reduce", () => {
@@ -40,6 +42,68 @@ describe("reduce", () => {
     expect(state.agents.a1?.name).toBe("triage");
     expect(state.graphOrder).toEqual(["g1"]);
     expect(state.graphs.g1?.nodes).toHaveLength(2);
+  });
+
+  test("capabilities from a recording made before they were grouped load as custom", () => {
+    const old = agentBlueprint({ id: "a1" });
+    old.capabilities = [{ name: "Hooks", builtin: false }] as unknown as Capability[];
+    const current = capability({
+      name: "Thinking",
+      category: "reasoning",
+      details: { effort: "high" },
+    });
+    const state = stateOf(
+      [1, { type: "blueprint.agent", agent: old }],
+      [
+        2,
+        { type: "blueprint.agent", agent: agentBlueprint({ id: "a2", capabilities: [current] }) },
+      ],
+    );
+    expect(state.agents.a1?.capabilities).toEqual([capability({ name: "Hooks" })]);
+    expect(state.agents.a1?.capabilities[0]).toMatchObject({
+      category: "custom",
+      details: {},
+      toolsets: [],
+    });
+    expect(state.agents.a2?.capabilities).toEqual([current]);
+  });
+
+  test("a recording made before skills, hooks, stacks, default settings and output validators were read has none", () => {
+    const { settings, ...rest } = agentBlueprint({ id: "a1" });
+    const { defaults: _defaults, ...olderSettings } = settings;
+    const {
+      capability_id: _id,
+      stack: _stack,
+      skills: _skills,
+      hooks: _hooks,
+      ...olderCapability
+    } = capability({
+      name: "Skills",
+      package: "pydantic_ai_harness",
+    });
+    const { validators: _validators, ...olderOutput } = rest.output;
+    const { wrapper: _wrapper, ...older } = rest;
+    const old = {
+      ...older,
+      output: olderOutput,
+      settings: olderSettings,
+      capabilities: [olderCapability],
+    };
+    const state = stateOf([1, { type: "blueprint.agent", agent: old as AgentBlueprint }]);
+    expect(state.agents.a1?.capabilities[0]).toMatchObject({
+      capability_id: null,
+      stack: null,
+      skills: [],
+      hooks: [],
+    });
+    expect(state.agents.a1?.settings.defaults).toEqual([]);
+    expect(state.agents.a1?.output.validators).toEqual([]);
+    expect(state.agents.a1?.wrapper).toBeNull();
+    // What a newer recording says is kept.
+    const newer = agentBlueprint({ id: "a2" });
+    newer.settings.defaults = ["end_strategy"];
+    const kept = stateOf([1, { type: "blueprint.agent", agent: newer }]);
+    expect(kept.agents.a2?.settings.defaults).toEqual(["end_strategy"]);
   });
 
   test("span.ended replaces span.started by span_id", () => {
@@ -122,6 +186,27 @@ describe("reduce", () => {
     ];
     const after = reduceAll(next, junk as unknown as Envelope[]);
     expect(after.spans).toBe(state.spans);
+  });
+
+  test("spans from a recording made before deferred tool calls were read get none", () => {
+    const run = agentRun({ id: "root", start: 0, end: 9 });
+    const tool = toolCall({ id: "t1", parent: "root", start: 1, end: 2, tool: "lookup" });
+    const { deferred: _deferred, ...oldRun } = run.data;
+    const { deferral: _deferral, ...oldTool } = tool.data;
+    const state = stateOf(
+      [2, { type: "span.ended", span: { ...tool, data: oldTool } as unknown as Span }],
+      [9, { type: "span.ended", span: { ...run, data: oldRun } as unknown as Span }],
+    );
+    const root = state.spans[sid("root")];
+    const call = state.spans[sid("t1")];
+    expect(root?.kind === "agent_run" && root.data.deferred).toEqual([]);
+    expect(call?.kind === "tool_call" && call.data.deferral).toBeNull();
+  });
+
+  test("spans from a recording made before events were recorded get none", () => {
+    const { events: _events, ...old } = toolCall({ id: "t1", start: 1, end: 2, tool: "lookup" });
+    const state = stateOf([2, { type: "span.ended", span: old as unknown as Span }]);
+    expect(state.spans[sid("t1")]?.events).toEqual([]);
   });
 
   test("reduce one at a time equals reduceAll", () => {

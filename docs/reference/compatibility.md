@@ -62,6 +62,20 @@ CI is set up to keep this honest going forward:
 | Latest Pydantic AI | The suite passes with the newest `pydantic-ai-slim` 2.x, ahead of the lock file |
 | Weekly canary | The same check against the newest release, on a schedule, opening an issue when it breaks |
 
+## What needs which release { #what-needs-which-release }
+
+Everything added since 0.1.0 works on the whole declared range: Pydantic AI 2.60.0, the floor, already has what it relies on, as checked against 2.60.0, 2.65.0 and 2.70.0.
+
+| Feature | Relies on |
+|---|---|
+| Waiting tool calls of a run, and tools that raised `ApprovalRequired` or `CallDeferred` | `DeferredToolRequests` in the run's final result, and the span attribute `pydantic_ai.tool.deferral.name` |
+| Events on runs, with `CaptureEvents` | `CapabilityEvent`, `CustomEvent` and a capability's `on_event` |
+| Hooks of a `Hooks` capability | `pydantic_ai.capabilities.Hooks` and its private registry (below) |
+| Retries of a text output function | The span attributes `pydantic_ai.output.retry.cause`, `.attempt` and `.max_retries` |
+| Durable-execution wrappers | A `WrapperAgent` with `.wrapped`, recognised by class name and module, so no durable extra is imported |
+
+On a release without `CapabilityEvent`, `CaptureEvents` records nothing. The `capabilities` and `operations` demos need `pydantic-ai-harness`, which pins its own `pydantic-ai-slim`.
+
 ## How breakage is contained
 
 Pydantic AI moves fast. pydantic-ai-viz depends on it in two ways with very different risk, and treats them differently.
@@ -87,10 +101,15 @@ So the failure mode of a Pydantic AI upgrade is a less detailed blueprint with a
 | `settings.tool_timeout` | `agent._tool_timeout` | `null` and a warning. |
 | `output.mode`, `output.allows_text` | `agent._output_schema` | `"text"` when the output schema is a plain string, else `"unknown"`. Filled in from the first observed run. |
 | `output.tool_names` | `agent._output_toolset`, then its `_tool_defs` | Empty list and a warning. Filled in from observed runs. |
-| `native_tools` | `agent._cap_native_tools` | Empty list. |
+| `output.validators` | `agent._output_validators` | Empty list and a warning. |
+| `native_tools` | `agent._cap_native_tools` | Empty list. For a capability loaded on demand, the native tool is read from a keyword default (`native_tool`) of the function `CombinedCapability.get_native_tools` puts in its place; a function without one is left out. |
+| `capabilities[].hooks` | `Hooks._registry`: each entry's `func`, `timeout` and `tools` | Empty list and a warning. |
+| `capabilities[].toolsets` | `CapabilityOwnedToolset.capability` (`pydantic_ai.toolsets._capability_owned`) | Empty list. |
+| A harness `Coder` or `Researcher` | The `owner` field of the private `RequireWorkspace` capability (`pydantic_ai_harness._workspace`), which the stack puts among its capabilities | The stack is not listed; its members are. |
+| `local=True` of `WebSearch` and `WebFetch`, from source | The method `_resolve_local_strategy` of those classes, read from the installed `pydantic_ai` source without importing it | No toolset is drawn for it. |
 | Graph `nodes` and `edges` | `pydantic_graph.graph_builder.build_mermaid_graph` (importable, but not exported) | The graph is walked through its public `nodes` and `edges_by_source` instead. |
 
-Everything else in a blueprint comes from public API: `agent.name`, `.description`, `.model`, `.deps_type`, `.output_type`, `.model_settings`, `.end_strategy`, `.toolsets`, `.root_capability`, `agent.output_json_schema()`, the public fields of toolsets and tools, and `graph.render()`.
+Everything else in a blueprint comes from public API: `agent.name`, `.description`, `.model`, `.deps_type`, `.output_type`, `.model_settings`, `.end_strategy`, `.toolsets`, `.root_capability`, `capability.get_native_tools()`, the public dataclass fields of capabilities, `agent.output_json_schema()`, the public fields of toolsets and tools, and `graph.render()`.
 
 Outside the blueprint, one more private attribute is read: the class attribute `Agent._instrument_default`, which holds what `Agent.instrument_all` was last given. A session reads it so that closing can put the previous instrumentation setting back. If it cannot be read, closing a session switches instrumentation off instead.
 
