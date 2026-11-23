@@ -127,6 +127,16 @@ uv run --group docs mkdocs build --strict
 uv run --group docs mkdocs serve   # live preview at http://127.0.0.1:8000
 ```
 
+The docs link to the hosted demo as it was last deployed from `main`. To preview them with the demos of your checkout instead, build the demo site somewhere outside `site/` (which `mkdocs build` empties) and name it in `PVIZ_DOCS_DEMO`:
+
+```bash
+pnpm --dir web build
+uv run python scripts/build_demo_site.py --out build/demo
+PVIZ_DOCS_DEMO=build/demo uv run --group docs mkdocs serve   # PowerShell: $env:PVIZ_DOCS_DEMO = "build/demo"
+```
+
+The demo is then served at http://127.0.0.1:8000/pydantic-ai-viz/demo/, and every link in the docs to the hosted demo opens it there (`scripts/mkdocs_local_demo.py` does this; without the variable it does nothing). Rebuild the demo site after changing a demo. `build_demo_site.py` warns about any demo it left out because its dependencies are missing.
+
 ## Regenerating generated files
 
 ### The wire schema

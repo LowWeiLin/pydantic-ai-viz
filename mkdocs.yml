@@ -137,6 +137,10 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
 
+# Does nothing unless PVIZ_DOCS_DEMO names a locally built demo site; see CONTRIBUTING.md.
+hooks:
+  - scripts/mkdocs_local_demo.py
+
 watch:
   - src/pydantic_ai_viz
   - CONTRIBUTING.md
