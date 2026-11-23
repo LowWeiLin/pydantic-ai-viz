@@ -15,11 +15,12 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
-  useStore,
+  useViewportStore,
 } from "@xyflow/react";
 import { type ReactNode, useEffect, useRef } from "react";
 import "./canvas.css";
 import { useShortcuts } from "../shell/shortcuts";
+import { useTheme } from "../shell/theme";
 import { IconButton } from "../ui/Button";
 import { Tooltip } from "../ui/overlays";
 import { edgeTypes } from "./edges";
@@ -85,7 +86,7 @@ export function CanvasControls() {
  */
 function FitOnLayout({ layoutKey }: { layoutKey: string }) {
   const flow = useReactFlow();
-  const size = useStore((state) => `${state.width}x${state.height}`);
+  const size = useViewportStore((state) => `${state.width}x${state.height}`);
   const fitted = useRef<{ layout: string; size: string } | null>(null);
   useEffect(() => {
     const last = fitted.current;
@@ -127,11 +128,14 @@ export function CanvasFrame({
   topLeft?: ReactNode;
   bottomRight?: ReactNode;
 }) {
+  const theme = useTheme();
   return (
     <CanvasPick.Provider value={onPick}>
       <ReactFlowProvider>
         <ReactFlow
           aria-label={label}
+          // React Flow follows the system by default; the canvas follows the viewer's theme toggle.
+          forceColorMode={theme}
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
